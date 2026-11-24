@@ -1,0 +1,48 @@
+workflows:
+  android-ego-lite-mobile:
+    name: ego-lite-mobile v0.1 (HONOR YLP-W00 · arm64-v8a)
+    max_build_duration: 30
+    # Free tier: mac_mini_m2 (original linux_x2 is a paid instance type)
+    instance_type: mac_mini_m2
+    environment:
+      java: 17
+      vars:
+        PACKAGE_NAME: "com.egolite.mobile"
+    cache:
+      cache_paths:
+        - ~/.gradle/caches
+        - ~/.gradle/wrapper
+    scripts:
+      - name: Download arm64-v8a tunnel binaries into jniLibs (W^X safe)
+        script: |
+          set -euo pipefail
+          mkdir -p app/src/main/jniLibs/arm64-v8a
+
+          echo "Downloading cloudflared-linux-arm64..."
+          curl -fSL -o app/src/main/jniLibs/arm64-v8a/libcloudflared.so \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64
+          chmod 755 app/src/main/jniLibs/arm64-v8a/libcloudflared.so
+
+          echo "Downloading ngrok-v3-stable-linux-arm64..."
+          curl -fSL -o /tmp/ngrok.tgz \
+            https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz
+          tar -xzf /tmp/ngrok.tgz -C /tmp
+          mv /tmp/ngrok app/src/main/jniLibs/arm64-v8a/libngrok.so
+          chmod 755 app/src/main/jniLibs/arm64-v8a/libngrok.so
+          ls -lh app/src/main/jniLibs/arm64-v8a/
+
+      - name: Set up local.properties
+        script: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+
+      - name: Build Debug APK (arm64-v8a)
+        script: |
+          set -euo pipefail
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+    artifacts:
+      - app/build/outputs/apk/debug/*.apk
