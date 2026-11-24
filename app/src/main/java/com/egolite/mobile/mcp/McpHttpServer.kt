@@ -160,7 +160,7 @@ class McpHttpServer(
                             })
                             put("serverInfo", buildJsonObject {
                                 put("name", "ego-lite-mobile")
-                                put("version", "0.2.0")
+                                put("version", "0.2.1")
                             })
                         })
                         "ping" -> rpcResult(id, buildJsonObject {})
