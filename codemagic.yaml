@@ -1,6 +1,6 @@
 workflows:
   android-ego-lite-mobile:
-    name: ego-lite-mobile v0.2 (HONOR YLP-W00 · arm64-v8a · Free M2)
+    name: ego-lite-mobile v0.2.1 (HONOR YLP-W00 · arm64-v8a · Free M2)
     max_build_duration: 30
     instance_type: mac_mini_m2
     environment:
@@ -38,10 +38,11 @@ workflows:
         script: |
           set -euo pipefail
           if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "Bootstrapping official Gradle 8.7 wrapper jar..."
+            echo "Bootstrapping official Gradle 8.7 wrapper jar (--no-daemon)..."
             curl -fSL -o /tmp/gradle-8.7-bin.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
             unzip -q -o /tmp/gradle-8.7-bin.zip -d /tmp/gradle-dist
-            /tmp/gradle-dist/gradle-8.7/bin/gradle wrapper --gradle-version 8.7
+            /tmp/gradle-dist/gradle-8.7/bin/gradle --no-daemon wrapper --gradle-version 8.7
+            /tmp/gradle-dist/gradle-8.7/bin/gradle --stop || true
             rm -rf /tmp/gradle-8.7-bin.zip /tmp/gradle-dist
           fi
           chmod +x ./gradlew
@@ -50,6 +51,6 @@ workflows:
         script: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace
     artifacts:
       - app/build/outputs/apk/debug/*.apk
