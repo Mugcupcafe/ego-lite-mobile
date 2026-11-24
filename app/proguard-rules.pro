@@ -1,0 +1,3 @@
+-keep class com.egolite.mobile.model.** { *; }
+-keep class com.egolite.mobile.mcp.** { *; }
+-dontwarn io.ktor.**
