@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.app.DownloadManager
 import android.provider.Settings
 import androidx.core.content.pm.ShortcutInfoCompat
