@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.webkit.WebView
+import com.egolite.mobile.model.AI_SPACE_COLOR_PRESETS
 import com.egolite.mobile.model.AiSpaceStatus
 import com.egolite.mobile.model.BookmarkItem
 import com.egolite.mobile.model.BrowserPreferences
@@ -15,6 +16,12 @@ import com.egolite.mobile.model.BrowserTab
 import com.egolite.mobile.model.PersistedTab
 import com.egolite.mobile.model.SpaceType
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,8 +88,13 @@ object SpaceManager {
     private val _activeSpaceId = MutableStateFlow("personal")
     val activeSpaceId: StateFlow<String> = _activeSpaceId.asStateFlow()
 
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val aiIdleJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
     val isAnyAiWorking: Boolean
-        get() = _spaces.value.any { it.type == SpaceType.AI && it.aiStatus == AiSpaceStatus.WORKING }
+        get() = _spaces.value.any {
+            it.type == SpaceType.AI && (it.aiStatus == AiSpaceStatus.WORKING || it.aiStatus == AiSpaceStatus.THINKING)
+        }
 
     fun init(context: Context) {
         if (!::appContext.isInitialized) {
@@ -174,12 +186,14 @@ object SpaceManager {
         if (currentAiCount >= _preferences.value.maxAiSpaces) return null
         val nextIndex = currentAiCount + 1
         val newTab = BrowserTab(title = "AI Space $nextIndex", url = "https://www.google.com")
+        val colorHex = AI_SPACE_COLOR_PRESETS[(nextIndex - 1) % AI_SPACE_COLOR_PRESETS.size]
         val newSpace = BrowserSpace(
             id = "ai-$nextIndex-${System.currentTimeMillis() % 1000}",
             name = "AI Space $nextIndex",
             type = SpaceType.AI,
             tabs = listOf(newTab),
-            activeTabId = newTab.id
+            activeTabId = newTab.id,
+            accentColorHex = colorHex
         )
         _spaces.update { it + newSpace }
         return newSpace
@@ -372,7 +386,28 @@ object SpaceManager {
     fun openExternalUrl(url: String) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
         selectSpace("personal")
-        createTab("personal", initialUrl = url, selectImmediately = true)
+        val tab = createTab("personal", initialUrl = url, selectImmediately = true)
+        BrowserActivityBridge.notifyExternalUrlOpened()
+        mainHandler.post {
+            val wv = getOrCreateWebView("personal", tab)
+            wv.onResume()
+            wv.resumeTimers()
+            if (wv.url.isNullOrBlank() || wv.url == "about:blank") {
+                wv.loadUrl(url)
+            }
+            wv.requestLayout()
+        }
+    }
+
+    fun resumeActiveWebView() {
+        val activeTabId = getActiveSpace().activeTabId
+        mainHandler.post {
+            webViews[activeTabId]?.let { wv ->
+                wv.onResume()
+                wv.resumeTimers()
+                wv.requestLayout()
+            }
+        }
     }
 
     fun goHome(spaceId: String) {
@@ -518,9 +553,43 @@ object SpaceManager {
     }
 
     fun setAiStatus(spaceId: String, status: AiSpaceStatus, summary: String = "") {
+        if (status == AiSpaceStatus.WORKING || status == AiSpaceStatus.TAKEOVER_PAUSED || status == AiSpaceStatus.IDLE) {
+            aiIdleJobs.remove(spaceId)?.cancel()
+        }
         _spaces.update { list ->
             list.map {
                 if (it.id == spaceId) it.copy(aiStatus = status, lastActionSummary = summary) else it
+            }
+        }
+    }
+
+    /**
+     * MCP 툴 실행 직후 바로 끄지 않고 25초간 '다음 행동을 생각하고 있어요...' 유지 후
+     * 새 호출이 없으면 '작업 완료'(3초) -> IDLE(자동 숨김)로 자연스럽게 전환
+     */
+    fun enterAiThinkingMode(spaceId: String) {
+        aiIdleJobs.remove(spaceId)?.cancel()
+        val current = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        if (current.aiStatus == AiSpaceStatus.TAKEOVER_PAUSED) return
+        setAiStatus(spaceId, AiSpaceStatus.THINKING, "다음 행동을 생각하고 있어요...")
+        aiIdleJobs[spaceId] = managerScope.launch {
+            delay(25_000L)
+            val afterThink = _spaces.value.firstOrNull { it.id == spaceId } ?: return@launch
+            if (afterThink.aiStatus == AiSpaceStatus.THINKING) {
+                setAiStatus(spaceId, AiSpaceStatus.DONE, "작업 완료")
+                delay(3_000L)
+                val afterDone = _spaces.value.firstOrNull { it.id == spaceId } ?: return@launch
+                if (afterDone.aiStatus == AiSpaceStatus.DONE) {
+                    setAiStatus(spaceId, AiSpaceStatus.IDLE, "")
+                }
+            }
+        }
+    }
+
+    fun setSpaceAccentColor(spaceId: String, hex: String) {
+        _spaces.update { list ->
+            list.map {
+                if (it.id == spaceId) it.copy(accentColorHex = hex) else it
             }
         }
     }
@@ -596,10 +665,19 @@ object SpaceManager {
         return withTimeout(timeoutMs) { deferred.await() }
     }
 
-    suspend fun navigateAndWait(spaceId: String, url: String, waitMs: Long = 2200L) {
+    suspend fun navigateAndWait(spaceId: String, url: String, maxWaitMs: Long = 4200L) {
         val space = resolveAiSpace(spaceId)
         navigate(space.id, url)
-        kotlinx.coroutines.delay(waitMs)
+        delay(220L)
+        val deadline = System.currentTimeMillis() + maxWaitMs
+        while (System.currentTimeMillis() < deadline) {
+            val curTab = _spaces.value.firstOrNull { it.id == space.id }?.activeTab
+            if (curTab != null && !curTab.isLoading && curTab.progress >= 90) {
+                delay(120L)
+                return
+            }
+            delay(100L)
+        }
     }
 
     suspend fun captureScreenshotInSpace(spaceId: String): String {
