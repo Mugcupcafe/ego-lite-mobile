@@ -1268,7 +1268,7 @@ fun BrowserScreen() {
                     SpaceManager.closeAiSpace(targetSpaceId)
                 },
                 onCloseAllTabs = { targetSpaceId ->
-                    SpaceManager.closeAllTabs(targetSpaceId)
+                    SpaceManager.closeAllTabsInSpace(targetSpaceId)
                     showAllTabsDialog = false
                 },
                 onClearBrowsingData = {
