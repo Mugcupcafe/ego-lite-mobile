@@ -146,15 +146,10 @@ fun ChromeNewTabPage(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .background(accent.copy(alpha = 0.16f)),
+                            .background(accent.copy(alpha = 0.14f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = bm.title.take(1).uppercase(),
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accent
-                        )
+                        BookmarkMiniFavicon(bm = bm, sizeDp = 28)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
