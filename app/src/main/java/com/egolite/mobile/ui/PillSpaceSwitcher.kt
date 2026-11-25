@@ -15,6 +15,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +47,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,13 +58,29 @@ import com.egolite.mobile.model.AiSpaceStatus
 import com.egolite.mobile.model.BrowserSpace
 import com.egolite.mobile.model.SpaceType
 
+/**
+ * 좌상단 알약 캡슐 (Drag-to-Open & Drag-to-Select 지원)
+ * - 누르는 즉시 하단 공간 전환 바가 열리고, 손을 떼지 않고 좌우/아래로 드래그 후 떼면 해당 공간으로 즉시 전환
+ * - 짧게 탭하면 일반 토글로 동작
+ */
 @Composable
 fun PillSpaceCapsule(
     activeSpace: BrowserSpace,
     isAnyAiWorking: Boolean,
-    onToggleExpand: () -> Unit
+    spaceCount: Int,
+    canAddAiSpace: Boolean,
+    isExpanded: Boolean,
+    onSetExpanded: (Boolean) -> Unit,
+    onHoverIndexChanged: (Int) -> Unit,
+    onCommitIndex: (Int) -> Unit
 ) {
     val isPersonal = activeSpace.type == SpaceType.PERSONAL
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val chipWidthPx = with(density) { 112.dp.toPx() }
+    val dragThresholdY = with(density) { 26.dp.toPx() }
+    val totalSlots = spaceCount + if (canAddAiSpace) 1 else 0
+
     val infiniteTransition = rememberInfiniteTransition(label = "aiGlow")
     val angle by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -104,7 +126,49 @@ fun PillSpaceCapsule(
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surface)
             .then(borderModifier)
-            .clickable { onToggleExpand() }
+            .pointerInput(isExpanded, totalSlots) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val wasAlreadyOpen = isExpanded
+                    if (!wasAlreadyOpen) {
+                        onSetExpanded(true)
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    var dragged = false
+                    var lastHover = -1
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            if (dragged && lastHover >= 0) {
+                                onCommitIndex(lastHover)
+                                onHoverIndexChanged(-1)
+                                onSetExpanded(false)
+                            } else if (wasAlreadyOpen) {
+                                onSetExpanded(false)
+                                onHoverIndexChanged(-1)
+                            } else {
+                                onHoverIndexChanged(-1)
+                            }
+                            break
+                        }
+                        val dy = change.position.y - down.position.y
+                        val dx = change.position.x
+                        if (dy > dragThresholdY) {
+                            dragged = true
+                            val idx = (dx / chipWidthPx).toInt().coerceIn(0, (totalSlots - 1).coerceAtLeast(0))
+                            if (idx != lastHover) {
+                                lastHover = idx
+                                onHoverIndexChanged(idx)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        } else if (lastHover != -1) {
+                            lastHover = -1
+                            onHoverIndexChanged(-1)
+                        }
+                    }
+                }
+            }
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -112,9 +176,7 @@ fun PillSpaceCapsule(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 파란 점(Personal): 선택 시 채워진 원, 비선택 시 원링
             SpaceDotIndicator(color = EgoCobalt, filled = isPersonal)
-            // 초록 점(AI): 선택 시 채워진 원, 비선택 시 원링
             SpaceDotIndicator(color = EgoEmerald, filled = !isPersonal)
         }
     }
@@ -137,18 +199,19 @@ fun ExpandedSpaceSlideBar(
     spaces: List<BrowserSpace>,
     activeSpaceId: String,
     canAddAiSpace: Boolean,
+    hoveredIndex: Int = -1,
     onSelectSpace: (String) -> Unit,
     onCreateAiSpace: () -> Unit,
     onCloseAiSpace: (String) -> Unit
 ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(150)) + expandVertically(tween(180)),
-        exit = fadeOut(tween(120)) + shrinkVertically(tween(150))
+        enter = fadeIn(tween(130)) + expandVertically(tween(160)),
+        exit = fadeOut(tween(110)) + shrinkVertically(tween(130))
     ) {
         Surface(
-            shadowElevation = 6.dp,
-            tonalElevation = 3.dp,
+            shadowElevation = 8.dp,
+            tonalElevation = 4.dp,
             shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
@@ -161,14 +224,15 @@ fun ExpandedSpaceSlideBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                spaces.forEach { space ->
+                spaces.forEachIndexed { idx, space ->
                     val selected = space.id == activeSpaceId
+                    val isHovered = hoveredIndex == idx
                     val isAi = space.type == SpaceType.AI
                     val dotColor = if (isAi) EgoEmerald else EgoCobalt
-                    val bgColor = if (selected) {
-                        dotColor.copy(alpha = 0.14f)
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                    val bgColor = when {
+                        isHovered -> dotColor.copy(alpha = 0.28f)
+                        selected -> dotColor.copy(alpha = 0.14f)
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
                     }
 
                     Row(
@@ -176,16 +240,19 @@ fun ExpandedSpaceSlideBar(
                             .height(36.dp)
                             .clip(CircleShape)
                             .background(bgColor)
+                            .then(
+                                if (isHovered) Modifier.border(1.5.dp, dotColor, CircleShape) else Modifier
+                            )
                             .clickable { onSelectSpace(space.id) }
                             .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        SpaceDotIndicator(color = dotColor, filled = selected)
+                        SpaceDotIndicator(color = dotColor, filled = selected || isHovered)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = space.name,
                             fontSize = 13.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            fontWeight = if (selected || isHovered) FontWeight.Bold else FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         if (isAi && space.aiStatus == AiSpaceStatus.WORKING) {
@@ -212,11 +279,13 @@ fun ExpandedSpaceSlideBar(
                 }
 
                 if (canAddAiSpace) {
+                    val isAddHovered = hoveredIndex == spaces.size
                     Box(
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .background(if (isAddHovered) EgoEmerald.copy(alpha = 0.28f) else MaterialTheme.colorScheme.surfaceVariant)
+                            .then(if (isAddHovered) Modifier.border(1.5.dp, EgoEmerald, CircleShape) else Modifier)
                             .clickable { onCreateAiSpace() },
                         contentAlignment = Alignment.Center
                     ) {
