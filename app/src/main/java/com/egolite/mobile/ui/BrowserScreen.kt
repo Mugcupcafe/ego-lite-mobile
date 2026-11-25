@@ -171,6 +171,7 @@ fun BrowserScreen() {
     val adBlockState by AdBlockEngine.state.collectAsState()
     val fullscreenVideo by BrowserActivityBridge.fullscreenVideo.collectAsState()
     val longPressTarget by BrowserActivityBridge.longPressTarget.collectAsState()
+    val externalOpenSeq by BrowserActivityBridge.externalOpenSeq.collectAsState()
     val recentlyClosed by SpaceManager.recentlyClosedTabs.collectAsState()
 
     val activeSpace = spaces.firstOrNull { it.id == activeSpaceId } ?: spaces.first()
@@ -389,6 +390,23 @@ fun BrowserScreen() {
         })
     }
 
+    // 제미나이 등 외부 앱에서 링크를 열어 진입 시 열려 있던 오버레이를 즉시 닫아 웹화면 노출 보장
+    LaunchedEffect(externalOpenSeq) {
+        if (externalOpenSeq > 0L) {
+            showChromeSettings = false
+            showMcpDrawer = false
+            showBookmarkManager = false
+            showTabSwitcher = false
+            showOmniboxOverlay = false
+            showChromeMenu = false
+            spaceBarExpanded = false
+            showHistoryDialog = false
+            showAdBlockDialog = false
+            readerMarkdown = null
+            previewPageUrl = null
+        }
+    }
+
     LaunchedEffect(activeSpace.id, activeTab.id) {
         translateState = translateState.copy(
             visible = false,
@@ -429,9 +447,14 @@ fun BrowserScreen() {
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val workingSpace = spaces.firstOrNull {
+                    it.type == SpaceType.AI && (it.aiStatus == AiSpaceStatus.WORKING || it.aiStatus == AiSpaceStatus.THINKING)
+                }
+                val workingAccent = parseSpaceColor(workingSpace?.accentColorHex ?: activeSpace.accentColorHex)
                 PillSpaceCapsule(
                     activeSpace = activeSpace,
-                    isAnyAiWorking = isAnyAiWorking,
+                    isAnyAiWorking = workingSpace != null,
+                    workingAccentColor = workingAccent,
                     spaceCount = spaces.size,
                     canAddAiSpace = canAddAiSpace,
                     isExpanded = spaceBarExpanded,
@@ -925,9 +948,10 @@ fun BrowserScreen() {
                 }
             }
 
-            // 웹 캔버스 (AI Space일 때 2dp 에메랄드 테두리 + 안정적 풀스크린 WebView 호스트)
+            val activeSpaceAccent = parseSpaceColor(activeSpace.accentColorHex)
+            // 웹 캔버스 (AI Space일 때 2dp 커스텀 공간 색상 테두리 + 안정적 풀스크린 WebView 호스트)
             val canvasBorder = if (activeSpace.type == SpaceType.AI) {
-                Modifier.border(2.dp, EgoEmerald, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                Modifier.border(2.dp, activeSpaceAccent, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             } else Modifier
 
             Box(
@@ -948,6 +972,19 @@ fun BrowserScreen() {
                         onNavigate = { url -> SpaceManager.navigate(activeSpace.id, url) },
                         onEditBookmark = { bm -> editingBookmark = bm },
                         onAddBookmark = { showAddBookmarkDialog = true }
+                    )
+                }
+                // AI Space 하단 young-newt-20 MCP 동작 표기 캡슐 HUD (비작동 IDLE 시 자동 숨김)
+                if (activeSpace.type == SpaceType.AI) {
+                    McpStatusCapsuleHud(
+                        visible = activeSpace.aiStatus != AiSpaceStatus.IDLE,
+                        status = activeSpace.aiStatus,
+                        message = activeSpace.lastActionSummary,
+                        accentColor = activeSpaceAccent,
+                        darkTheme = isEffectiveDark,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 18.dp)
                     )
                 }
             }
@@ -972,7 +1009,8 @@ fun BrowserScreen() {
                 onCreateAiSpace = {
                     SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
                 },
-                onCloseAiSpace = { id -> SpaceManager.closeAiSpace(id) }
+                onCloseAiSpace = { id -> SpaceManager.closeAiSpace(id) },
+                onChangeSpaceColor = { id, hex -> SpaceManager.setSpaceAccentColor(id, hex) }
             )
         }
 
