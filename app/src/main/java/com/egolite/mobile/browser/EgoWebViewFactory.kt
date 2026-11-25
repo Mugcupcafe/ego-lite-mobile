@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Message
 import android.util.Base64
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -26,9 +27,25 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.egolite.mobile.model.LongPressTarget
 import com.egolite.mobile.model.WebFontMode
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileInputStream
 
 object EgoWebViewFactory {
+
+    private fun buildRealMobileChromeUa(context: Context): String {
+        val raw = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrDefault("")
+        if (raw.isBlank()) return MOBILE_CHROME_UA
+        // Strip only "; wv" so Chrome version, Android version & Client Hints match 100% (passes Cloudflare Turnstile)
+        return raw.replace("; wv)", ")").replace("Version/4.0 ", "")
+    }
+
+    private fun buildRealDesktopChromeUa(context: Context): String {
+        val raw = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrDefault("")
+        val ver = Regex("""Chrome/([0-9.]+)""").find(raw)?.groupValues?.getOrNull(1) ?: "134.0.0.0"
+        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$ver Safari/537.36"
+    }
 
     private const val DESKTOP_CHROME_UA =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
@@ -64,7 +81,7 @@ object EgoWebViewFactory {
         return h == "accounts.google.com" || h.endsWith(".accounts.google.com") || h == "accounts.youtube.com"
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     fun createWebView(
         context: Context,
         tabId: String,
@@ -103,7 +120,7 @@ object EgoWebViewFactory {
             allowFileAccess = false
             allowContentAccess = true
             textZoom = textZoomProvider()
-            userAgentString = if (desktopModeProvider()) DESKTOP_CHROME_UA else MOBILE_CHROME_UA
+            userAgentString = if (desktopModeProvider()) buildRealDesktopChromeUa(context) else buildRealMobileChromeUa(context)
             // Google 로그인 WebView 탐지 차단: X-Requested-With 패키지명 헤더 제거
             if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
                 runCatching { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet()) }
@@ -115,10 +132,25 @@ object EgoWebViewFactory {
             BrowserActivityBridge.enqueueDownload(context, url, userAgent, contentDisposition, mimeType)
         }
 
-        // 링크 · 이미지 길게 누르기 컨텍스트 메뉴 (크롬 1:1 — 제목/URL/이미지 함께 추출)
+        // 롱프레스 팝업의 정확한 터치 위치 계산용 좌표 기록 (WebView 기본 스크롤/클릭 동작은 그대로 통과)
+        var lastTouchLocalX = -1f
+        var lastTouchLocalY = -1f
+        webView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
+                lastTouchLocalX = event.x
+                lastTouchLocalY = event.y
+            }
+            false
+        }
+
+        // 링크 · 이미지 길게 누르기 컨텍스트 메뉴 (크롬 1:1 — 터치 위치 기준 + 제목/URL/이미지 추출)
         webView.setOnLongClickListener { view ->
             val wv = view as? WebView ?: return@setOnLongClickListener false
             val hit = wv.hitTestResult
+            val winLoc = IntArray(2)
+            wv.getLocationInWindow(winLoc)
+            val tx = if (lastTouchLocalX >= 0f) winLoc[0] + lastTouchLocalX else -1f
+            val ty = if (lastTouchLocalY >= 0f) winLoc[1] + lastTouchLocalY else -1f
             when (hit.type) {
                 WebView.HitTestResult.SRC_ANCHOR_TYPE -> {
                     val msg = wv.handler?.obtainMessage()
@@ -126,14 +158,20 @@ object EgoWebViewFactory {
                         wv.requestFocusNodeHref(msg)
                         val linkTitle = msg.data?.getString("title")
                         val linkHref = msg.data?.getString("url") ?: hit.extra
-                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = linkHref, linkText = linkTitle))
+                        BrowserActivityBridge.showLongPressMenu(
+                            LongPressTarget(linkUrl = linkHref, linkText = linkTitle, touchX = tx, touchY = ty)
+                        )
                     } else {
-                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = hit.extra))
+                        BrowserActivityBridge.showLongPressMenu(
+                            LongPressTarget(linkUrl = hit.extra, touchX = tx, touchY = ty)
+                        )
                     }
                     true
                 }
                 WebView.HitTestResult.IMAGE_TYPE -> {
-                    BrowserActivityBridge.showLongPressMenu(LongPressTarget(imageUrl = hit.extra))
+                    BrowserActivityBridge.showLongPressMenu(
+                        LongPressTarget(imageUrl = hit.extra, touchX = tx, touchY = ty)
+                    )
                     true
                 }
                 WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
@@ -143,10 +181,12 @@ object EgoWebViewFactory {
                         val link = msg.data?.getString("url")
                         val title = msg.data?.getString("title")
                         BrowserActivityBridge.showLongPressMenu(
-                            LongPressTarget(linkUrl = link ?: hit.extra, linkText = title, imageUrl = hit.extra)
+                            LongPressTarget(linkUrl = link ?: hit.extra, linkText = title, imageUrl = hit.extra, touchX = tx, touchY = ty)
                         )
                     } else {
-                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = hit.extra, imageUrl = hit.extra))
+                        BrowserActivityBridge.showLongPressMenu(
+                            LongPressTarget(linkUrl = hit.extra, imageUrl = hit.extra, touchX = tx, touchY = ty)
+                        )
                     }
                     true
                 }
@@ -161,7 +201,33 @@ object EgoWebViewFactory {
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                val reqUrl = request?.url?.toString()
+                val reqUrl = request?.url?.toString().orEmpty()
+                // 1) Serve local user-picked custom .ttf/.otf font cleanly with CORS
+                if (reqUrl.startsWith(CUSTOM_FONT_VIRTUAL_URL)) {
+                    val path = SpaceManager.preferences.value.customFontPath
+                    val file = if (path.isNotBlank()) File(path) else null
+                    if (file != null && file.exists()) {
+                        val mime = if (file.name.endsWith(".otf", true)) "font/otf" else "font/ttf"
+                        return WebResourceResponse(
+                            mime,
+                            null,
+                            200,
+                            "OK",
+                            mapOf("Access-Control-Allow-Origin" to "*", "Cache-Control" to "no-cache"),
+                            FileInputStream(file)
+                        )
+                    }
+                }
+                // 2) Block remote site webfonts when SYSTEM_FONT or CUSTOM_TTF is active (keep icon fonts intact)
+                val fontMode = SpaceManager.preferences.value.webFontMode
+                if (fontMode == WebFontMode.SYSTEM_FONT || fontMode == WebFontMode.CUSTOM_TTF) {
+                    val lower = reqUrl.lowercase().substringBefore("?")
+                    val isFontFile = lower.endsWith(".woff2") || lower.endsWith(".woff") || lower.endsWith(".ttf") || lower.endsWith(".otf")
+                    val isIconFont = lower.contains("icon") || lower.contains("fontawesome") || lower.contains("fa-") || lower.contains("material") || lower.contains("symbol") || lower.contains("glyph")
+                    if (isFontFile && !isIconFont) {
+                        return WebResourceResponse("text/plain", "utf-8", 204, "No Content", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+                    }
+                }
                 if (request?.isForMainFrame == true) {
                     currentPageHost = AdBlockEngine.extractHost(reqUrl)
                     return super.shouldInterceptRequest(view, request)
@@ -184,9 +250,9 @@ object EgoWebViewFactory {
                         val desiredUa = if (isGoogleAuthHost(host)) {
                             GOOGLE_AUTH_UA
                         } else if (desktopModeProvider()) {
-                            DESKTOP_CHROME_UA
+                            buildRealDesktopChromeUa(context)
                         } else {
-                            MOBILE_CHROME_UA
+                            buildRealMobileChromeUa(context)
                         }
                         if (view.settings.userAgentString != desiredUa) {
                             view.settings.userAgentString = desiredUa
@@ -197,6 +263,18 @@ object EgoWebViewFactory {
                     return false
                 }
                 return handleExternalScheme(context, url)
+            }
+
+            override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                super.doUpdateVisitedHistory(view, url, isReload)
+                if (view != null) {
+                    onPageFinished(
+                        url ?: view.url.orEmpty(),
+                        view.title?.ifBlank { url.orEmpty() } ?: "새 탭",
+                        view.canGoBack(),
+                        view.canGoForward()
+                    )
+                }
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -290,12 +368,20 @@ object EgoWebViewFactory {
                 origin: String?,
                 callback: GeolocationPermissions.Callback?
             ) {
-                callback?.invoke(origin, true, false)
+                callback?.invoke(origin, SpaceManager.preferences.value.allowLocation, false)
             }
 
             // 웹 카메라 · 마이크 권한 허용
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.grant(request.resources)
+                val prefs = SpaceManager.preferences.value
+                val allowed = request?.resources?.filter { res ->
+                    when (res) {
+                        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> prefs.allowCamera
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> prefs.allowMic
+                        else -> true
+                    }
+                }?.toTypedArray() ?: emptyArray()
+                if (allowed.isNotEmpty()) request?.grant(allowed) else request?.deny()
             }
         }
 
@@ -310,7 +396,7 @@ object EgoWebViewFactory {
     }
 
     fun applyDesktopMode(webView: WebView, desktop: Boolean) {
-        webView.settings.userAgentString = if (desktop) DESKTOP_CHROME_UA else MOBILE_CHROME_UA
+        webView.settings.userAgentString = if (desktop) buildRealDesktopChromeUa(webView.context) else buildRealMobileChromeUa(webView.context)
         webView.settings.useWideViewPort = true
         webView.settings.loadWithOverviewMode = true
     }
@@ -319,22 +405,39 @@ object EgoWebViewFactory {
         webView.settings.textZoom = zoom.coerceIn(75, 150)
     }
 
-    fun applyWebFont(webView: WebView, mode: WebFontMode) {
-        val cssFamily = when (mode) {
-            WebFontMode.SITE_DEFAULT -> ""
-            WebFontMode.SYSTEM_FONT -> "system-ui, -apple-system, Roboto, sans-serif"
-            WebFontMode.CLEAN_GOTHIC -> "'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif"
-            WebFontMode.SERIF -> "'Noto Serif KR', Georgia, serif"
-        }
-        val js = if (cssFamily.isEmpty()) {
-            """
-            (function() {
-                var el = document.getElementById('ego-web-font-css');
-                if (el) el.remove();
-            })();
+    const val CUSTOM_FONT_VIRTUAL_URL = "https://ego-local-font.internal/custom.ttf"
+
+    fun applyWebFont(webView: WebView, mode: WebFontMode, customFontPath: String = SpaceManager.preferences.value.customFontPath) {
+        if (mode == WebFontMode.SITE_DEFAULT) {
+            val removeJs = """
+                (function() {
+                    var el = document.getElementById('ego-web-font-css');
+                    if (el) el.remove();
+                })();
             """.trimIndent()
-        } else {
-            """
+            webView.evaluateJavascript(removeJs, null)
+            return
+        }
+
+        val hasCustomFile = mode == WebFontMode.CUSTOM_TTF && customFontPath.isNotBlank() && File(customFontPath).exists()
+        val fontFaceRule = if (hasCustomFile) {
+            val ver = File(customFontPath).lastModified()
+            "@font-face { font-family: \"EgoCustomFont\"; src: url(\"$CUSTOM_FONT_VIRTUAL_URL?v=$ver\") format(\"truetype\"); font-weight: 100 900; font-display: swap; } "
+        } else ""
+
+        val cssFamily = when {
+            hasCustomFile -> "\"EgoCustomFont\", sans-serif"
+            mode == WebFontMode.SYSTEM_FONT -> "sans-serif"
+            mode == WebFontMode.CLEAN_GOTHIC -> "\"Noto Sans KR\", \"Malgun Gothic\", sans-serif"
+            mode == WebFontMode.SERIF -> "\"Noto Serif KR\", Georgia, serif"
+            else -> "sans-serif"
+        }
+
+        val selector = "html, body, p, span, div, a, li, td, th, h1, h2, h3, h4, h5, h6, input, button, textarea, article, section"
+        val excludeIcons = ":not([class*=\"icon\"]):not([class*=\"Icon\"]):not([class*=\"fa-\"]):not(.material-icons):not(.material-symbols-outlined)"
+        val fullCss = fontFaceRule + selector.split(", ").joinToString(", ") { it + excludeIcons } + " { font-family: $cssFamily !important; }"
+
+        val injectJs = """
             (function() {
                 var el = document.getElementById('ego-web-font-css');
                 if (!el) {
@@ -342,11 +445,19 @@ object EgoWebViewFactory {
                     el.id = 'ego-web-font-css';
                     (document.head || document.documentElement).appendChild(el);
                 }
-                el.textContent = 'html, body, p, span, div, a, li, h1, h2, h3, h4, h5, h6, input, button, textarea { font-family: $cssFamily !important; }';
+                el.textContent = "$fullCss";
             })();
-            """.trimIndent()
-        }
-        webView.evaluateJavascript(js, null)
+        """.trimIndent()
+        webView.evaluateJavascript(injectJs, null)
+    }
+
+    fun applySitePreferences(webView: WebView, prefs: com.egolite.mobile.model.BrowserPreferences) {
+        webView.settings.javaScriptEnabled = prefs.allowJavaScript
+        webView.settings.javaScriptCanOpenWindowsAutomatically = prefs.allowPopups
+        webView.settings.setSupportMultipleWindows(prefs.allowPopups)
+        webView.settings.builtInZoomControls = true
+        webView.settings.setSupportZoom(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, prefs.allowThirdPartyCookies)
     }
 
     fun getCurrentChromiumVersion(context: Context): String {
