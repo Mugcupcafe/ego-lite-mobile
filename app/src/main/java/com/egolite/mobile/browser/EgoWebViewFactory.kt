@@ -231,6 +231,11 @@ object EgoWebViewFactory {
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
+                super.onReceivedIcon(view, icon)
+                FaviconCache.putIcon(context, view?.url, icon)
+            }
+
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 onProgressChanged(newProgress)
             }
