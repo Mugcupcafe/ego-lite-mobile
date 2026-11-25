@@ -4,6 +4,23 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.app.DownloadManager
+import android.provider.Settings
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
+import androidx.compose.material.icons.filled.AddBox
+import androidx.compose.material.icons.filled.AddToHomeScreen
+import androidx.compose.material.icons.filled.Contrast
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ZoomIn
+import com.egolite.mobile.R
+import com.egolite.mobile.model.ThemeMode
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -17,6 +34,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -190,6 +208,12 @@ fun BrowserScreen() {
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
 
+    val systemDark = isSystemInDarkTheme()
+    val isEffectiveDark = when (prefs.themeMode) {
+        ThemeMode.SYSTEM -> systemDark
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+    }
     val activeIconColor = MaterialTheme.colorScheme.onSurface
     val mutedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
 
@@ -198,68 +222,6 @@ fun BrowserScreen() {
     val pageBlockedCount = adBlockState.perTabCounts[activeTab.id] ?: 0
     val isSiteAdBlockOn = AdBlockEngine.isEnabledForHost(currentHost)
     val canAddAiSpace = spaces.count { it.type == SpaceType.AI } < prefs.maxAiSpaces
-
-    // 크롬형 문맥 인식 메뉴: 내부 페이지(새 탭)에서는 공통 메뉴만, 실제 웹페이지에서만 웹 전용 항목 표시
-    val chromeMenuItems = buildList {
-        add(
-            ChromeMenuItemSpec(
-                title = if (isMcpDisconnected) "MCP · 터널 설정 (끊김)" else "MCP · 터널 설정 (연결됨)",
-                icon = Icons.Default.Hub,
-                accentColor = if (isMcpDisconnected) EgoDangerRed else EgoEmerald,
-                bold = true,
-                dividerAfter = true,
-                onClick = { showMcpDrawer = true }
-            )
-        )
-        add(ChromeMenuItemSpec("새 탭", Icons.Default.Add) { SpaceManager.createTab(activeSpace.id) })
-        add(ChromeMenuItemSpec("새 시크릿 탭", Icons.Default.VisibilityOff) { SpaceManager.createTab(activeSpace.id, incognito = true) })
-        if (recentlyClosed.isNotEmpty()) {
-            add(ChromeMenuItemSpec("닫은 탭 다시 열기", Icons.Default.Restore) { SpaceManager.reopenLastClosedTab(activeSpace.id) })
-        }
-        add(ChromeMenuItemSpec("새 AI Space", Icons.Default.SmartToy, accentColor = EgoEmerald, dividerAfter = true) {
-            SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
-        })
-        add(ChromeMenuItemSpec("북마크 바 표시", Icons.Default.BookmarkBorder, checked = prefs.showBookmarkBar) {
-            SpaceManager.updatePreferences { it.copy(showBookmarkBar = !it.showBookmarkBar) }
-        })
-        add(ChromeMenuItemSpec("북마크 관리", Icons.Default.StarBorder) { showBookmarkManager = true })
-        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History) { showHistoryDialog = true })
-        add(ChromeMenuItemSpec("방문 기록 · 캐시 삭제", Icons.Default.DeleteSweep, dividerAfter = true) {
-            SpaceManager.clearHistoryAndCache()
-            Toast.makeText(context, "방문 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
-        })
-        if (isWebPage) {
-            add(ChromeMenuItemSpec("읽기 모드 (본문만 보기)", Icons.Default.MenuBook) {
-                scope.launch {
-                    runCatching {
-                        val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
-                        val md = JSONObject(raw).optString("markdown", "")
-                        readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
-                    }
-                }
-            })
-            add(ChromeMenuItemSpec("인쇄 / PDF 저장", Icons.Default.Print) { SpaceManager.printActiveTab(context, activeSpace.id) })
-            add(ChromeMenuItemSpec("페이지에서 찾기", Icons.Default.FindInPage) { showFindBar = true })
-            add(ChromeMenuItemSpec("공유", Icons.Default.Share) {
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
-                    putExtra(Intent.EXTRA_TEXT, activeTab.url)
-                }
-                context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
-            })
-            add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy) {
-                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
-                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
-            })
-            add(ChromeMenuItemSpec("데스크톱 사이트", Icons.Default.DesktopWindows, checked = prefs.desktopModeEnabled, dividerAfter = true) {
-                SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
-                SpaceManager.reload(activeSpace.id)
-            })
-        }
-        add(ChromeMenuItemSpec("설정", Icons.Default.Settings) { showChromeSettings = true })
-    }
 
     fun triggerTranslation(src: String, dst: String) {
         if (activeTab.url == NEW_TAB_URL) {
@@ -292,6 +254,138 @@ fun BrowserScreen() {
                 }
             )
         }
+    }
+
+    // 크롬 태블릿 1:1 문맥 인식 메뉴 (글자 크기 조절 포함)
+    val chromeMenuItems = buildList {
+        add(
+            ChromeMenuItemSpec(
+                title = if (isMcpDisconnected) "MCP · 터널 설정 (끊김)" else "MCP · 터널 설정 (연결됨)",
+                icon = Icons.Default.Hub,
+                accentColor = if (isMcpDisconnected) EgoDangerRed else EgoEmerald,
+                bold = true,
+                dividerAfter = true,
+                onClick = { showMcpDrawer = true }
+            )
+        )
+        add(ChromeMenuItemSpec("새 탭", Icons.Default.AddBox) { SpaceManager.createTab(activeSpace.id) })
+        add(ChromeMenuItemSpec("새 창 (AI Space)", Icons.Default.SmartToy, accentColor = EgoEmerald) {
+            SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+        })
+        add(ChromeMenuItemSpec("새 시크릿 창", Icons.Default.VisibilityOff, dividerAfter = true) {
+            SpaceManager.createTab(activeSpace.id, incognito = true)
+        })
+        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History) { showHistoryDialog = true })
+        add(ChromeMenuItemSpec("인터넷 사용 기록 삭제", Icons.Default.DeleteOutline) {
+            SpaceManager.clearHistoryAndCache()
+            Toast.makeText(context, "인터넷 사용 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
+        })
+        add(ChromeMenuItemSpec("사이트 제어", Icons.Default.Tune, dividerAfter = true) {
+            if (isWebPage) showAdBlockDialog = true else showChromeSettings = true
+        })
+        add(ChromeMenuItemSpec("다운로드", Icons.Default.DownloadDone) {
+            runCatching {
+                context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
+            }.onFailure {
+                Toast.makeText(context, "다운로드 앱을 열 수 없습니다", Toast.LENGTH_SHORT).show()
+            }
+        })
+        add(ChromeMenuItemSpec("북마크", Icons.Default.StarBorder) { showBookmarkManager = true })
+        add(ChromeMenuItemSpec("북마크 바 표시", Icons.Default.BookmarkBorder, checked = prefs.showBookmarkBar, isToggleCheckbox = true) {
+            SpaceManager.updatePreferences { it.copy(showBookmarkBar = !it.showBookmarkBar) }
+        })
+        add(ChromeMenuItemSpec("최근 탭", Icons.Default.Devices, dividerAfter = true) {
+            if (recentlyClosed.isNotEmpty()) {
+                SpaceManager.reopenLastClosedTab(activeSpace.id)
+            } else {
+                Toast.makeText(context, "최근 닫은 탭이 없습니다", Toast.LENGTH_SHORT).show()
+            }
+        })
+        // 글자 크기 (확대/축소) 인라인 조절 — 크롬 1:1 (- 100% +)
+        add(
+            ChromeMenuItemSpec(
+                title = "확대/축소",
+                icon = Icons.Default.ZoomIn,
+                dividerAfter = true,
+                zoomPercent = prefs.textZoom,
+                onZoomOut = {
+                    SpaceManager.updatePreferences { it.copy(textZoom = (it.textZoom - 10).coerceIn(75, 150)) }
+                },
+                onZoomReset = {
+                    SpaceManager.updatePreferences { it.copy(textZoom = 100) }
+                },
+                onZoomIn = {
+                    SpaceManager.updatePreferences { it.copy(textZoom = (it.textZoom + 10).coerceIn(75, 150)) }
+                }
+            )
+        )
+        if (isWebPage) {
+            add(ChromeMenuItemSpec("공유...", Icons.Default.Share) {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
+                    putExtra(Intent.EXTRA_TEXT, activeTab.url)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
+            })
+            add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy) {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
+                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
+            })
+            add(ChromeMenuItemSpec("다운로드 페이지 (PDF)", Icons.Default.Download) {
+                SpaceManager.printActiveTab(context, activeSpace.id)
+            })
+            add(ChromeMenuItemSpec("페이지에서 찾기", Icons.Default.FindInPage) { showFindBar = true })
+            add(ChromeMenuItemSpec("번역...", Icons.Default.Translate) {
+                triggerTranslation("auto", prefs.defaultTranslateTarget)
+            })
+            add(ChromeMenuItemSpec("읽기 모드 표시", Icons.Default.MenuBook) {
+                scope.launch {
+                    runCatching {
+                        val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                        val md = JSONObject(raw).optString("markdown", "")
+                        readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                    }
+                }
+            })
+            add(ChromeMenuItemSpec("홈 화면에 바로가기 추가", Icons.Default.AddToHomeScreen, dividerAfter = true) {
+                runCatching {
+                    val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(activeTab.url)).apply {
+                        setPackage(context.packageName)
+                    }
+                    val shortcut = ShortcutInfoCompat.Builder(context, "ego_sc_${activeTab.url.hashCode()}")
+                        .setShortLabel(activeTab.title.ifBlank { currentHost.ifBlank { "웹 페이지" } }.take(24))
+                        .setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
+                        .setIntent(launchIntent)
+                        .build()
+                    if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
+                        ShortcutManagerCompat.requestPinShortcut(context, shortcut, null)
+                        Toast.makeText(context, "홈 화면 바로가기 추가 요청됨", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "런처가 바로가기 고정을 지원하지 않습니다", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            })
+            add(ChromeMenuItemSpec("데스크톱 사이트", Icons.Default.DesktopWindows, checked = prefs.desktopModeEnabled, isToggleCheckbox = true) {
+                SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
+                SpaceManager.reload(activeSpace.id)
+            })
+        }
+        add(ChromeMenuItemSpec("어두운 테마", Icons.Default.Contrast, checked = isEffectiveDark, isToggleCheckbox = true, dividerAfter = true) {
+            val nextDark = !isEffectiveDark
+            SpaceManager.updatePreferences {
+                it.copy(darkModeEnabled = nextDark, themeMode = if (nextDark) ThemeMode.DARK else ThemeMode.LIGHT)
+            }
+        })
+        add(ChromeMenuItemSpec("설정", Icons.Default.Settings) { showChromeSettings = true })
+        add(ChromeMenuItemSpec("ego(lite)를 기본값으로 설정", Icons.Default.Language) {
+            runCatching {
+                context.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+            }.onFailure {
+                showChromeSettings = true
+            }
+        })
     }
 
     LaunchedEffect(activeSpace.id, activeTab.id) {
@@ -368,7 +462,7 @@ fun BrowserScreen() {
                                 .widthIn(min = 110.dp, max = 210.dp)
                                 .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
                                 .background(
-                                    if (prefs.darkModeEnabled) {
+                                    if (isEffectiveDark) {
                                         if (isSelected) DarkTabSelected else DarkTabUnselected
                                     } else {
                                         if (isSelected) LightTabSelected else LightTabUnselected
@@ -628,13 +722,13 @@ fun BrowserScreen() {
 
                 // 주/야간 다크모드 토글
                 IconButton(
-                    onClick = { SpaceManager.updatePreferences { val next = !it.darkModeEnabled; it.copy(darkModeEnabled = next, themeMode = if (next) com.egolite.mobile.model.ThemeMode.DARK else com.egolite.mobile.model.ThemeMode.LIGHT) } },
+                    onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
                     modifier = Modifier.size(42.dp)
                 ) {
                     Icon(
-                        imageVector = if (prefs.darkModeEnabled) Icons.Default.LightMode else Icons.Default.DarkMode,
+                        imageVector = if (isEffectiveDark) Icons.Default.LightMode else Icons.Default.DarkMode,
                         contentDescription = "다크모드 전환",
-                        tint = if (prefs.darkModeEnabled) MaterialTheme.colorScheme.primary else activeIconColor
+                        tint = if (isEffectiveDark) MaterialTheme.colorScheme.primary else activeIconColor
                     )
                 }
 
@@ -687,9 +781,11 @@ fun BrowserScreen() {
                                     if (!change.pressed) {
                                         if (dragged && lastHover in itemsNow.indices) {
                                             val chosen = itemsNow[lastHover]
-                                            showChromeMenu = false
                                             hoveredMenuIndex = -1
-                                            chosen.onClick()
+                                            if (chosen.zoomPercent == null) {
+                                                showChromeMenu = false
+                                                chosen.onClick()
+                                            }
                                         } else if (dragged || wasAlreadyOpen) {
                                             // 드래그 후 메뉴 밖에서 손을 떼면 선택 없이 자동으로 닫힘
                                             showChromeMenu = false
@@ -977,7 +1073,7 @@ fun BrowserScreen() {
             ChromeLongPressContextMenu(
                 target = target,
                 activeSpaceId = activeSpace.id,
-                darkTheme = prefs.darkModeEnabled,
+                darkTheme = isEffectiveDark,
                 onPreviewPage = { url -> previewPageUrl = url },
                 onDismiss = { BrowserActivityBridge.dismissLongPressMenu() }
             )
