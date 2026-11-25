@@ -103,12 +103,16 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import com.egolite.mobile.browser.AdBlockEngine
@@ -165,6 +169,11 @@ fun BrowserScreen() {
     var previewPageUrl by remember { mutableStateOf<String?>(null) }
     var hoveredSpaceIndex by remember { mutableStateOf(-1) }
     var hoveredMenuIndex by remember { mutableStateOf(-1) }
+    var rootBoxLeftPx by remember { mutableStateOf(0f) }
+    var rootBoxTopPx by remember { mutableStateOf(0f) }
+    var addressBarLeftPx by remember { mutableStateOf(0f) }
+    var addressBarTopPx by remember { mutableStateOf(0f) }
+    var addressBarWidthPx by remember { mutableStateOf(0f) }
     var translateState by remember { mutableStateOf(TranslationPopupState()) }
     var findQuery by remember { mutableStateOf("") }
     var pendingCrashLog by remember { mutableStateOf(com.egolite.mobile.CrashLogger.readLastCrash(context)) }
@@ -178,10 +187,12 @@ fun BrowserScreen() {
     val mutedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     val currentHost = remember(activeTab.url) { AdBlockEngine.extractHost(activeTab.url) }
+    val isWebPage = activeTab.url != NEW_TAB_URL && (activeTab.url.startsWith("http://") || activeTab.url.startsWith("https://"))
     val pageBlockedCount = adBlockState.perTabCounts[activeTab.id] ?: 0
     val isSiteAdBlockOn = AdBlockEngine.isEnabledForHost(currentHost)
     val canAddAiSpace = spaces.count { it.type == SpaceType.AI } < prefs.maxAiSpaces
 
+    // 크롬형 문맥 인식 메뉴: 내부 페이지(새 탭)에서는 공통 메뉴만, 실제 웹페이지에서만 웹 전용 항목 표시
     val chromeMenuItems = buildList {
         add(
             ChromeMenuItemSpec(
@@ -198,7 +209,7 @@ fun BrowserScreen() {
         if (recentlyClosed.isNotEmpty()) {
             add(ChromeMenuItemSpec("닫은 탭 다시 열기", Icons.Default.Restore) { SpaceManager.reopenLastClosedTab(activeSpace.id) })
         }
-        add(ChromeMenuItemSpec("새 AI Space", Icons.Default.SmartToy, accentColor = EgoEmerald) {
+        add(ChromeMenuItemSpec("새 AI Space", Icons.Default.SmartToy, accentColor = EgoEmerald, dividerAfter = true) {
             SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
         })
         add(ChromeMenuItemSpec("북마크 바 표시", Icons.Default.BookmarkBorder, checked = prefs.showBookmarkBar) {
@@ -206,38 +217,40 @@ fun BrowserScreen() {
         })
         add(ChromeMenuItemSpec("북마크 관리", Icons.Default.StarBorder) { showBookmarkManager = true })
         add(ChromeMenuItemSpec("방문 기록", Icons.Default.History) { showHistoryDialog = true })
-        add(ChromeMenuItemSpec("읽기 모드 (본문만 보기)", Icons.Default.MenuBook) {
-            scope.launch {
-                runCatching {
-                    val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
-                    val md = JSONObject(raw).optString("markdown", "")
-                    readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
-                }
-            }
-        })
-        add(ChromeMenuItemSpec("인쇄 / PDF 저장", Icons.Default.Print) { SpaceManager.printActiveTab(context, activeSpace.id) })
-        add(ChromeMenuItemSpec("페이지에서 찾기", Icons.Default.FindInPage) { showFindBar = true })
-        add(ChromeMenuItemSpec("공유", Icons.Default.Share) {
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
-                putExtra(Intent.EXTRA_TEXT, activeTab.url)
-            }
-            context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
-        })
-        add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy) {
-            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
-            Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
-        })
-        add(ChromeMenuItemSpec("데스크톱 사이트", Icons.Default.DesktopWindows, checked = prefs.desktopModeEnabled) {
-            SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
-            SpaceManager.reload(activeSpace.id)
-        })
         add(ChromeMenuItemSpec("방문 기록 · 캐시 삭제", Icons.Default.DeleteSweep, dividerAfter = true) {
             SpaceManager.clearHistoryAndCache()
             Toast.makeText(context, "방문 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
         })
+        if (isWebPage) {
+            add(ChromeMenuItemSpec("읽기 모드 (본문만 보기)", Icons.Default.MenuBook) {
+                scope.launch {
+                    runCatching {
+                        val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                        val md = JSONObject(raw).optString("markdown", "")
+                        readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                    }
+                }
+            })
+            add(ChromeMenuItemSpec("인쇄 / PDF 저장", Icons.Default.Print) { SpaceManager.printActiveTab(context, activeSpace.id) })
+            add(ChromeMenuItemSpec("페이지에서 찾기", Icons.Default.FindInPage) { showFindBar = true })
+            add(ChromeMenuItemSpec("공유", Icons.Default.Share) {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
+                    putExtra(Intent.EXTRA_TEXT, activeTab.url)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
+            })
+            add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy) {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
+                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
+            })
+            add(ChromeMenuItemSpec("데스크톱 사이트", Icons.Default.DesktopWindows, checked = prefs.desktopModeEnabled, dividerAfter = true) {
+                SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
+                SpaceManager.reload(activeSpace.id)
+            })
+        }
         add(ChromeMenuItemSpec("설정", Icons.Default.Settings) { showChromeSettings = true })
     }
 
@@ -298,6 +311,11 @@ fun BrowserScreen() {
             .statusBarsPadding()
             .navigationBarsPadding()
             .imePadding()
+            .onGloballyPositioned { coords ->
+                val p = coords.positionInRoot()
+                rootBoxLeftPx = p.x
+                rootBoxTopPx = p.y
+            }
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // 1행: 최상단 — 알약 캡슐(Personal/AI · Drag-to-Open) + 현재 공간의 크롬형 탭 목록만 배치
@@ -395,7 +413,7 @@ fun BrowserScreen() {
                 }
             }
 
-            // 2행: 주소창 + 조건부 붉은 MCP 끊김 배지 + 광고차단 · 번역 · 다크모드 · 크롬형 모든탭보기[N] · 크롬형 메뉴(⋮)
+            // 2행: 홈 · 뒤로 · 앞으로 · 새로고침 + 주소창 + 조건부 붉은 MCP 끊김 배지 + 광고차단 · 번역 · 다크모드 · 모든탭보기[N] · 메뉴(⋮)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -404,11 +422,21 @@ fun BrowserScreen() {
                     .padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(
+                    onClick = { SpaceManager.goHome(activeSpace.id) },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Home,
+                        contentDescription = "홈",
+                        tint = activeIconColor
+                    )
+                }
                 val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1
                 IconButton(
                     onClick = { SpaceManager.handleBackOrCloseTab(activeSpace.id) },
                     enabled = canBackOrClose,
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
@@ -419,7 +447,7 @@ fun BrowserScreen() {
                 IconButton(
                     onClick = { SpaceManager.goForward(activeSpace.id) },
                     enabled = activeTab.canGoForward,
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowForward,
@@ -429,17 +457,23 @@ fun BrowserScreen() {
                 }
                 IconButton(
                     onClick = { SpaceManager.reload(activeSpace.id) },
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = "새로고침", tint = activeIconColor)
                 }
 
-                // 주소창 (터치 시 모바일 크롬과 동일한 Omnibox 오버레이 표시)
+                // 주소창 (터치 시 실제 주소창과 정확히 같은 위치·길이로 Omnibox 오버레이 표시)
                 val existingBookmark = bookmarks.firstOrNull { it.url == activeTab.url }
                 Row(
                     modifier = Modifier
                         .weight(1f)
                         .height(38.dp)
+                        .onGloballyPositioned { coords ->
+                            val pos = coords.positionInRoot()
+                            addressBarLeftPx = (pos.x - rootBoxLeftPx).coerceAtLeast(0f)
+                            addressBarTopPx = (pos.y - rootBoxTopPx).coerceAtLeast(0f)
+                            addressBarWidthPx = coords.size.width.toFloat()
+                        }
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.background)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
@@ -521,7 +555,7 @@ fun BrowserScreen() {
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // 광고 차단 (짧게: 현재 사이트 ON/OFF + 새로고침, 길게: uBlock 스타일 상세 팝업)
+                // 광고 차단 (짧게: 현재 사이트 ON/OFF + 새로고침, 길게: 크롬 확장 스타일 팝업)
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -566,7 +600,7 @@ fun BrowserScreen() {
                     }
                 }
 
-                // 크롬 스타일 번역 버튼 (클릭 시 팝업 표시 + 즉시 번역)
+                // 크롬 스타일 번역 버튼 (클릭 시 알약 팝업 표시 + 즉시 번역)
                 IconButton(
                     onClick = {
                         if (translateState.visible) {
@@ -584,7 +618,7 @@ fun BrowserScreen() {
                     )
                 }
 
-                // 주/야간 다크모드 토글 (주간: 달 아이콘, 야간: 해 아이콘으로 명확히 구분)
+                // 주/야간 다크모드 토글
                 IconButton(
                     onClick = { SpaceManager.updatePreferences { it.copy(darkModeEnabled = !it.darkModeEnabled) } },
                     modifier = Modifier.size(42.dp)
@@ -619,17 +653,19 @@ fun BrowserScreen() {
                     }
                 }
 
-                // 우측 끝: 크롬형 브라우저 메뉴 (Drag-to-Open & Drag-to-Select 지원)
+                // 우측 끝: 크롬형 브라우저 메뉴 (Drag-to-Open & Drag-to-Select 완벽 지원 — pointerInput(Unit))
                 val menuItemHeightPx = with(density) { 44.dp.toPx() }
                 val menuDragStartPx = with(density) { 26.dp.toPx() }
+                val latestShowMenu by rememberUpdatedState(showChromeMenu)
+                val latestMenuItems by rememberUpdatedState(chromeMenuItems)
                 Box(
                     modifier = Modifier
                         .size(42.dp)
                         .clip(CircleShape)
-                        .pointerInput(showChromeMenu, chromeMenuItems.size) {
+                        .pointerInput(Unit) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                val wasAlreadyOpen = showChromeMenu
+                                val wasAlreadyOpen = latestShowMenu
                                 if (!wasAlreadyOpen) {
                                     showChromeMenu = true
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -639,9 +675,10 @@ fun BrowserScreen() {
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    val itemsNow = latestMenuItems
                                     if (!change.pressed) {
-                                        if (dragged && lastHover in chromeMenuItems.indices) {
-                                            val chosen = chromeMenuItems[lastHover]
+                                        if (dragged && lastHover in itemsNow.indices) {
+                                            val chosen = itemsNow[lastHover]
                                             showChromeMenu = false
                                             hoveredMenuIndex = -1
                                             chosen.onClick()
@@ -658,7 +695,7 @@ fun BrowserScreen() {
                                         dragged = true
                                         val idx = ((dy - menuDragStartPx) / menuItemHeightPx)
                                             .toInt()
-                                            .coerceIn(0, (chromeMenuItems.size - 1).coerceAtLeast(0))
+                                            .coerceIn(0, (itemsNow.size - 1).coerceAtLeast(0))
                                         if (idx != lastHover) {
                                             lastHover = idx
                                             hoveredMenuIndex = idx
@@ -860,13 +897,16 @@ fun BrowserScreen() {
             )
         }
 
-        // 모바일 크롬 스타일 주소창(Omnibox) 오버레이
+        // 모바일 크롬 스타일 주소창(Omnibox) 오버레이 (실제 주소창 위치·길이 1:1 동적 정렬)
         if (showOmniboxOverlay) {
             ChromeOmniboxOverlay(
                 currentTitle = activeTab.title,
                 currentUrl = activeTab.url,
                 bookmarks = bookmarks,
                 recentSearches = recentSearches,
+                anchorLeftPx = addressBarLeftPx,
+                anchorTopPx = addressBarTopPx,
+                anchorWidthPx = addressBarWidthPx,
                 onNavigate = { target -> SpaceManager.navigate(activeSpace.id, target) },
                 onDismiss = { showOmniboxOverlay = false }
             )
