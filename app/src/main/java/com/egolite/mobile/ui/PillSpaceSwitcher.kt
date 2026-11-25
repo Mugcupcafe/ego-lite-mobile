@@ -120,18 +120,24 @@ fun PillSpaceCapsule(
         )
     }
 
+    val latestExpanded by androidx.compose.runtime.rememberUpdatedState(isExpanded)
+    val latestTotalSlots by androidx.compose.runtime.rememberUpdatedState(totalSlots)
+    val latestSetExpanded by androidx.compose.runtime.rememberUpdatedState(onSetExpanded)
+    val latestHoverChanged by androidx.compose.runtime.rememberUpdatedState(onHoverIndexChanged)
+    val latestCommit by androidx.compose.runtime.rememberUpdatedState(onCommitIndex)
+
     Box(
         modifier = Modifier
             .height(38.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surface)
             .then(borderModifier)
-            .pointerInput(isExpanded, totalSlots) {
+            .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val wasAlreadyOpen = isExpanded
+                    val wasAlreadyOpen = latestExpanded
                     if (!wasAlreadyOpen) {
-                        onSetExpanded(true)
+                        latestSetExpanded(true)
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
                     var dragged = false
@@ -141,14 +147,14 @@ fun PillSpaceCapsule(
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) {
                             if (dragged && lastHover >= 0) {
-                                onCommitIndex(lastHover)
-                                onHoverIndexChanged(-1)
-                                onSetExpanded(false)
+                                latestCommit(lastHover)
+                                latestHoverChanged(-1)
+                                latestSetExpanded(false)
                             } else if (wasAlreadyOpen) {
-                                onSetExpanded(false)
-                                onHoverIndexChanged(-1)
+                                latestSetExpanded(false)
+                                latestHoverChanged(-1)
                             } else {
-                                onHoverIndexChanged(-1)
+                                latestHoverChanged(-1)
                             }
                             break
                         }
@@ -156,15 +162,15 @@ fun PillSpaceCapsule(
                         val dx = change.position.x
                         if (dy > dragThresholdY) {
                             dragged = true
-                            val idx = (dx / chipWidthPx).toInt().coerceIn(0, (totalSlots - 1).coerceAtLeast(0))
+                            val idx = (dx / chipWidthPx).toInt().coerceIn(0, (latestTotalSlots - 1).coerceAtLeast(0))
                             if (idx != lastHover) {
                                 lastHover = idx
-                                onHoverIndexChanged(idx)
+                                latestHoverChanged(idx)
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                         } else if (lastHover != -1) {
                             lastHover = -1
-                            onHoverIndexChanged(-1)
+                            latestHoverChanged(-1)
                         }
                     }
                 }
