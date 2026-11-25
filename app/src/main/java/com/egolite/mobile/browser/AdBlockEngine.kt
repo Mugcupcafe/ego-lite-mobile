@@ -183,14 +183,25 @@ object AdBlockEngine {
         }
     }
 
+    private val captchaAllowHosts = setOf(
+        "challenges.cloudflare.com",
+        "cloudflare.com",
+        "cloudflareinsights.com",
+        "hcaptcha.com",
+        "recaptcha.net",
+        "www.google.com",
+        "gstatic.com"
+    )
+
     fun shouldBlock(requestUrl: String?, pageHost: String, tabId: String): Boolean {
         if (requestUrl.isNullOrBlank()) return false
         if (!isEnabledForHost(pageHost)) return false
 
         val uri = runCatching { Uri.parse(requestUrl) }.getOrNull() ?: return false
         val host = uri.host?.lowercase() ?: return false
-        // Never block the main page document host itself
+        // Never block the main page document host or human-verification (Cloudflare Turnstile / hCaptcha / reCAPTCHA)
         if (host == pageHost.lowercase()) return false
+        if (captchaAllowHosts.any { host == it || host.endsWith(".$it") }) return false
 
         val st = _state.value
         val hostMatch = matchesBlockedDomain(host, st.customBlockedHosts)
