@@ -79,8 +79,16 @@ data class BookmarkItem(
     val folder: String = "모바일 북마크"
 )
 
+enum class WebFontMode(val label: String) {
+    SITE_DEFAULT("사이트 기본 폰트"),
+    SYSTEM_FONT("태블릿 시스템 폰트 강제"),
+    CLEAN_GOTHIC("깔끔한 고딕 (Sans-serif)"),
+    SERIF("명조 (Serif)")
+}
+
 data class LongPressTarget(
     val linkUrl: String? = null,
+    val linkText: String? = null,
     val imageUrl: String? = null
 )
 
@@ -94,7 +102,10 @@ data class BrowserPreferences(
     val translationEngine: TranslationEngine = TranslationEngine.ONLINE_GOOGLE,
     val searchEngine: SearchEngine = SearchEngine.GOOGLE,
     val textZoom: Int = 100,
+    val webFontMode: WebFontMode = WebFontMode.SITE_DEFAULT,
+    val homepageUrl: String = "ego://newtab",
     val autoTranslateHosts: Set<String> = emptySet(),
+    val pinnedTranslateLangs: List<String> = listOf("ko", "en", "ja", "zh-CN"),
     val firecrawlApiKey: String = ""
 )
 
