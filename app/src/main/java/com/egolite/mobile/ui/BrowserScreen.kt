@@ -155,6 +155,7 @@ fun BrowserScreen() {
     var readerMarkdown by remember { mutableStateOf<String?>(null) }
     var translateState by remember { mutableStateOf(TranslationPopupState()) }
     var findQuery by remember { mutableStateOf("") }
+    var pendingCrashLog by remember { mutableStateOf(com.egolite.mobile.CrashLogger.readLastCrash(context)) }
 
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
@@ -1199,6 +1200,49 @@ fun BrowserScreen() {
                 },
                 confirmButton = {
                     TextButton(onClick = { showHistoryDialog = false }) { Text("닫기") }
+                }
+            )
+        }
+
+        // 이전 실행 크래시 로그 팝업 (튕김 발생 시 다음 실행에서 즉시 확인·복사 가능)
+        pendingCrashLog?.let { crashText ->
+            AlertDialog(
+                onDismissRequest = {
+                    com.egolite.mobile.CrashLogger.clearLastCrash(context)
+                    pendingCrashLog = null
+                },
+                title = { Text("이전 종료 크래시 로그") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = crashText,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("CrashLog", crashText))
+                        Toast.makeText(context, "크래시 로그 복사됨", Toast.LENGTH_SHORT).show()
+                        com.egolite.mobile.CrashLogger.clearLastCrash(context)
+                        pendingCrashLog = null
+                    }) {
+                        Text("로그 복사")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        com.egolite.mobile.CrashLogger.clearLastCrash(context)
+                        pendingCrashLog = null
+                    }) {
+                        Text("닫기")
+                    }
                 }
             )
         }
