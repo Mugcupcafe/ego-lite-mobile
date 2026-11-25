@@ -22,6 +22,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -43,8 +44,61 @@ object EgoWebViewFactory {
 
     private fun buildRealDesktopChromeUa(context: Context): String {
         val raw = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrDefault("")
-        val ver = Regex("""Chrome/([0-9.]+)""").find(raw)?.groupValues?.getOrNull(1) ?: "134.0.0.0"
+        val ver = Regex("""Chrome/([0-9.]+)""").find(raw)?.groupValues?.getOrNull(1) ?: "135.0.0.0"
         return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$ver Safari/537.36"
+    }
+
+    /**
+     * Cloudflare Turnstile 통과 핵심: User-Agent와 Sec-CH-UA Client Hints(Platform/Mobile/Brand)를 100% 일치시킴.
+     * 데스크톱 UA(X11; Linux x86_64)인데 Sec-CH-UA-Platform이 Android로 나가면 봇으로 즉시 차단됨.
+     */
+    private fun syncUserAgentAndClientHints(webView: WebView, desktop: Boolean) {
+        val ctx = webView.context
+        val raw = runCatching { WebSettings.getDefaultUserAgent(ctx) }.getOrDefault("")
+        val fullVer = Regex("""Chrome/([0-9.]+)""").find(raw)?.groupValues?.getOrNull(1) ?: "135.0.0.0"
+        val majorVer = fullVer.substringBefore(".")
+        webView.settings.userAgentString = if (desktop) buildRealDesktopChromeUa(ctx) else buildRealMobileChromeUa(ctx)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+            runCatching {
+                val brands = listOf(
+                    UserAgentMetadata.BrandVersion.Builder()
+                        .setBrand("Chromium").setMajorVersion(majorVer).setFullVersion(fullVer).build(),
+                    UserAgentMetadata.BrandVersion.Builder()
+                        .setBrand("Google Chrome").setMajorVersion(majorVer).setFullVersion(fullVer).build(),
+                    UserAgentMetadata.BrandVersion.Builder()
+                        .setBrand("Not-A.Brand").setMajorVersion("99").setFullVersion("99.0.0.0").build()
+                )
+                val meta = if (desktop) {
+                    UserAgentMetadata.Builder()
+                        .setBrandVersionList(brands)
+                        .setFullVersion(fullVer)
+                        .setPlatform("Linux")
+                        .setPlatformVersion("6.6.0")
+                        .setArchitecture("x86")
+                        .setBitness(64)
+                        .setMobile(false)
+                        .setModel("")
+                        .build()
+                } else {
+                    UserAgentMetadata.Builder()
+                        .setBrandVersionList(brands)
+                        .setFullVersion(fullVer)
+                        .setPlatform("Android")
+                        .setPlatformVersion(Build.VERSION.RELEASE ?: "16")
+                        .setArchitecture("")
+                        .setBitness(64)
+                        .setMobile(true)
+                        .setModel(Build.MODEL ?: "")
+                        .build()
+                }
+                WebSettingsCompat.setUserAgentMetadata(webView.settings, meta)
+            }
+        }
+    }
+
+    private fun isCloudflareChallengeUrl(url: String): Boolean {
+        val low = url.lowercase()
+        return low.contains("challenges.cloudflare.com") || low.contains("__cf_chl") || low.contains("/cdn-cgi/challenge")
     }
 
     private const val DESKTOP_CHROME_UA =
@@ -52,6 +106,7 @@ object EgoWebViewFactory {
 
     private const val APPLY_DARK_CSS_JS = """
         (function() {
+            if (document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running, #cf-wrapper')) return;
             var existing = document.getElementById('ego-dark-mode-css');
             if (existing) return;
             var style = document.createElement('style');
@@ -120,12 +175,14 @@ object EgoWebViewFactory {
             allowFileAccess = false
             allowContentAccess = true
             textZoom = textZoomProvider()
-            userAgentString = if (desktopModeProvider()) buildRealDesktopChromeUa(context) else buildRealMobileChromeUa(context)
+            // UA와 Client Hints는 아래 syncUserAgentAndClientHints에서 일괄 동기화
             // Google 로그인 WebView 탐지 차단: X-Requested-With 패키지명 헤더 제거
             if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
                 runCatching { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet()) }
             }
         }
+
+        syncUserAgentAndClientHints(webView, desktopModeProvider())
 
         // 파일 다운로드 (PDF, 이미지, APK 등)
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
@@ -247,17 +304,19 @@ object EgoWebViewFactory {
                     val host = AdBlockEngine.extractHost(url)
                     currentPageHost = host
                     if (view != null && request.isForMainFrame) {
-                        val desiredUa = if (isGoogleAuthHost(host)) {
-                            GOOGLE_AUTH_UA
-                        } else if (desktopModeProvider()) {
-                            buildRealDesktopChromeUa(context)
+                        if (isGoogleAuthHost(host)) {
+                            if (view.settings.userAgentString != GOOGLE_AUTH_UA) {
+                                view.settings.userAgentString = GOOGLE_AUTH_UA
+                                view.loadUrl(url)
+                                return true
+                            }
                         } else {
-                            buildRealMobileChromeUa(context)
-                        }
-                        if (view.settings.userAgentString != desiredUa) {
-                            view.settings.userAgentString = desiredUa
-                            view.loadUrl(url)
-                            return true
+                            val expectedUa = if (desktopModeProvider()) buildRealDesktopChromeUa(context) else buildRealMobileChromeUa(context)
+                            if (view.settings.userAgentString != expectedUa) {
+                                syncUserAgentAndClientHints(view, desktopModeProvider())
+                                view.loadUrl(url)
+                                return true
+                            }
                         }
                     }
                     return false
@@ -291,12 +350,18 @@ object EgoWebViewFactory {
                     val finalUrl = url ?: view.url.orEmpty()
                     currentPageHost = AdBlockEngine.extractHost(finalUrl)
                     runCatching {
-                        if (adBlockProvider()) {
-                            val js = AdBlockEngine.buildCosmeticFilterJs(currentPageHost)
-                            if (js.isNotBlank()) view.evaluateJavascript(js, null)
+                        CookieManager.getInstance().flush()
+                        if (!isCloudflareChallengeUrl(finalUrl)) {
+                            if (adBlockProvider()) {
+                                val js = AdBlockEngine.buildCosmeticFilterJs(currentPageHost)
+                                if (js.isNotBlank()) {
+                                    val guardedJs = "if (!document.querySelector('iframe[src*=\"challenges.cloudflare.com\"], .cf-turnstile, #challenge-running')) { $js }"
+                                    view.evaluateJavascript(guardedJs, null)
+                                }
+                            }
+                            applyDarkMode(view, darkModeProvider())
+                            applyWebFont(view, webFontProvider())
                         }
-                        applyDarkMode(view, darkModeProvider())
-                        applyWebFont(view, webFontProvider())
                     }
                     onPageFinished(
                         finalUrl,
@@ -396,7 +461,7 @@ object EgoWebViewFactory {
     }
 
     fun applyDesktopMode(webView: WebView, desktop: Boolean) {
-        webView.settings.userAgentString = if (desktop) buildRealDesktopChromeUa(webView.context) else buildRealMobileChromeUa(webView.context)
+        syncUserAgentAndClientHints(webView, desktop)
         webView.settings.useWideViewPort = true
         webView.settings.loadWithOverviewMode = true
     }
@@ -439,6 +504,7 @@ object EgoWebViewFactory {
 
         val injectJs = """
             (function() {
+                if (document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running, #cf-wrapper')) return;
                 var el = document.getElementById('ego-web-font-css');
                 if (!el) {
                     el = document.createElement('style');
