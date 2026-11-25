@@ -1,6 +1,6 @@
 workflows:
   android-ego-lite-mobile:
-    name: ego-lite-mobile v0.4.6 (HONOR YLP-W00 · arm64-v8a · Free M2)
+    name: ego-lite-mobile v0.4.9 (HONOR YLP-W00 · arm64-v8a · Free M2)
     max_build_duration: 30
     instance_type: mac_mini_m2
     environment:
@@ -37,7 +37,7 @@ workflows:
           fi
           ls -lh "$KEYSTORE_PATH"
 
-      - name: Download arm64-v8a tunnel binaries into jniLibs (W^X safe)
+      - name: Download & Android-DNS-patch arm64-v8a tunnel binaries into jniLibs (W^X safe)
         script: |
           set -euo pipefail
           mkdir -p app/src/main/jniLibs/arm64-v8a
@@ -53,6 +53,24 @@ workflows:
           tar -xzf /tmp/ngrok.tgz -C /tmp
           mv /tmp/ngrok app/src/main/jniLibs/arm64-v8a/libngrok.so
           chmod 755 app/src/main/jniLibs/arm64-v8a/libngrok.so
+
+          echo "Patching Go DNS path (/etc/resolv.conf -> //proc/self/fd/0) for non-root Android..."
+          python3 - << 'PY'
+          old = b"/etc/resolv.conf"
+          new = b"//proc/self/fd/0"
+          assert len(old) == len(new) == 16
+          for path in [
+              "app/src/main/jniLibs/arm64-v8a/libcloudflared.so",
+              "app/src/main/jniLibs/arm64-v8a/libngrok.so",
+          ]:
+              with open(path, "rb") as f:
+                  data = f.read()
+              count = data.count(old)
+              patched = data.replace(old, new)
+              with open(path, "wb") as f:
+                  f.write(patched)
+              print(f"Patched {path}: {count} occurrence(s) replaced")
+          PY
           ls -lh app/src/main/jniLibs/arm64-v8a/
 
       - name: Set up local.properties
