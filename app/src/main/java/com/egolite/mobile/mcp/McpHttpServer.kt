@@ -11,7 +11,7 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
-import io.ktor.server.cio.CIOApplicationEngine
+import io.ktor.server.engine.ApplicationEngine
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
@@ -42,7 +42,7 @@ class McpHttpServer(
     private val port: Int,
     private val onLog: (String) -> Unit
 ) {
-    private var server: CIOApplicationEngine? = null
+    private var server: ApplicationEngine? = null
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
 
     fun start() {
@@ -128,7 +128,7 @@ class McpHttpServer(
                         val metaUrl = "${OAuth21Manager.publicBaseUrl.trimEnd('/')}/.well-known/oauth-protected-resource"
                         call.response.header(
                             HttpHeaders.WWWAuthenticate,
-                            "Bearer resource_metadata="$metaUrl""
+                            "Bearer resource_metadata=\"$metaUrl\""
                         )
                         call.respond(HttpStatusCode.Unauthorized, buildJsonObject {
                             put("error", "unauthorized")
@@ -160,7 +160,7 @@ class McpHttpServer(
                             })
                             put("serverInfo", buildJsonObject {
                                 put("name", "ego-lite-mobile")
-                                put("version", "0.2.1")
+                                put("version", "0.2.2")
                             })
                         })
                         "ping" -> rpcResult(id, buildJsonObject {})
