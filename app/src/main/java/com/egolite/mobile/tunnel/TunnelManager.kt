@@ -145,7 +145,7 @@ class TunnelManager(
             val pem = buildString {
                 for (cert in certs) {
                     append("-----BEGIN CERTIFICATE-----\n")
-                    append(Base64.encodeToString(cert.encoded, Base64.MIME).trim())
+                    append(Base64.encodeToString(cert.encoded, Base64.DEFAULT).trim())
                     append("\n-----END CERTIFICATE-----\n")
                 }
             }
