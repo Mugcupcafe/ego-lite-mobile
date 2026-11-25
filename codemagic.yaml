@@ -1,6 +1,6 @@
 workflows:
   android-ego-lite-mobile:
-    name: ego-lite-mobile v0.4.13 (HONOR YLP-W00 · arm64-v8a · Free M2)
+    name: ego-lite-mobile v0.4.14 (HONOR YLP-W00 · arm64-v8a · Free M2)
     max_build_duration: 30
     instance_type: mac_mini_m2
     environment:
@@ -19,10 +19,10 @@ workflows:
         script: |
           set -euo pipefail
           mkdir -p "$HOME/.android"
-          KEYSTORE_PATH="$HOME/.android/debug.keystore"
+          export KEYSTORE_PATH="$HOME/.android/debug.keystore"
           if [ -n "${DEBUG_KEYSTORE_B64:-}" ]; then
             echo "Restoring debug.keystore from DEBUG_KEYSTORE_B64 environment variable..."
-            echo "$DEBUG_KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+            python3 -c 'import base64, os, re; raw = re.sub(r"\s+", "", os.environ["DEBUG_KEYSTORE_B64"]); open(os.environ["KEYSTORE_PATH"], "wb").write(base64.b64decode(raw))'
           elif [ -f "$KEYSTORE_PATH" ]; then
             echo "Reusing cached debug.keystore (in-place APK update supported)."
           else
