@@ -85,10 +85,14 @@ fun ChromeOmniboxOverlay(
     currentUrl: String,
     bookmarks: List<BookmarkItem>,
     recentSearches: List<String>,
+    anchorLeftPx: Float = 0f,
+    anchorTopPx: Float = 0f,
+    anchorWidthPx: Float = 0f,
     onNavigate: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
     var query by remember { mutableStateOf("") }
     var liveSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
 
@@ -111,24 +115,31 @@ fun ChromeOmniboxOverlay(
         else recentSearches.filter { it.contains(query, ignoreCase = true) }
     }
 
-    val shortcutPalette = listOf(
-        Color(0xFF059669), Color(0xFF2563EB), Color(0xFF7C3AED),
-        Color(0xFFD97706), Color(0xFFDC2626), Color(0xFF0891B2)
-    )
+    val hasAnchor = anchorWidthPx > 120f
+    val startDp = with(density) { anchorLeftPx.coerceAtLeast(0f).toDp() }
+    val topDp = with(density) { (anchorTopPx - 4f).coerceAtLeast(0f).toDp() }
+    val widthDp = with(density) { anchorWidthPx.coerceAtLeast(320f).toDp() }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.45f))
             .clickable { onDismiss() },
-        contentAlignment = Alignment.TopCenter
+        contentAlignment = if (hasAnchor) Alignment.TopStart else Alignment.TopCenter
     ) {
         Surface(
-            modifier = Modifier
-                .padding(top = 48.dp, start = 16.dp, end = 16.dp)
-                .widthIn(max = 580.dp)
-                .fillMaxWidth()
-                .clickable(enabled = false) {},
+            modifier = if (hasAnchor) {
+                Modifier
+                    .padding(start = startDp, top = topDp)
+                    .width(widthDp)
+                    .clickable(enabled = false) {}
+            } else {
+                Modifier
+                    .padding(top = 48.dp, start = 16.dp, end = 16.dp)
+                    .widthIn(max = 580.dp)
+                    .fillMaxWidth()
+                    .clickable(enabled = false) {}
+            },
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 14.dp
@@ -275,15 +286,10 @@ fun ChromeOmniboxOverlay(
                                     modifier = Modifier
                                         .size(40.dp)
                                         .clip(CircleShape)
-                                        .background(shortcutPalette[idx % shortcutPalette.size].copy(alpha = 0.18f)),
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = bm.title.take(1).uppercase(),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 16.sp,
-                                        color = shortcutPalette[idx % shortcutPalette.size]
-                                    )
+                                    BookmarkMiniFavicon(bm = bm, sizeDp = 24)
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
