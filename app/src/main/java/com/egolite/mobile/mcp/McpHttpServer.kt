@@ -170,7 +170,7 @@ class McpHttpServer(
                             })
                             put("serverInfo", buildJsonObject {
                                 put("name", "ego-lite-mobile")
-                                put("version", "0.4.8")
+                                put("version", "0.4.17")
                             })
                         })
                         "ping" -> rpcResult(id, buildJsonObject {})
@@ -230,13 +230,14 @@ class McpHttpServer(
             // Tool 1: Code Mode JS Batch Execution
             add(buildJsonObject {
                 put("name", "browser_exec")
-                put("description", "Code Mode: Execute a batched JavaScript snippet inside an isolated AI Space WebView (with helpers: clickRef, fillRef, scrollByY). Optionally navigate to url first.")
+                put("description", "Code Mode (FAST): Batch multiple browser steps (optional url navigation + fillRef + clickRef + scrollByY + DOM extraction) into a SINGLE JavaScript call to minimize round-trips.")
                 put("inputSchema", buildJsonObject {
                     put("type", "object")
                     put("properties", buildJsonObject {
                         put("space_id", buildJsonObject { put("type", "string"); put("description", "Optional AI Space ID") })
                         put("url", buildJsonObject { put("type", "string"); put("description", "Optional URL to navigate to before executing script") })
-                        put("script", buildJsonObject { put("type", "string"); put("description", "JavaScript body returning JSON-serializable result") })
+                        put("script", buildJsonObject { put("type", "string"); put("description", "JavaScript body using helpers clickRef(ref), fillRef(ref, val), scrollByY(dy) and returning a JSON-serializable result") })
+                        put("status_text", buildJsonObject { put("type", "string"); put("description", "Optional short natural Korean status phrase shown to user (e.g. '검색 버튼을 누르는 중...')") })
                         put("timeout_ms", buildJsonObject { put("type", "integer"); put("description", "Execution timeout in ms (default 15000)") })
                     })
                 })
@@ -250,6 +251,7 @@ class McpHttpServer(
                     put("properties", buildJsonObject {
                         put("space_id", buildJsonObject { put("type", "string") })
                         put("url", buildJsonObject { put("type", "string"); put("description", "Optional URL to load before observing") })
+                        put("status_text", buildJsonObject { put("type", "string"); put("description", "Optional short natural Korean status phrase shown to user") })
                         put("mode", buildJsonObject {
                             put("type", "string")
                             put("enum", buildJsonArray {
@@ -300,20 +302,46 @@ class McpHttpServer(
                     if (space.aiStatus == AiSpaceStatus.TAKEOVER_PAUSED) {
                         return toolTextResult(id, """{"ok":false,"error":"User has taken over this AI Space. Ask user to resume."}""")
                     }
-                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, "browser_exec 실행 중")
+                    val customStatus = args["status_text"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val url = args["url"]?.jsonPrimitive?.contentOrNull
+                    val script = args["script"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    val friendlyExecStatus = customStatus.ifBlank {
+                        when {
+                            !url.isNullOrBlank() -> {
+                                val host = runCatching { android.net.Uri.parse(url).host?.removePrefix("www.") }.getOrNull().orEmpty()
+                                if (host.isNotBlank()) "${host}으로 이동하는 중..." else "페이지로 이동하는 중..."
+                            }
+                            script.contains("fillRef") -> "내용을 입력하는 중..."
+                            script.contains("clickRef") -> "버튼을 누르는 중..."
+                            script.contains("scrollByY") -> "페이지를 훑어보는 중..."
+                            else -> "페이지에서 작업을 처리하는 중..."
+                        }
+                    }
+                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, friendlyExecStatus)
                     try {
-                        val url = args["url"]?.jsonPrimitive?.contentOrNull
                         if (!url.isNullOrBlank()) {
                             SpaceManager.navigateAndWait(space.id, url)
                         }
-                        val script = args["script"]?.jsonPrimitive?.contentOrNull.orEmpty()
                         val timeout = args["timeout_ms"]?.jsonPrimitive?.longOrNull ?: 15000L
                         val out = if (script.isNotBlank()) {
-                            SpaceManager.evaluateJsInSpace(space.id, BrowserScripts.wrapCodeModeScript(script), timeout)
+                            if (!url.isNullOrBlank() && customStatus.isBlank()) {
+                                val nextPhrase = when {
+                                    script.contains("fillRef") -> "내용을 입력하는 중..."
+                                    script.contains("clickRef") -> "버튼을 누르는 중..."
+                                    script.contains("scrollByY") -> "페이지를 훑어보는 중..."
+                                    else -> "페이지에서 작업을 처리하는 중..."
+                                }
+                                SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, nextPhrase)
+                            }
+                            SpaceManager.evaluateJsInSpace(
+                                space.id,
+                                BrowserScripts.wrapCodeModeScript(script, space.accentColorHex),
+                                timeout
+                            )
                         } else {
                             """{"ok":true,"url":"${space.activeTab.url}"}"""
                         }
-                        SpaceManager.setAiStatus(space.id, AiSpaceStatus.DONE, "실행 완료")
+                        SpaceManager.enterAiThinkingMode(space.id)
                         toolTextResult(id, out)
                     } catch (e: Exception) {
                         SpaceManager.setAiStatus(space.id, AiSpaceStatus.IDLE, "오류: ${e.message}")
@@ -324,7 +352,16 @@ class McpHttpServer(
                 "browser_observe" -> {
                     val space = SpaceManager.resolveAiSpace(args["space_id"]?.jsonPrimitive?.contentOrNull)
                     val mode = args["mode"]?.jsonPrimitive?.contentOrNull ?: "markdown"
-                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, "화면 분석($mode)")
+                    val customStatus = args["status_text"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val friendlyObsStatus = customStatus.ifBlank {
+                        when (mode) {
+                            "markdown" -> "페이지 내용을 읽는 중..."
+                            "snapshot" -> "누를 수 있는 버튼과 링크를 찾는 중..."
+                            "screenshot" -> "현재 화면을 살펴보는 중..."
+                            else -> "화면을 분석하는 중..."
+                        }
+                    }
+                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, friendlyObsStatus)
                     try {
                         val url = args["url"]?.jsonPrimitive?.contentOrNull
                         if (!url.isNullOrBlank()) {
@@ -357,7 +394,7 @@ class McpHttpServer(
                             }
                             else -> toolTextResult(id, """{"ok":false,"error":"Unknown mode: $mode"}""")
                         }
-                        SpaceManager.setAiStatus(space.id, AiSpaceStatus.DONE, "관찰 완료")
+                        SpaceManager.enterAiThinkingMode(space.id)
                         result
                     } catch (e: Exception) {
                         SpaceManager.setAiStatus(space.id, AiSpaceStatus.IDLE, "오류: ${e.message}")
