@@ -1,6 +1,7 @@
 package com.egolite.mobile.model
 
 import kotlinx.serialization.Serializable
+import java.util.Locale
 import java.util.UUID
 
 enum class SpaceType {
@@ -27,14 +28,34 @@ enum class McpConnectionState {
     ERROR
 }
 
+enum class TranslationEngine {
+    ONLINE_GOOGLE,
+    OFFLINE_MLKIT
+}
+
+enum class SearchEngine(val label: String, val searchUrlPrefix: String) {
+    GOOGLE("Google", "https://www.google.com/search?q="),
+    NAVER("NAVER", "https://search.naver.com/search.naver?query="),
+    DAUM("Daum", "https://search.daum.net/search?q="),
+    DUCKDUCKGO("DuckDuckGo", "https://duckduckgo.com/?q=")
+}
+
+@Serializable
+data class PersistedTab(
+    val title: String,
+    val url: String
+)
+
 data class BrowserTab(
     val id: String = UUID.randomUUID().toString(),
     val title: String = "새 탭",
-    val url: String = "https://www.google.com",
+    val url: String = "ego://newtab",
     val isLoading: Boolean = false,
     val progress: Int = 0,
     val canGoBack: Boolean = false,
-    val canGoForward: Boolean = false
+    val canGoForward: Boolean = false,
+    val parentTabId: String? = null,
+    val isIncognito: Boolean = false
 )
 
 data class BrowserSpace(
@@ -54,20 +75,40 @@ data class BrowserSpace(
 data class BookmarkItem(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
-    val url: String
+    val url: String,
+    val folder: String = "모바일 북마크"
 )
 
+data class LongPressTarget(
+    val linkUrl: String? = null,
+    val imageUrl: String? = null
+)
+
+@Serializable
 data class BrowserPreferences(
     val adBlockEnabled: Boolean = true,
     val darkModeEnabled: Boolean = false,
     val desktopModeEnabled: Boolean = true,
-    val autoTranslateEnabled: Boolean = false,
     val showBookmarkBar: Boolean = false,
     val maxAiSpaces: Int = 5,
-    val translateApiKey: String = "",
+    val translationEngine: TranslationEngine = TranslationEngine.ONLINE_GOOGLE,
+    val searchEngine: SearchEngine = SearchEngine.GOOGLE,
+    val textZoom: Int = 100,
+    val autoTranslateHosts: Set<String> = emptySet(),
     val firecrawlApiKey: String = ""
 )
 
+data class TranslationPopupState(
+    val visible: Boolean = false,
+    val isTranslating: Boolean = false,
+    val isTranslated: Boolean = false,
+    val statusText: String = "",
+    val sourceLang: String = "auto",
+    val targetLang: String = Locale.getDefault().language.ifBlank { "ko" },
+    val detectedLangLabel: String = "감지된 언어"
+)
+
+@Serializable
 data class TunnelSettings(
     val provider: TunnelProvider = TunnelProvider.CLOUDFLARE,
     val localPort: Int = 8787,
