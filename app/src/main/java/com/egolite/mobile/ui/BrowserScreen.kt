@@ -396,7 +396,6 @@ fun BrowserScreen() {
             showChromeSettings = false
             showMcpDrawer = false
             showBookmarkManager = false
-            showTabSwitcher = false
             showOmniboxOverlay = false
             showChromeMenu = false
             spaceBarExpanded = false
