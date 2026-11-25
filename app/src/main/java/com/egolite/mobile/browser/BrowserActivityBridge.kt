@@ -42,6 +42,7 @@ object BrowserActivityBridge {
     var launchFilePicker: ((Array<String>) -> Unit)? = null
     var launchBookmarkImport: (() -> Unit)? = null
     var launchBookmarkExport: (() -> Unit)? = null
+    var launchFontPicker: (() -> Unit)? = null
 
     private val _fullscreenVideo = MutableStateFlow(FullscreenVideoState())
     val fullscreenVideo: StateFlow<FullscreenVideoState> = _fullscreenVideo.asStateFlow()
