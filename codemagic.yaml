@@ -1,6 +1,6 @@
 workflows:
   android-ego-lite-mobile:
-    name: ego-lite-mobile v0.2.1 (HONOR YLP-W00 · arm64-v8a · Free M2)
+    name: ego-lite-mobile v0.2.2 (HONOR YLP-W00 · arm64-v8a · Free M2)
     max_build_duration: 30
     instance_type: mac_mini_m2
     environment:
