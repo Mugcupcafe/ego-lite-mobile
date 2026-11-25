@@ -3,10 +3,17 @@ package com.egolite.mobile.mcp
 import com.egolite.mobile.browser.BrowserScripts
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.model.AiSpaceStatus
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO as ClientCIO
+import io.ktor.client.request.header as clientHeader
+import io.ktor.client.request.post as clientPost
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.call
 import io.ktor.server.application.install
@@ -44,6 +51,9 @@ class McpHttpServer(
 ) {
     private var server: ApplicationEngine? = null
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
+    private val httpClient = HttpClient(ClientCIO) {
+        engine { requestTimeout = 20_000 }
+    }
 
     fun start() {
         stop()
@@ -160,7 +170,7 @@ class McpHttpServer(
                             })
                             put("serverInfo", buildJsonObject {
                                 put("name", "ego-lite-mobile")
-                                put("version", "0.2.2")
+                                put("version", "0.4.1")
                             })
                         })
                         "ping" -> rpcResult(id, buildJsonObject {})
@@ -179,6 +189,40 @@ class McpHttpServer(
     fun stop() {
         server?.stop(500, 1000)
         server = null
+    }
+
+    private suspend fun scrapeWithFirecrawl(targetUrl: String, apiKey: String): String? {
+        return runCatching {
+            val payload = buildJsonObject {
+                put("url", targetUrl)
+                put("formats", buildJsonArray { add(JsonPrimitive("markdown")) })
+                put("onlyMainContent", true)
+            }.toString()
+            val response = httpClient.clientPost("https://api.firecrawl.dev/v1/scrape") {
+                clientHeader(HttpHeaders.Authorization, "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(payload)
+            }
+            if (response.status.value !in 200..299) {
+                onLog("Firecrawl API 오류(${response.status.value}) — 로컬 Markdown으로 폴백")
+                return null
+            }
+            val root = json.parseToJsonElement(response.bodyAsText()).jsonObject
+            val dataObj = root["data"]?.jsonObject ?: return null
+            val md = dataObj["markdown"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            if (md.isBlank()) return null
+            val title = dataObj["metadata"]?.jsonObject?.get("title")?.jsonPrimitive?.contentOrNull.orEmpty()
+            onLog("Firecrawl API Markdown 추출 완료")
+            buildJsonObject {
+                put("ok", true)
+                put("source", "firecrawl")
+                put("url", targetUrl)
+                put("title", title)
+                put("markdown", md.take(24000))
+            }.toString()
+        }.onFailure { err ->
+            onLog("Firecrawl API 실패(${err.message}) — 로컬 Markdown으로 폴백")
+        }.getOrNull()
     }
 
     private fun buildToolsList(): JsonObject = buildJsonObject {
@@ -288,7 +332,17 @@ class McpHttpServer(
                         }
                         val result = when (mode) {
                             "snapshot" -> toolTextResult(id, SpaceManager.evaluateJsInSpace(space.id, BrowserScripts.SNAPSHOT_JS))
-                            "markdown" -> toolTextResult(id, SpaceManager.evaluateJsInSpace(space.id, BrowserScripts.MARKDOWN_EXTRACT_JS))
+                            "markdown" -> {
+                                val firecrawlKey = SpaceManager.preferences.value.firecrawlApiKey.trim()
+                                val targetUrl = url?.takeIf { it.isNotBlank() } ?: space.activeTab.url
+                                val firecrawlOut = if (firecrawlKey.isNotBlank() &&
+                                    (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))
+                                ) {
+                                    scrapeWithFirecrawl(targetUrl, firecrawlKey)
+                                } else null
+                                val finalOut = firecrawlOut ?: SpaceManager.evaluateJsInSpace(space.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                                toolTextResult(id, finalOut)
+                            }
                             "screenshot" -> {
                                 val b64 = SpaceManager.captureScreenshotInSpace(space.id)
                                 rpcResult(id, buildJsonObject {
