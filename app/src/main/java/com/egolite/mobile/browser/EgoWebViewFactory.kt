@@ -124,13 +124,19 @@ object EgoWebViewFactory {
             }
         }
 
+        var currentPageHost = ""
+
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                val pageHost = AdBlockEngine.extractHost(view?.url)
-                if (adBlockProvider() && AdBlockEngine.shouldBlock(request?.url?.toString(), pageHost, tabId)) {
+                val reqUrl = request?.url?.toString()
+                if (request?.isForMainFrame == true) {
+                    currentPageHost = AdBlockEngine.extractHost(reqUrl)
+                    return super.shouldInterceptRequest(view, request)
+                }
+                if (adBlockProvider() && AdBlockEngine.shouldBlock(reqUrl, currentPageHost, tabId)) {
                     return AdBlockEngine.emptyResponse()
                 }
                 return super.shouldInterceptRequest(view, request)
@@ -142,6 +148,7 @@ object EgoWebViewFactory {
             ): Boolean {
                 val url = request?.url?.toString() ?: return false
                 if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:")) {
+                    currentPageHost = AdBlockEngine.extractHost(url)
                     return false
                 }
                 return handleExternalScheme(context, url)
@@ -150,6 +157,7 @@ object EgoWebViewFactory {
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 if (!url.isNullOrBlank()) {
+                    currentPageHost = AdBlockEngine.extractHost(url)
                     onPageStarted(url)
                 }
             }
@@ -157,14 +165,18 @@ object EgoWebViewFactory {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (view != null) {
-                    if (adBlockProvider()) {
-                        val js = AdBlockEngine.buildCosmeticFilterJs(AdBlockEngine.extractHost(url ?: view.url))
-                        if (js.isNotBlank()) view.evaluateJavascript(js, null)
+                    val finalUrl = url ?: view.url.orEmpty()
+                    currentPageHost = AdBlockEngine.extractHost(finalUrl)
+                    runCatching {
+                        if (adBlockProvider()) {
+                            val js = AdBlockEngine.buildCosmeticFilterJs(currentPageHost)
+                            if (js.isNotBlank()) view.evaluateJavascript(js, null)
+                        }
+                        applyDarkMode(view, darkModeProvider())
                     }
-                    applyDarkMode(view, darkModeProvider())
                     onPageFinished(
-                        url ?: view.url.orEmpty(),
-                        view.title?.ifBlank { url.orEmpty() } ?: "새 탭",
+                        finalUrl,
+                        view.title?.ifBlank { finalUrl } ?: "새 탭",
                         view.canGoBack(),
                         view.canGoForward()
                     )
