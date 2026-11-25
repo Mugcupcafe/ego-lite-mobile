@@ -83,6 +83,7 @@ fun PillSpaceCapsule(
     canAddAiSpace: Boolean,
     isExpanded: Boolean,
     onSetExpanded: (Boolean) -> Unit,
+    onToggleAiMonitor: () -> Unit,
     onHoverIndexChanged: (Int) -> Unit,
     onCommitIndex: (Int) -> Unit
 ) {
@@ -153,6 +154,7 @@ fun PillSpaceCapsule(
     val latestExpanded by androidx.compose.runtime.rememberUpdatedState(isExpanded)
     val latestTotalSlots by androidx.compose.runtime.rememberUpdatedState(totalSlots)
     val latestSetExpanded by androidx.compose.runtime.rememberUpdatedState(onSetExpanded)
+    val latestToggleMonitor by androidx.compose.runtime.rememberUpdatedState(onToggleAiMonitor)
     val latestHoverChanged by androidx.compose.runtime.rememberUpdatedState(onHoverIndexChanged)
     val latestCommit by androidx.compose.runtime.rememberUpdatedState(onCommitIndex)
 
@@ -165,26 +167,24 @@ fun PillSpaceCapsule(
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val wasAlreadyOpen = latestExpanded
-                    if (!wasAlreadyOpen) {
-                        latestSetExpanded(true)
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    }
                     var dragged = false
                     var lastHover = -1
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (!change.pressed) {
-                            if (dragged && lastHover >= 0) {
-                                latestCommit(lastHover)
-                                latestHoverChanged(-1)
-                                latestSetExpanded(false)
-                            } else if (dragged || wasAlreadyOpen) {
+                            if (dragged) {
+                                if (lastHover >= 0) {
+                                    latestCommit(lastHover)
+                                }
                                 latestSetExpanded(false)
                                 latestHoverChanged(-1)
                             } else {
+                                // 짧게 눌렀다 떼기: 상단 AI 라이브 모니터 트레이 고정 토글 (닫기 전까지 계속 유지)
+                                latestSetExpanded(false)
                                 latestHoverChanged(-1)
+                                latestToggleMonitor()
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                             break
                         }
@@ -192,20 +192,24 @@ fun PillSpaceCapsule(
                         val dx = change.position.x
                         val totalBarWidthPx = latestTotalSlots * chipWidthPx
                         val maxBarBottomPx = dragThresholdY + chipWidthPx * 0.9f
-                        if (kotlin.math.abs(dy) > dragThresholdY * 0.5f || kotlin.math.abs(dx - down.position.x) > dragThresholdY * 0.5f) {
+                        if (!dragged && (kotlin.math.abs(dy) > dragThresholdY * 0.55f || kotlin.math.abs(dx - down.position.x) > dragThresholdY * 0.55f)) {
                             dragged = true
+                            latestSetExpanded(true)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
-                        val inBarBounds = dy > dragThresholdY && dy <= maxBarBottomPx && dx >= 0f && dx <= totalBarWidthPx
-                        if (inBarBounds) {
-                            val idx = (dx / chipWidthPx).toInt()
-                            if (idx in 0 until latestTotalSlots && idx != lastHover) {
-                                lastHover = idx
-                                latestHoverChanged(idx)
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (dragged) {
+                            val inBarBounds = dy > dragThresholdY && dy <= maxBarBottomPx && dx >= 0f && dx <= totalBarWidthPx
+                            if (inBarBounds) {
+                                val idx = (dx / chipWidthPx).toInt()
+                                if (idx in 0 until latestTotalSlots && idx != lastHover) {
+                                    lastHover = idx
+                                    latestHoverChanged(idx)
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                            } else if (lastHover != -1) {
+                                lastHover = -1
+                                latestHoverChanged(-1)
                             }
-                        } else if (lastHover != -1) {
-                            lastHover = -1
-                            latestHoverChanged(-1)
                         }
                     }
                 }
