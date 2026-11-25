@@ -502,7 +502,7 @@ fun ChromeSettingsScreen(
                                                     color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
                                                     modifier = Modifier.clickable {
                                                         SpaceManager.updatePreferences {
-                                                            it.copy(themeMode = tm, darkModeEnabled = tm == ThemeMode.DARK)
+                                                            it.copy(themeMode = tm, darkModeEnabled = when (tm) { ThemeMode.DARK -> true; ThemeMode.LIGHT -> false; ThemeMode.SYSTEM -> SpaceManager.isSystemDarkMode() })
                                                         }
                                                     }
                                                 ) {
