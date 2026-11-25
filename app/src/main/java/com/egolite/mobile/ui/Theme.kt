@@ -11,6 +11,13 @@ val EgoEmerald = Color(0xFF059669)
 val EgoEmeraldGlow = Color(0xFF10B981)
 val EgoDangerRed = Color(0xFFDC2626)
 
+// Selected vs unselected tab colors (explicitly distinct in Dark Mode)
+val LightTabSelected = Color(0xFFFFFFFF)
+val LightTabUnselected = Color(0xFFDCE3EC)
+val DarkTabStripBg = Color(0xFF0B1120)
+val DarkTabSelected = Color(0xFF334155)
+val DarkTabUnselected = Color(0xFF162033)
+
 private val LightColors = lightColorScheme(
     primary = EgoCobalt,
     secondary = EgoEmerald,
@@ -27,7 +34,7 @@ private val LightColors = lightColorScheme(
 private val DarkColors = darkColorScheme(
     primary = Color(0xFF60A5FA),
     secondary = Color(0xFF34D399),
-    background = Color(0xFF0F172A),
+    background = DarkTabStripBg,
     surface = Color(0xFF1E293B),
     surfaceVariant = Color(0xFF334155),
     onPrimary = Color(0xFF0F172A),
