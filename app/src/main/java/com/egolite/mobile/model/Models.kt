@@ -33,11 +33,25 @@ enum class TranslationEngine {
     OFFLINE_MLKIT
 }
 
-enum class SearchEngine(val label: String, val searchUrlPrefix: String) {
-    GOOGLE("Google", "https://www.google.com/search?q="),
-    NAVER("NAVER", "https://search.naver.com/search.naver?query="),
-    DAUM("Daum", "https://search.daum.net/search?q="),
-    DUCKDUCKGO("DuckDuckGo", "https://duckduckgo.com/?q=")
+enum class ThemeMode(val label: String) {
+    SYSTEM("시스템 기본값"),
+    LIGHT("라이트"),
+    DARK("다크")
+}
+
+enum class SearchEngine(
+    val label: String,
+    val domain: String,
+    val searchUrlPrefix: String,
+    val isPrimary: Boolean = true
+) {
+    GOOGLE("Google", "google.com", "https://www.google.com/search?q=", true),
+    BING("Microsoft Bing", "bing.com", "https://www.bing.com/search?q=", true),
+    DUCKDUCKGO("DuckDuckGo", "duckduckgo.com", "https://duckduckgo.com/?q=", true),
+    ECOSIA("Ecosia", "ecosia.org", "https://www.ecosia.org/search?q=", true),
+    BRAVE("Brave", "search.brave.com", "https://search.brave.com/search?q=", true),
+    NAVER("m.naver.com", "m.naver.com", "https://search.naver.com/search.naver?query=", false),
+    DAUM("daum.net", "daum.net", "https://search.daum.net/search?q=", false)
 }
 
 @Serializable
@@ -81,29 +95,50 @@ data class BookmarkItem(
 
 enum class WebFontMode(val label: String) {
     SITE_DEFAULT("사이트 기본 폰트"),
-    SYSTEM_FONT("태블릿 시스템 폰트 강제"),
+    SYSTEM_FONT("기기 시스템 폰트 적용"),
     CLEAN_GOTHIC("깔끔한 고딕 (Sans-serif)"),
-    SERIF("명조 (Serif)")
+    SERIF("명조 (Serif)"),
+    CUSTOM_TTF("커스텀 폰트 (.ttf/.otf)")
 }
 
 data class LongPressTarget(
     val linkUrl: String? = null,
     val linkText: String? = null,
-    val imageUrl: String? = null
+    val imageUrl: String? = null,
+    val touchX: Float = -1f,
+    val touchY: Float = -1f
 )
 
 @Serializable
 data class BrowserPreferences(
     val adBlockEnabled: Boolean = true,
     val darkModeEnabled: Boolean = false,
+    val themeMode: ThemeMode = ThemeMode.LIGHT,
     val desktopModeEnabled: Boolean = true,
     val showBookmarkBar: Boolean = false,
+    val showHomeButton: Boolean = true,
+    val homepageEnabled: Boolean = true,
+    val homepageUrl: String = "ego://newtab",
     val maxAiSpaces: Int = 5,
+    val inactiveTabDays: Int = 21,
     val translationEngine: TranslationEngine = TranslationEngine.ONLINE_GOOGLE,
+    val offerTranslate: Boolean = true,
+    val defaultTranslateTarget: String = "ko",
     val searchEngine: SearchEngine = SearchEngine.GOOGLE,
     val textZoom: Int = 100,
+    val showZoomInMenu: Boolean = false,
+    val forceEnableZoom: Boolean = true,
+    val simplifiedViewPrompt: Boolean = false,
     val webFontMode: WebFontMode = WebFontMode.SITE_DEFAULT,
-    val homepageUrl: String = "ego://newtab",
+    val customFontPath: String = "",
+    val customFontName: String = "",
+    val allowLocation: Boolean = true,
+    val allowCamera: Boolean = true,
+    val allowMic: Boolean = true,
+    val allowPopups: Boolean = true,
+    val allowJavaScript: Boolean = true,
+    val allowThirdPartyCookies: Boolean = true,
+    val askDownloadLocation: Boolean = false,
     val autoTranslateHosts: Set<String> = emptySet(),
     val pinnedTranslateLangs: List<String> = listOf("ko", "en", "ja", "zh-CN"),
     val firecrawlApiKey: String = ""
@@ -129,6 +164,7 @@ data class TunnelSettings(
     val bearerToken: String = ""
 )
 
+@Serializable
 data class ServerRuntimeState(
     val connectionState: McpConnectionState = McpConnectionState.DISCONNECTED,
     val publicHttpsUrl: String = "",
