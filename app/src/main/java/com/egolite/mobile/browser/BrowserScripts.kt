@@ -146,25 +146,34 @@ object BrowserScripts {
     }
 
     /**
-     * 페이지 본문 텍스트 노드 수집 (자동 번역용)
+     * 페이지 본문 텍스트 노드 수집 (원문 보존 -> 실행취소 즉시 복원 지원)
      */
     const val COLLECT_TRANSLATABLE_NODES_JS: String = """
         (function() {
+            if (window.__egoOrigNodes && window.__egoOrigNodes.length > 0) {
+                for (const entry of window.__egoOrigNodes) {
+                    if (entry.node) entry.node.nodeValue = entry.orig;
+                }
+            }
             const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
             const items = [];
             let node;
             let idx = 0;
             window.__egoTranslateNodes = [];
-            while ((node = walker.nextNode()) && items.length < 120) {
+            window.__egoOrigNodes = [];
+            while ((node = walker.nextNode()) && items.length < 180) {
                 const parent = node.parentElement;
                 if (!parent) continue;
                 const tag = parent.tagName.toLowerCase();
-                if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'code') continue;
-                const text = node.nodeValue ? node.nodeValue.trim() : '';
-                if (text.length < 3 || /^[0-9\W_]+$/.test(text)) continue;
-                if (/[가-힣]/.test(text)) continue; // 이미 한국어면 스킵
+                if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'code' || tag === 'pre') continue;
+                const rect = parent.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) continue;
+                const orig = node.nodeValue || '';
+                const text = orig.trim();
+                if (text.length < 2 || /^[0-9\W_]+$/.test(text)) continue;
                 window.__egoTranslateNodes.push(node);
-                items.push({ i: idx++, t: text.slice(0, 300) });
+                window.__egoOrigNodes.push({ node: node, orig: orig });
+                items.push({ i: idx++, t: text.slice(0, 320) });
             }
             return JSON.stringify(items);
         })();
@@ -184,4 +193,14 @@ object BrowserScripts {
             })();
         """.trimIndent()
     }
+
+    const val RESTORE_ORIGINAL_TEXT_JS: String = """
+        (function() {
+            if (!window.__egoOrigNodes) return 'none';
+            for (const entry of window.__egoOrigNodes) {
+                if (entry.node) entry.node.nodeValue = entry.orig;
+            }
+            return 'restored';
+        })();
+    """
 }
