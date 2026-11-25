@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class EgoForegroundService : Service() {
 
@@ -35,6 +37,7 @@ class EgoForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        init(applicationContext)
         createNotificationChannel()
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EgoLiteMobile::McpServerLock")
@@ -163,6 +166,9 @@ class EgoForegroundService : Service() {
         const val ACTION_START = "com.egolite.mobile.action.START"
         const val ACTION_STOP = "com.egolite.mobile.action.STOP"
 
+        private val jsonCodec = Json { ignoreUnknownKeys = true }
+        private lateinit var appContext: Context
+
         private val _tunnelSettings = MutableStateFlow(
             TunnelSettings(bearerToken = OAuth21Manager.staticBearerToken)
         )
@@ -171,8 +177,36 @@ class EgoForegroundService : Service() {
         private val _runtimeState = MutableStateFlow(ServerRuntimeState())
         val runtimeState: StateFlow<ServerRuntimeState> = _runtimeState.asStateFlow()
 
+        fun init(context: Context) {
+            if (!::appContext.isInitialized) {
+                appContext = context.applicationContext
+                val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+                val raw = sp.getString("tunnel_settings_json", null)
+                if (raw != null) {
+                    runCatching { jsonCodec.decodeFromString<TunnelSettings>(raw) }.getOrNull()?.let { loaded ->
+                        val effectiveToken = loaded.bearerToken.ifBlank { OAuth21Manager.staticBearerToken }
+                        OAuth21Manager.staticBearerToken = effectiveToken
+                        _tunnelSettings.value = loaded.copy(bearerToken = effectiveToken)
+                    }
+                } else {
+                    saveTunnelSettings(_tunnelSettings.value)
+                }
+            }
+        }
+
+        private fun saveTunnelSettings(settings: TunnelSettings) {
+            if (!::appContext.isInitialized) return
+            val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+            sp.edit().putString("tunnel_settings_json", jsonCodec.encodeToString(settings)).apply()
+        }
+
         fun updateTunnelSettings(transform: (TunnelSettings) -> TunnelSettings) {
-            _tunnelSettings.update(transform)
+            val updated = transform(_tunnelSettings.value)
+            _tunnelSettings.value = updated
+            if (updated.bearerToken.isNotBlank()) {
+                OAuth21Manager.staticBearerToken = updated.bearerToken
+            }
+            saveTunnelSettings(updated)
         }
 
         private fun appendLog(line: String) {
