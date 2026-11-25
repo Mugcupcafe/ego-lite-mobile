@@ -13,11 +13,23 @@ android {
         applicationId = "com.egolite.mobile"
         minSdk = 29
         targetSdk = 35
-        versionCode = 28
-        versionName = "0.4.18"
+        versionCode = 33
+        versionName = "0.4.23"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            val fixedKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            if (fixedKeystore.exists()) {
+                storeFile = fixedKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
@@ -30,8 +42,9 @@ android {
             )
         }
         debug {
+            signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-v0.4.18"
+            versionNameSuffix = "-v0.4.23"
         }
     }
 
