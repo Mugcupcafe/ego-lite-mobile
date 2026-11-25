@@ -2,6 +2,7 @@ package com.egolite.mobile.tunnel
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.util.Base64
 import com.egolite.mobile.model.TunnelProvider
 import com.egolite.mobile.model.TunnelSettings
 import kotlinx.coroutines.CoroutineScope
@@ -12,6 +13,9 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.net.Inet4Address
+import java.security.KeyStore
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 
 class TunnelManager(
     private val context: Context,
@@ -24,6 +28,10 @@ class TunnelManager(
     private var readerJob: Job? = null
 
     private val httpsUrlRegex = Regex("""https://[a-zA-Z0-9.-]+\.(trycloudflare\.com|ngrok-free\.app|ngrok\.app|ngrok\.io)""")
+    private val ignoredHosts = setOf(
+        "https://api.trycloudflare.com",
+        "https://update.trycloudflare.com"
+    )
 
     fun start(settings: TunnelSettings) {
         stop()
@@ -39,6 +47,7 @@ class TunnelManager(
         }
 
         val resolvFile = prepareAndroidResolvConf()
+        val caBundleFile = prepareAndroidCaBundle()
         val cmd = buildCommand(binFile.absolutePath, settings)
         onLog("터널 시작: ${settings.provider.name}")
 
@@ -48,9 +57,16 @@ class TunnelManager(
                     .redirectErrorStream(true)
                     .redirectInput(resolvFile)
                     .directory(context.filesDir)
-                pb.environment()["HOME"] = context.filesDir.absolutePath
+                val env = pb.environment()
+                env["HOME"] = context.filesDir.absolutePath
                 // Android 비루팅 환경에서 패치된 바이너리(//proc/self/fd/0)가 pure-Go DNS 리졸버로 동작하도록 강제
-                pb.environment()["GODEBUG"] = "netdns=go"
+                env["GODEBUG"] = "netdns=go"
+                // Go crypto/x509가 Android 시스템 루트 인증서를 인식하도록 SSL_CERT_FILE 지정
+                if (caBundleFile != null && caBundleFile.exists()) {
+                    env["SSL_CERT_FILE"] = caBundleFile.absolutePath
+                }
+                env["SSL_CERT_DIR"] = "/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts"
+
                 val proc = pb.start()
                 process = proc
 
@@ -60,9 +76,14 @@ class TunnelManager(
                         val current = line.orEmpty()
                         if (current.isNotBlank()) {
                             onLog(current.take(180))
-                            val match = httpsUrlRegex.find(current)
-                            if (match != null) {
-                                onPublicUrlReady(match.value)
+                            if (!current.contains("failed to", ignoreCase = true) &&
+                                !current.contains("error", ignoreCase = true)
+                            ) {
+                                val match = httpsUrlRegex.find(current)
+                                val matchedUrl = match?.value
+                                if (matchedUrl != null && matchedUrl.lowercase() !in ignoredHosts) {
+                                    onPublicUrlReady(matchedUrl)
+                                }
                             }
                         }
                     }
@@ -105,6 +126,33 @@ class TunnelManager(
         file.writeText(content)
         onLog("Android DNS 설정 적용: ${dnsList.joinToString(", ")}")
         return file
+    }
+
+    /**
+     * Go 바이너리(cloudflared/ngrok)는 Linux 기본 경로(/etc/ssl/certs)에 CA 파일이 없어
+     * Android 14+/16에서 x509 unknown authority 오류가 발생한다.
+     * Android 시스템 TrustManager에서 전체 루트 CA 인증서를 PEM 파일로 추출해 SSL_CERT_FILE로 전달한다.
+     */
+    private fun prepareAndroidCaBundle(): File? {
+        return runCatching {
+            val file = File(context.filesDir, "android-cacerts.pem")
+            val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+            tmf.init(null as KeyStore?)
+            val x509Tm = tmf.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull()
+                ?: return null
+            val certs = x509Tm.acceptedIssuers
+            if (certs.isEmpty()) return null
+            val pem = buildString {
+                for (cert in certs) {
+                    append("-----BEGIN CERTIFICATE-----\n")
+                    append(Base64.encodeToString(cert.encoded, Base64.MIME).trim())
+                    append("\n-----END CERTIFICATE-----\n")
+                }
+            }
+            file.writeText(pem)
+            onLog("Android 시스템 루트 CA 번들 준비 완료 (${certs.size}개)")
+            file
+        }.getOrNull()
     }
 
     private fun buildCommand(binPath: String, settings: TunnelSettings): List<String> {
