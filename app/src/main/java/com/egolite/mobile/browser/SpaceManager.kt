@@ -367,6 +367,20 @@ object SpaceManager {
         mainHandler.post { webViews[tabId]?.reload() }
     }
 
+    fun goHome(spaceId: String) {
+        val home = _preferences.value.homepageUrl.ifBlank { "ego://newtab" }
+        val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        val tab = space.activeTab
+        if (home == "ego://newtab") {
+            updateTab(spaceId, tab.id) {
+                it.copy(title = "새 탭", url = "ego://newtab", isLoading = false, progress = 100)
+            }
+            if (spaceId == "personal") savePersonalTabs()
+        } else {
+            navigate(spaceId, home)
+        }
+    }
+
     fun findInPage(spaceId: String, query: String) {
         val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return
         mainHandler.post {
