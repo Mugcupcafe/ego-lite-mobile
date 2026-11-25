@@ -195,64 +195,6 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
 
                 HorizontalDivider()
 
-                // 브라우저 옵션
-                Text("브라우저 표시 및 호환성", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                SettingToggleRow(
-                    title = "주소창 하단 북마크 바 표시",
-                    checked = prefs.showBookmarkBar,
-                    onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showBookmarkBar = c) } }
-                )
-                Text("번역 엔진 선택", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = prefs.translationEngine == TranslationEngine.ONLINE_GOOGLE,
-                        onClick = { SpaceManager.updatePreferences { it.copy(translationEngine = TranslationEngine.ONLINE_GOOGLE) } }
-                    )
-                    Text("온라인 (Google)", fontSize = 13.sp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    RadioButton(
-                        selected = prefs.translationEngine == TranslationEngine.OFFLINE_MLKIT,
-                        onClick = { SpaceManager.updatePreferences { it.copy(translationEngine = TranslationEngine.OFFLINE_MLKIT) } }
-                    )
-                    Text("온디바이스 오프라인", fontSize = 13.sp)
-                }
-
-                Text("기본 검색 엔진", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SearchEngine.entries.forEach { se ->
-                        val selected = prefs.searchEngine == se
-                        OutlinedButton(
-                            onClick = { SpaceManager.updatePreferences { it.copy(searchEngine = se) } },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = se.label,
-                                fontSize = 11.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-
-                Text("페이지 글자 크기 (${prefs.textZoom}%)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Slider(
-                    value = prefs.textZoom.toFloat(),
-                    onValueChange = { v -> SpaceManager.updatePreferences { it.copy(textZoom = v.toInt()) } },
-                    valueRange = 75f..150f,
-                    steps = 14
-                )
-
-                SettingToggleRow(
-                    title = "데스크톱 사이트 모드 (13.3인치 권장)",
-                    checked = prefs.desktopModeEnabled,
-                    onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(desktopModeEnabled = c) } }
-                )
-
                 OutlinedTextField(
                     value = prefs.firecrawlApiKey,
                     onValueChange = { v -> SpaceManager.updatePreferences { it.copy(firecrawlApiKey = v) } },
