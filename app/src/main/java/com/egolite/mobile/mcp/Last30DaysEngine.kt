@@ -80,7 +80,7 @@ object Last30DaysEngine {
                         put("subreddit", d["subreddit_name_prefixed"]?.jsonPrimitive?.contentOrNull.orEmpty())
                         put("upvotes", d["ups"]?.jsonPrimitive?.intOrNull ?: 0)
                         put("comments", d["num_comments"]?.jsonPrimitive?.intOrNull ?: 0)
-                        put("snippet", d["selftext"]?.jsonPrimitive?.contentOrNull.orEmpty().replace("\s+".toRegex(), " ").take(maxChars))
+                        put("snippet", d["selftext"]?.jsonPrimitive?.contentOrNull.orEmpty().replace(Regex("""\s+"""), " ").take(maxChars))
                         put("url", "https://www.reddit.com" + d["permalink"]?.jsonPrimitive?.contentOrNull.orEmpty())
                     })
                 }
@@ -185,9 +185,7 @@ object Last30DaysEngine {
      */
     suspend fun translateBatchToKorean(texts: List<String>): List<String> {
         if (texts.isEmpty()) return emptyList()
-        val joined = texts.joinToString("
-|||EGO|||
-")
+        val joined = texts.joinToString("\n|||EGO|||\n")
         return runCatching {
             val encoded = Uri.encode(joined)
             val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=$encoded"
