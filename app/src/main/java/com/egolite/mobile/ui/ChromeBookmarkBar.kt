@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -300,20 +301,40 @@ fun ChromeBookmarkBar(
 }
 
 @Composable
-fun BookmarkMiniFavicon(bm: BookmarkItem) {
-    val bg = badgeColorForBookmark(bm.title, bm.url)
-    Box(
-        modifier = Modifier
-            .size(18.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(bg),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = bm.title.trim().take(1).uppercase().ifBlank { "B" },
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White
+fun BookmarkMiniFavicon(bm: BookmarkItem, sizeDp: Int = 18) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var iconBitmap by remember(bm.url) { mutableStateOf(com.egolite.mobile.browser.FaviconCache.getMemoryCached(bm.url)) }
+    androidx.compose.runtime.LaunchedEffect(bm.url) {
+        if (iconBitmap == null) {
+            iconBitmap = com.egolite.mobile.browser.FaviconCache.loadFavicon(context, bm.url)
+        }
+    }
+
+    val bmp = iconBitmap
+    if (bmp != null) {
+        androidx.compose.foundation.Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = bm.title,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier
+                .size(sizeDp.dp)
+                .clip(RoundedCornerShape(4.dp))
         )
+    } else {
+        val bg = badgeColorForBookmark(bm.title, bm.url)
+        Box(
+            modifier = Modifier
+                .size(sizeDp.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(bg),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = bm.title.trim().take(1).uppercase().ifBlank { "B" },
+                fontSize = (sizeDp * 0.56f).sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White
+            )
+        }
     }
 }
