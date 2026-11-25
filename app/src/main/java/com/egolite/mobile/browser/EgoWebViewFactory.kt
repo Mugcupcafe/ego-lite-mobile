@@ -9,7 +9,11 @@ import android.graphics.Canvas
 import android.net.Uri
 import android.os.Message
 import android.util.Base64
+import android.view.View
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -19,6 +23,7 @@ import android.webkit.WebViewClient
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.egolite.mobile.model.LongPressTarget
 import java.io.ByteArrayOutputStream
 
 object EgoWebViewFactory {
@@ -26,15 +31,37 @@ object EgoWebViewFactory {
     private const val DESKTOP_CHROME_UA =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
+    private const val APPLY_DARK_CSS_JS = """
+        (function() {
+            var existing = document.getElementById('ego-dark-mode-css');
+            if (existing) return;
+            var style = document.createElement('style');
+            style.id = 'ego-dark-mode-css';
+            style.textContent =
+                'html { filter: invert(0.92) hue-rotate(180deg) !important; background-color: #121212 !important; } ' +
+                'img, video, picture, canvas, iframe, [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }';
+            (document.head || document.documentElement).appendChild(style);
+        })();
+    """
+
+    private const val REMOVE_DARK_CSS_JS = """
+        (function() {
+            var existing = document.getElementById('ego-dark-mode-css');
+            if (existing) existing.remove();
+        })();
+    """
+
     private const val MOBILE_CHROME_UA =
         "Mozilla/5.0 (Linux; Android 16; YLP-W00) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
     @SuppressLint("SetJavaScriptEnabled")
     fun createWebView(
         context: Context,
+        tabId: String,
         adBlockProvider: () -> Boolean,
         darkModeProvider: () -> Boolean,
         desktopModeProvider: () -> Boolean,
+        textZoomProvider: () -> Int,
         onPageStarted: (url: String) -> Unit,
         onPageFinished: (url: String, title: String, canBack: Boolean, canForward: Boolean) -> Unit,
         onProgressChanged: (Int) -> Unit,
@@ -51,6 +78,7 @@ object EgoWebViewFactory {
             databaseEnabled = true
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(true)
+            setGeolocationEnabled(true)
             loadWithOverviewMode = true
             useWideViewPort = true
             builtInZoomControls = true
@@ -59,17 +87,50 @@ object EgoWebViewFactory {
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             allowFileAccess = false
             allowContentAccess = true
+            textZoom = textZoomProvider()
             userAgentString = if (desktopModeProvider()) DESKTOP_CHROME_UA else MOBILE_CHROME_UA
         }
 
-        applyDarkMode(webView, darkModeProvider())
+        // 파일 다운로드 (PDF, 이미지, APK 등)
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            BrowserActivityBridge.enqueueDownload(context, url, userAgent, contentDisposition, mimeType)
+        }
+
+        // 링크 · 이미지 길게 누르기 컨텍스트 메뉴
+        webView.setOnLongClickListener { view ->
+            val wv = view as? WebView ?: return@setOnLongClickListener false
+            val hit = wv.hitTestResult
+            when (hit.type) {
+                WebView.HitTestResult.SRC_ANCHOR_TYPE -> {
+                    BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = hit.extra))
+                    true
+                }
+                WebView.HitTestResult.IMAGE_TYPE -> {
+                    BrowserActivityBridge.showLongPressMenu(LongPressTarget(imageUrl = hit.extra))
+                    true
+                }
+                WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+                    val msg = wv.handler?.obtainMessage()
+                    if (msg != null) {
+                        wv.requestFocusNodeHref(msg)
+                        val link = msg.data?.getString("url")
+                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = link ?: hit.extra, imageUrl = hit.extra))
+                    } else {
+                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = hit.extra, imageUrl = hit.extra))
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
-                if (adBlockProvider() && AdBlockEngine.shouldBlock(request?.url?.toString())) {
+                val pageHost = AdBlockEngine.extractHost(view?.url)
+                if (adBlockProvider() && AdBlockEngine.shouldBlock(request?.url?.toString(), pageHost, tabId)) {
                     return AdBlockEngine.emptyResponse()
                 }
                 return super.shouldInterceptRequest(view, request)
@@ -83,7 +144,6 @@ object EgoWebViewFactory {
                 if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:")) {
                     return false
                 }
-                // 한국 쇼핑몰·간편인증(PASS, 카카오, 토스, 카드사) 커스텀 스킴 및 intent:// 처리
                 return handleExternalScheme(context, url)
             }
 
@@ -98,8 +158,10 @@ object EgoWebViewFactory {
                 super.onPageFinished(view, url)
                 if (view != null) {
                     if (adBlockProvider()) {
-                        view.evaluateJavascript(AdBlockEngine.COSMETIC_FILTER_JS, null)
+                        val js = AdBlockEngine.buildCosmeticFilterJs(AdBlockEngine.extractHost(url ?: view.url))
+                        if (js.isNotBlank()) view.evaluateJavascript(js, null)
                     }
+                    applyDarkMode(view, darkModeProvider())
                     onPageFinished(
                         url ?: view.url.orEmpty(),
                         view.title?.ifBlank { url.orEmpty() } ?: "새 탭",
@@ -127,6 +189,51 @@ object EgoWebViewFactory {
                 }
                 return false
             }
+
+            // 동영상 전체화면 (YouTube 등)
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                if (view != null && callback != null) {
+                    BrowserActivityBridge.enterFullscreen(view, callback)
+                }
+            }
+
+            override fun onHideCustomView() {
+                BrowserActivityBridge.exitFullscreen()
+            }
+
+            // 파일 첨부 (<input type="file">)
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                BrowserActivityBridge.filePathCallback?.onReceiveValue(null)
+                BrowserActivityBridge.filePathCallback = filePathCallback
+                val accept = fileChooserParams?.acceptTypes?.filter { it.isNotBlank() }?.toTypedArray()
+                val mimeTypes = if (accept.isNullOrEmpty()) arrayOf("*/*") else accept
+                val launcher = BrowserActivityBridge.launchFilePicker
+                return if (launcher != null) {
+                    launcher(mimeTypes)
+                    true
+                } else {
+                    BrowserActivityBridge.filePathCallback?.onReceiveValue(null)
+                    BrowserActivityBridge.filePathCallback = null
+                    false
+                }
+            }
+
+            // 웹 위치 권한 허용
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                callback?.invoke(origin, true, false)
+            }
+
+            // 웹 카메라 · 마이크 권한 허용
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                request?.grant(request.resources)
+            }
         }
 
         return webView
@@ -136,12 +243,17 @@ object EgoWebViewFactory {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, enabled)
         }
+        webView.evaluateJavascript(if (enabled) APPLY_DARK_CSS_JS else REMOVE_DARK_CSS_JS, null)
     }
 
     fun applyDesktopMode(webView: WebView, desktop: Boolean) {
         webView.settings.userAgentString = if (desktop) DESKTOP_CHROME_UA else MOBILE_CHROME_UA
         webView.settings.useWideViewPort = true
         webView.settings.loadWithOverviewMode = true
+    }
+
+    fun applyTextZoom(webView: WebView, zoom: Int) {
+        webView.settings.textZoom = zoom.coerceIn(75, 150)
     }
 
     fun getCurrentChromiumVersion(context: Context): String {
