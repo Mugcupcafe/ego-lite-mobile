@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.app.ActivityCompat
@@ -141,7 +142,10 @@ class MainActivity : ComponentActivity() {
             val isDark = when (prefs.themeMode) {
                 ThemeMode.SYSTEM -> systemDark
                 ThemeMode.DARK -> true
-                ThemeMode.LIGHT -> prefs.darkModeEnabled
+                ThemeMode.LIGHT -> false
+            }
+            LaunchedEffect(isDark) {
+                SpaceManager.syncWebViewsDarkMode(isDark)
             }
             SideEffect {
                 val isLight = !isDark
