@@ -181,6 +181,7 @@ fun BrowserScreen() {
 
     var addressInput by remember(activeTab.id, activeTab.url) { mutableStateOf(activeTab.url) }
     var spaceBarExpanded by remember { mutableStateOf(false) }
+    var showAiMonitorTray by remember { mutableStateOf(false) }
     var showMcpDrawer by remember { mutableStateOf(false) }
     var showChromeSettings by remember { mutableStateOf(false) }
     var showAllTabsDialog by remember { mutableStateOf(false) }
@@ -396,6 +397,7 @@ fun BrowserScreen() {
             showChromeSettings = false
             showMcpDrawer = false
             showBookmarkManager = false
+            showAllTabsDialog = false
             showOmniboxOverlay = false
             showChromeMenu = false
             spaceBarExpanded = false
@@ -458,6 +460,7 @@ fun BrowserScreen() {
                     canAddAiSpace = canAddAiSpace,
                     isExpanded = spaceBarExpanded,
                     onSetExpanded = { spaceBarExpanded = it },
+                    onToggleAiMonitor = { showAiMonitorTray = !showAiMonitorTray },
                     onHoverIndexChanged = { hoveredSpaceIndex = it },
                     onCommitIndex = { idx ->
                         if (idx in spaces.indices) {
@@ -947,6 +950,19 @@ fun BrowserScreen() {
                 }
             }
 
+            // 상단 고정형 AI 라이브 모니터 트레이 (짧게 탭 시 확장, 닫기 전까지 계속 표시되어 웹툰 등과 동시 시청 가능)
+            AiLiveMonitorTray(
+                visible = showAiMonitorTray,
+                spaces = spaces,
+                activeSpaceId = activeSpaceId,
+                canAddAiSpace = canAddAiSpace,
+                onSelectSpace = { id -> SpaceManager.selectSpace(id) },
+                onCreateAiSpace = { SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) } },
+                onCloseAiSpace = { id -> SpaceManager.closeAiSpace(id) },
+                onChangeSpaceColor = { id, hex -> SpaceManager.setSpaceAccentColor(id, hex) },
+                onCollapse = { showAiMonitorTray = false }
+            )
+
             val activeSpaceAccent = parseSpaceColor(activeSpace.accentColorHex)
             // 웹 캔버스 (AI Space일 때 2dp 커스텀 공간 색상 테두리 + 안정적 풀스크린 WebView 호스트)
             val canvasBorder = if (activeSpace.type == SpaceType.AI) {
@@ -1228,25 +1244,40 @@ fun BrowserScreen() {
         // 크롬형 전체 화면 썸네일 카드 그리드 모든 탭 보기
         if (showAllTabsDialog) {
             ChromeTabSwitcherOverlay(
+                spaces = spaces,
                 activeSpace = activeSpace,
-                onSelectTab = { tabId ->
-                    SpaceManager.selectTab(activeSpace.id, tabId)
+                darkTheme = isEffectiveDark,
+                canAddAiSpace = canAddAiSpace,
+                onSelectSpaceAndTab = { targetSpaceId, tabId ->
+                    SpaceManager.selectSpace(targetSpaceId)
+                    SpaceManager.selectTab(targetSpaceId, tabId)
                     showAllTabsDialog = false
                 },
-                onCloseTab = { tabId ->
-                    SpaceManager.closeTab(activeSpace.id, tabId)
+                onCloseTab = { targetSpaceId, tabId ->
+                    SpaceManager.closeTab(targetSpaceId, tabId)
                 },
-                onCreateTab = {
-                    SpaceManager.createTab(activeSpace.id)
+                onCreateTab = { targetSpaceId, incog ->
+                    SpaceManager.selectSpace(targetSpaceId)
+                    SpaceManager.createTab(targetSpaceId, incognito = incog)
                     showAllTabsDialog = false
                 },
-                onCreateIncognitoTab = {
-                    SpaceManager.createTab(activeSpace.id, incognito = true)
+                onCreateAiSpace = {
+                    SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+                },
+                onCloseAiSpace = { targetSpaceId ->
+                    SpaceManager.closeAiSpace(targetSpaceId)
+                },
+                onCloseAllTabs = { targetSpaceId ->
+                    SpaceManager.closeAllTabs(targetSpaceId)
                     showAllTabsDialog = false
                 },
-                onCloseAllTabs = {
-                    SpaceManager.closeAllTabsInSpace(activeSpace.id)
+                onClearBrowsingData = {
+                    SpaceManager.clearHistoryAndCache()
+                    Toast.makeText(context, "인터넷 사용 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
+                },
+                onOpenSettings = {
                     showAllTabsDialog = false
+                    showChromeSettings = true
                 },
                 onDismiss = { showAllTabsDialog = false }
             )
