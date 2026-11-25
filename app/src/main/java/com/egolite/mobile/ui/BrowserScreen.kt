@@ -8,6 +8,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -300,6 +307,7 @@ fun BrowserScreen() {
     LaunchedEffect(activeTab.id, activeTab.url, activeTab.isLoading) {
         addressInput = activeTab.url
         if (!activeTab.isLoading && activeTab.url != NEW_TAB_URL && currentHost.isNotBlank() && currentHost in prefs.autoTranslateHosts) {
+            kotlinx.coroutines.delay(350L)
             triggerTranslation(translateState.sourceLang, translateState.targetLang)
         }
     }
@@ -432,7 +440,7 @@ fun BrowserScreen() {
                         tint = activeIconColor
                     )
                 }
-                val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1
+                val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1 || activeTab.url != NEW_TAB_URL
                 IconButton(
                     onClick = { SpaceManager.handleBackOrCloseTab(activeSpace.id) },
                     enabled = canBackOrClose,
@@ -620,7 +628,7 @@ fun BrowserScreen() {
 
                 // 주/야간 다크모드 토글
                 IconButton(
-                    onClick = { SpaceManager.updatePreferences { it.copy(darkModeEnabled = !it.darkModeEnabled) } },
+                    onClick = { SpaceManager.updatePreferences { val next = !it.darkModeEnabled; it.copy(darkModeEnabled = next, themeMode = if (next) com.egolite.mobile.model.ThemeMode.DARK else com.egolite.mobile.model.ThemeMode.LIGHT) } },
                     modifier = Modifier.size(42.dp)
                 ) {
                     Icon(
@@ -682,7 +690,8 @@ fun BrowserScreen() {
                                             showChromeMenu = false
                                             hoveredMenuIndex = -1
                                             chosen.onClick()
-                                        } else if (wasAlreadyOpen) {
+                                        } else if (dragged || wasAlreadyOpen) {
+                                            // 드래그 후 메뉴 밖에서 손을 떼면 선택 없이 자동으로 닫힘
                                             showChromeMenu = false
                                             hoveredMenuIndex = -1
                                         } else {
@@ -691,12 +700,19 @@ fun BrowserScreen() {
                                         break
                                     }
                                     val dy = change.position.y - down.position.y
-                                    if (dy > menuDragStartPx) {
+                                    val dx = change.position.x - down.position.x
+                                    val menuWidthPx = with(density) { 260.dp.toPx() }
+                                    val totalMenuHeightPx = itemsNow.size * menuItemHeightPx
+                                    if (kotlin.math.abs(dy) > menuDragStartPx * 0.5f || kotlin.math.abs(dx) > menuDragStartPx * 0.5f) {
                                         dragged = true
-                                        val idx = ((dy - menuDragStartPx) / menuItemHeightPx)
-                                            .toInt()
-                                            .coerceIn(0, (itemsNow.size - 1).coerceAtLeast(0))
-                                        if (idx != lastHover) {
+                                    }
+                                    val inMenuBounds = dy > menuDragStartPx &&
+                                        dy <= (menuDragStartPx + totalMenuHeightPx) &&
+                                        dx >= -menuWidthPx &&
+                                        dx <= with(density) { 42.dp.toPx() }
+                                    if (inMenuBounds) {
+                                        val idx = ((dy - menuDragStartPx) / menuItemHeightPx).toInt()
+                                        if (idx in itemsNow.indices && idx != lastHover) {
                                             lastHover = idx
                                             hoveredMenuIndex = idx
                                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1055,7 +1071,20 @@ fun BrowserScreen() {
         }
 
         // 크롬 태블릿 1:1 2-패널 전체 화면 설정 페이지
-        if (showChromeSettings) {
+        BackHandler(enabled = showMcpDrawer || showOmniboxOverlay || showAllTabsDialog || readerMarkdown != null) {
+            when {
+                showMcpDrawer -> showMcpDrawer = false
+                showOmniboxOverlay -> showOmniboxOverlay = false
+                showAllTabsDialog -> showAllTabsDialog = false
+                readerMarkdown != null -> readerMarkdown = null
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showChromeSettings,
+            enter = slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(200)),
+            exit = slideOutHorizontally(tween(200)) { it / 4 } + fadeOut(tween(170))
+        ) {
             ChromeSettingsScreen(
                 onOpenMcpDrawer = { showMcpDrawer = true },
                 onDismiss = { showChromeSettings = false }
