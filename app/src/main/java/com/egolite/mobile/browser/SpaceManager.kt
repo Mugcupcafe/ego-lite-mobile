@@ -665,11 +665,11 @@ object SpaceManager {
         return withTimeout(timeoutMs) { deferred.await() }
     }
 
-    suspend fun navigateAndWait(spaceId: String, url: String, maxWaitMs: Long = 4200L) {
+    suspend fun navigateAndWait(spaceId: String, url: String, waitMs: Long = 4200L) {
         val space = resolveAiSpace(spaceId)
         navigate(space.id, url)
         delay(220L)
-        val deadline = System.currentTimeMillis() + maxWaitMs
+        val deadline = System.currentTimeMillis() + waitMs
         while (System.currentTimeMillis() < deadline) {
             val curTab = _spaces.value.firstOrNull { it.id == space.id }?.activeTab
             if (curTab != null && !curTab.isLoading && curTab.progress >= 90) {
