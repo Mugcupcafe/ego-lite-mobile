@@ -150,7 +150,8 @@ fun PillSpaceCapsule(
                                 latestCommit(lastHover)
                                 latestHoverChanged(-1)
                                 latestSetExpanded(false)
-                            } else if (wasAlreadyOpen) {
+                            } else if (dragged || wasAlreadyOpen) {
+                                // 드래그 후 영역 밖에서 손을 떼면 선택 없이 자동으로 닫힘
                                 latestSetExpanded(false)
                                 latestHoverChanged(-1)
                             } else {
@@ -160,10 +161,15 @@ fun PillSpaceCapsule(
                         }
                         val dy = change.position.y - down.position.y
                         val dx = change.position.x
-                        if (dy > dragThresholdY) {
+                        val totalBarWidthPx = latestTotalSlots * chipWidthPx
+                        val maxBarBottomPx = dragThresholdY + chipWidthPx * 0.9f
+                        if (kotlin.math.abs(dy) > dragThresholdY * 0.5f || kotlin.math.abs(dx - down.position.x) > dragThresholdY * 0.5f) {
                             dragged = true
-                            val idx = (dx / chipWidthPx).toInt().coerceIn(0, (latestTotalSlots - 1).coerceAtLeast(0))
-                            if (idx != lastHover) {
+                        }
+                        val inBarBounds = dy > dragThresholdY && dy <= maxBarBottomPx && dx >= 0f && dx <= totalBarWidthPx
+                        if (inBarBounds) {
+                            val idx = (dx / chipWidthPx).toInt()
+                            if (idx in 0 until latestTotalSlots && idx != lastHover) {
                                 lastHover = idx
                                 latestHoverChanged(idx)
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
