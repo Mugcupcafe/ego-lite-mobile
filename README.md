@@ -1,11 +1,13 @@
-# ego-lite-mobile (v0.4.2)
+# ego-lite-mobile (v0.4.5)
 
 HONOR MagicPad 3 Pro (`YLP-W00`, Android 16 / `arm64-v8a`) 태블릿용 AI 협업 브라우저 프로젝트입니다.
 
-## v0.4.2 변경 사항 (`versionCode = 12`, `versionName = "0.4.2"`)
-- **실행 직후 홈으로 튕기는 치명적 크래시 수정:** `EgoWebViewFactory`의 `shouldInterceptRequest`(백그라운드 IO 스레드)에서 `view?.url`을 직접 호출하던 WebView 스레드 위반 오류를 `@Volatile`/`currentPageHost` 추적 방식으로 해결
-- **크래시 로그 자동 기록(`CrashLogger`) 추가:** 예기치 않은 종료 시 스택 트레이스·기기·버전 정보를 앱 내부(`last_crash.txt`)와 외부 저장소(`Android/data/com.egolite.mobile.debug/files/crash_logs/`)에 자동 저장하고, 다음 실행 시 **로그 복사 팝업**으로 즉시 확인 가능
-- **앱 업데이트 시 덮어쓰기 설치 지원:** `codemagic.yaml`에서 `~/.android/debug.keystore`를 캐시(및 선택적 `DEBUG_KEYSTORE_B64` 환경변수 복원)해 빌드마다 서명이 바뀌는 문제를 해결, `v0.4.2` 이후부터 삭제 없이 바로 업데이트 가능
+## v0.4.5 변경 사항 (`versionCode = 15`, `versionName = "0.4.5"`)
+- **광고차단 메뉴 → 크롬 확장프로그램 스타일 팝업 개편:** 중앙 스크롤 팝업 대신 방패 아이콘 바로 아래 우상단 앵커 팝업(`326dp`)으로 이동하고, 전체 항목(차단 통계·전역/사이트/CSS 토글·사용자 도메인/CSS 입력·최근 차단 요약)이 스크롤 없이 한눈에 다 보이도록 컴팩트화
+- **태블릿 크롬 1:1 북마크 바 및 순서 이동·편집:**
+  - 칩 박스 제거 후 크롬과 동일한 플랫 디자인(폴더 드롭다운 `📁 AI` + 사이트 미니 아이콘·제목 + 우측 `> | ☆ 모든 북마크`) 적용
+  - 북마크 바 항목 길게 누르기로 `새 탭에서 열기` / `북마크 수정` / `왼쪽·오른쪽 위치 이동` / `삭제` 지원
+  - 모든 북마크 관리자에도 크롬형 검색 바·미니 아이콘·`▲/▼` 순서 변경 버튼 추가 (영구 저장)
 
 ## Codemagic 무료 빌드 방법 (`codemagic.yaml`)
 1. 이 폴더(`ego-lite-mobile/`)를 GitHub 저장소에 올립니다.
