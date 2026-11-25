@@ -1,9 +1,11 @@
 workflows:
   android-ego-lite-mobile:
-    name: ego-lite-mobile v0.4.9 (HONOR YLP-W00 · arm64-v8a · Free M2)
+    name: ego-lite-mobile v0.4.13 (HONOR YLP-W00 · arm64-v8a · Free M2)
     max_build_duration: 30
     instance_type: mac_mini_m2
     environment:
+      groups:
+        - ego_signing
       java: 17
       vars:
         PACKAGE_NAME: "com.egolite.mobile"
@@ -11,7 +13,7 @@ workflows:
       cache_paths:
         - ~/.gradle/caches
         - ~/.gradle/wrapper
-        - ~/.android/debug.keystore
+        - ~/.android
     scripts:
       - name: Ensure consistent debug signing keystore (in-place updates)
         script: |
