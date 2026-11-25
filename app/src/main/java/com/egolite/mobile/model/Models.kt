@@ -12,9 +12,19 @@ enum class SpaceType {
 enum class AiSpaceStatus {
     IDLE,
     WORKING,
+    THINKING,
     TAKEOVER_PAUSED,
     DONE
 }
+
+val AI_SPACE_COLOR_PRESETS: List<String> = listOf(
+    "#10B981", // 에메랄드
+    "#38BDF8", // 스카이블루
+    "#A855F7", // 바이올렛
+    "#F59E0B", // 앰버
+    "#F43F5E", // 로즈
+    "#06B6D4"  // 시안
+)
 
 enum class TunnelProvider {
     CLOUDFLARE,
@@ -79,7 +89,8 @@ data class BrowserSpace(
     val tabs: List<BrowserTab>,
     val activeTabId: String,
     val aiStatus: AiSpaceStatus = AiSpaceStatus.IDLE,
-    val lastActionSummary: String = ""
+    val lastActionSummary: String = "",
+    val accentColorHex: String = "#10B981"
 ) {
     val activeTab: BrowserTab
         get() = tabs.firstOrNull { it.id == activeTabId } ?: tabs.first()
