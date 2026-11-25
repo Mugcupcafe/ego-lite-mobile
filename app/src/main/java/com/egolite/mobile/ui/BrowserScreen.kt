@@ -23,8 +23,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -96,13 +99,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import com.egolite.mobile.browser.AdBlockEngine
 import com.egolite.mobile.browser.BrowserActivityBridge
 import com.egolite.mobile.browser.BrowserScripts
@@ -143,6 +151,7 @@ fun BrowserScreen() {
     var addressInput by remember(activeTab.id, activeTab.url) { mutableStateOf(activeTab.url) }
     var spaceBarExpanded by remember { mutableStateOf(false) }
     var showMcpDrawer by remember { mutableStateOf(false) }
+    var showChromeSettings by remember { mutableStateOf(false) }
     var showAllTabsDialog by remember { mutableStateOf(false) }
     var showChromeMenu by remember { mutableStateOf(false) }
     var showHistoryDialog by remember { mutableStateOf(false) }
@@ -153,12 +162,17 @@ fun BrowserScreen() {
     var editingBookmark by remember { mutableStateOf<BookmarkItem?>(null) }
     var showAddBookmarkDialog by remember { mutableStateOf(false) }
     var readerMarkdown by remember { mutableStateOf<String?>(null) }
+    var previewPageUrl by remember { mutableStateOf<String?>(null) }
+    var hoveredSpaceIndex by remember { mutableStateOf(-1) }
+    var hoveredMenuIndex by remember { mutableStateOf(-1) }
     var translateState by remember { mutableStateOf(TranslationPopupState()) }
     var findQuery by remember { mutableStateOf("") }
     var pendingCrashLog by remember { mutableStateOf(com.egolite.mobile.CrashLogger.readLastCrash(context)) }
 
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
 
     val activeIconColor = MaterialTheme.colorScheme.onSurface
     val mutedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -166,6 +180,66 @@ fun BrowserScreen() {
     val currentHost = remember(activeTab.url) { AdBlockEngine.extractHost(activeTab.url) }
     val pageBlockedCount = adBlockState.perTabCounts[activeTab.id] ?: 0
     val isSiteAdBlockOn = AdBlockEngine.isEnabledForHost(currentHost)
+    val canAddAiSpace = spaces.count { it.type == SpaceType.AI } < prefs.maxAiSpaces
+
+    val chromeMenuItems = buildList {
+        add(
+            ChromeMenuItemSpec(
+                title = if (isMcpDisconnected) "MCP · 터널 설정 (끊김)" else "MCP · 터널 설정 (연결됨)",
+                icon = Icons.Default.Hub,
+                accentColor = if (isMcpDisconnected) EgoDangerRed else EgoEmerald,
+                bold = true,
+                dividerAfter = true,
+                onClick = { showMcpDrawer = true }
+            )
+        )
+        add(ChromeMenuItemSpec("새 탭", Icons.Default.Add) { SpaceManager.createTab(activeSpace.id) })
+        add(ChromeMenuItemSpec("새 시크릿 탭", Icons.Default.VisibilityOff) { SpaceManager.createTab(activeSpace.id, incognito = true) })
+        if (recentlyClosed.isNotEmpty()) {
+            add(ChromeMenuItemSpec("닫은 탭 다시 열기", Icons.Default.Restore) { SpaceManager.reopenLastClosedTab(activeSpace.id) })
+        }
+        add(ChromeMenuItemSpec("새 AI Space", Icons.Default.SmartToy, accentColor = EgoEmerald) {
+            SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+        })
+        add(ChromeMenuItemSpec("북마크 바 표시", Icons.Default.BookmarkBorder, checked = prefs.showBookmarkBar) {
+            SpaceManager.updatePreferences { it.copy(showBookmarkBar = !it.showBookmarkBar) }
+        })
+        add(ChromeMenuItemSpec("북마크 관리", Icons.Default.StarBorder) { showBookmarkManager = true })
+        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History) { showHistoryDialog = true })
+        add(ChromeMenuItemSpec("읽기 모드 (본문만 보기)", Icons.Default.MenuBook) {
+            scope.launch {
+                runCatching {
+                    val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                    val md = JSONObject(raw).optString("markdown", "")
+                    readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                }
+            }
+        })
+        add(ChromeMenuItemSpec("인쇄 / PDF 저장", Icons.Default.Print) { SpaceManager.printActiveTab(context, activeSpace.id) })
+        add(ChromeMenuItemSpec("페이지에서 찾기", Icons.Default.FindInPage) { showFindBar = true })
+        add(ChromeMenuItemSpec("공유", Icons.Default.Share) {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
+                putExtra(Intent.EXTRA_TEXT, activeTab.url)
+            }
+            context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
+        })
+        add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy) {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
+            Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
+        })
+        add(ChromeMenuItemSpec("데스크톱 사이트", Icons.Default.DesktopWindows, checked = prefs.desktopModeEnabled) {
+            SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
+            SpaceManager.reload(activeSpace.id)
+        })
+        add(ChromeMenuItemSpec("방문 기록 · 캐시 삭제", Icons.Default.DeleteSweep, dividerAfter = true) {
+            SpaceManager.clearHistoryAndCache()
+            Toast.makeText(context, "방문 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
+        })
+        add(ChromeMenuItemSpec("설정", Icons.Default.Settings) { showChromeSettings = true })
+    }
 
     fun triggerTranslation(src: String, dst: String) {
         if (activeTab.url == NEW_TAB_URL) {
@@ -190,8 +264,12 @@ fun BrowserScreen() {
             translateState = translateState.copy(
                 isTranslating = false,
                 isTranslated = ok,
-                statusText = if (ok) "페이지 번역됨" else detected,
-                detectedLangLabel = if (ok && src == "auto") "감지됨(${TranslationManager.labelFor(detected)})" else "감지된 언어"
+                statusText = if (ok) "번역됨" else detected,
+                detectedLangLabel = if (ok && src == "auto" && detected.isNotBlank() && detected != "auto") {
+                    TranslationManager.labelFor(detected)
+                } else {
+                    "자동 감지"
+                }
             )
         }
     }
@@ -202,7 +280,7 @@ fun BrowserScreen() {
             isTranslating = false,
             isTranslated = false,
             statusText = "",
-            detectedLangLabel = "감지된 언어"
+            detectedLangLabel = "자동 감지"
         )
     }
 
@@ -217,9 +295,12 @@ fun BrowserScreen() {
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1행: 최상단 — 알약 캡슐(Personal/AI) + 현재 공간의 크롬형 탭 목록만 배치
+            // 1행: 최상단 — 알약 캡슐(Personal/AI · Drag-to-Open) + 현재 공간의 크롬형 탭 목록만 배치
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -230,7 +311,18 @@ fun BrowserScreen() {
                 PillSpaceCapsule(
                     activeSpace = activeSpace,
                     isAnyAiWorking = isAnyAiWorking,
-                    onToggleExpand = { spaceBarExpanded = !spaceBarExpanded }
+                    spaceCount = spaces.size,
+                    canAddAiSpace = canAddAiSpace,
+                    isExpanded = spaceBarExpanded,
+                    onSetExpanded = { spaceBarExpanded = it },
+                    onHoverIndexChanged = { hoveredSpaceIndex = it },
+                    onCommitIndex = { idx ->
+                        if (idx in spaces.indices) {
+                            SpaceManager.selectSpace(spaces[idx].id)
+                        } else if (canAddAiSpace && idx == spaces.size) {
+                            SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+                        }
+                    }
                 )
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -527,190 +619,65 @@ fun BrowserScreen() {
                     }
                 }
 
-                // 우측 끝: 크롬형 브라우저 메뉴 (최상단: MCP 설정 메뉴)
-                Box {
-                    IconButton(
-                        onClick = { showChromeMenu = true },
-                        modifier = Modifier.size(42.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "브라우저 메뉴",
-                            tint = activeIconColor
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showChromeMenu,
-                        onDismissRequest = { showChromeMenu = false }
-                    ) {
-                        // 최상단: MCP 설정 메뉴
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = if (isMcpDisconnected) "MCP · 터널 설정 (끊김)" else "MCP · 터널 설정 (연결됨)",
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isMcpDisconnected) EgoDangerRed else EgoEmerald
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Hub,
-                                    contentDescription = null,
-                                    tint = if (isMcpDisconnected) EgoDangerRed else EgoEmerald
-                                )
-                            },
-                            onClick = {
-                                showChromeMenu = false
-                                showMcpDrawer = true
-                            }
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("새 탭") },
-                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                SpaceManager.createTab(activeSpace.id)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("새 시크릿 탭") },
-                            leadingIcon = { Icon(Icons.Default.VisibilityOff, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                SpaceManager.createTab(activeSpace.id, incognito = true)
-                            }
-                        )
-                        if (recentlyClosed.isNotEmpty()) {
-                            DropdownMenuItem(
-                                text = { Text("닫은 탭 다시 열기") },
-                                leadingIcon = { Icon(Icons.Default.Restore, contentDescription = null) },
-                                onClick = {
-                                    showChromeMenu = false
-                                    SpaceManager.reopenLastClosedTab(activeSpace.id)
+                // 우측 끝: 크롬형 브라우저 메뉴 (Drag-to-Open & Drag-to-Select 지원)
+                val menuItemHeightPx = with(density) { 44.dp.toPx() }
+                val menuDragStartPx = with(density) { 26.dp.toPx() }
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .pointerInput(showChromeMenu, chromeMenuItems.size) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val wasAlreadyOpen = showChromeMenu
+                                if (!wasAlreadyOpen) {
+                                    showChromeMenu = true
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 }
-                            )
-                        }
-                        DropdownMenuItem(
-                            text = { Text("새 AI Space") },
-                            leadingIcon = { Icon(Icons.Default.SmartToy, contentDescription = null, tint = EgoEmerald) },
-                            onClick = {
-                                showChromeMenu = false
-                                SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("북마크 바 표시") },
-                            leadingIcon = { Icon(Icons.Default.BookmarkBorder, contentDescription = null) },
-                            trailingIcon = {
-                                if (prefs.showBookmarkBar) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            onClick = {
-                                showChromeMenu = false
-                                SpaceManager.updatePreferences { it.copy(showBookmarkBar = !it.showBookmarkBar) }
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("북마크 관리") },
-                            leadingIcon = { Icon(Icons.Default.StarBorder, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                showBookmarkManager = true
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("방문 기록") },
-                            leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                showHistoryDialog = true
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("읽기 모드 (본문만 보기)") },
-                            leadingIcon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                scope.launch {
-                                    runCatching {
-                                        val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
-                                        val md = JSONObject(raw).optString("markdown", "")
-                                        readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                                var dragged = false
+                                var lastHover = -1
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) {
+                                        if (dragged && lastHover in chromeMenuItems.indices) {
+                                            val chosen = chromeMenuItems[lastHover]
+                                            showChromeMenu = false
+                                            hoveredMenuIndex = -1
+                                            chosen.onClick()
+                                        } else if (wasAlreadyOpen) {
+                                            showChromeMenu = false
+                                            hoveredMenuIndex = -1
+                                        } else {
+                                            hoveredMenuIndex = -1
+                                        }
+                                        break
+                                    }
+                                    val dy = change.position.y - down.position.y
+                                    if (dy > menuDragStartPx) {
+                                        dragged = true
+                                        val idx = ((dy - menuDragStartPx) / menuItemHeightPx)
+                                            .toInt()
+                                            .coerceIn(0, (chromeMenuItems.size - 1).coerceAtLeast(0))
+                                        if (idx != lastHover) {
+                                            lastHover = idx
+                                            hoveredMenuIndex = idx
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                    } else if (lastHover != -1) {
+                                        lastHover = -1
+                                        hoveredMenuIndex = -1
                                     }
                                 }
                             }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("인쇄 / PDF 저장") },
-                            leadingIcon = { Icon(Icons.Default.Print, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                SpaceManager.printActiveTab(context, activeSpace.id)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("페이지에서 찾기") },
-                            leadingIcon = { Icon(Icons.Default.FindInPage, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                showFindBar = true
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("공유") },
-                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
-                                    putExtra(Intent.EXTRA_TEXT, activeTab.url)
-                                }
-                                context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("링크 복사") },
-                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
-                                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("데스크톱 사이트") },
-                            leadingIcon = { Icon(Icons.Default.DesktopWindows, contentDescription = null) },
-                            trailingIcon = {
-                                if (prefs.desktopModeEnabled) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            },
-                            onClick = {
-                                showChromeMenu = false
-                                SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
-                                SpaceManager.reload(activeSpace.id)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("방문 기록 · 캐시 삭제") },
-                            leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                SpaceManager.clearHistoryAndCache()
-                                Toast.makeText(context, "방문 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("설정") },
-                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                            onClick = {
-                                showChromeMenu = false
-                                showMcpDrawer = true
-                            }
-                        )
-                    }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "브라우저 메뉴",
+                        tint = activeIconColor
+                    )
                 }
             }
 
@@ -755,61 +722,18 @@ fun BrowserScreen() {
                 }
             }
 
-            // 3행 (선택): 크롬 스타일 주소창 하단 북마크 바 + 우측 "모든 북마크" 버튼
+            // 3행 (선택): 태블릿 크롬 1:1 북마크 바 (폴더 드롭다운 + 미니 아이콘 + 길게 눌러 편집·좌우 위치 변경)
             if (prefs.showBookmarkBar) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(38.dp)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .horizontalScroll(rememberScrollState()),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        bookmarks.forEach { bm ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-                                    .combinedClickable(
-                                        onClick = { SpaceManager.navigate(activeSpace.id, bm.url) },
-                                        onLongClick = { editingBookmark = bm }
-                                    )
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = bm.title,
-                                    fontSize = 12.sp,
-                                    color = activeIconColor,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { showBookmarkManager = true }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.StarBorder,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = mutedIconColor
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("모든 북마크", fontSize = 12.sp, color = activeIconColor)
-                    }
-                }
+                ChromeBookmarkBar(
+                    bookmarks = bookmarks,
+                    folders = bookmarkFolders,
+                    onNavigate = { url -> SpaceManager.navigate(activeSpace.id, url) },
+                    onOpenInNewTab = { url -> SpaceManager.createTab(activeSpace.id, initialUrl = url, selectImmediately = true) },
+                    onEditBookmark = { bm -> editingBookmark = bm },
+                    onMoveBookmark = { id, delta -> SpaceManager.moveBookmark(id, delta) },
+                    onDeleteBookmark = { id -> SpaceManager.removeBookmark(id) },
+                    onOpenAllBookmarks = { showBookmarkManager = true }
+                )
             }
 
             if (activeTab.isLoading && activeTab.progress in 1..99) {
@@ -889,7 +813,8 @@ fun BrowserScreen() {
                 visible = spaceBarExpanded,
                 spaces = spaces,
                 activeSpaceId = activeSpaceId,
-                canAddAiSpace = spaces.count { it.type == SpaceType.AI } < prefs.maxAiSpaces,
+                canAddAiSpace = canAddAiSpace,
+                hoveredIndex = hoveredSpaceIndex,
                 onSelectSpace = { id ->
                     SpaceManager.selectSpace(id)
                     spaceBarExpanded = false
@@ -901,7 +826,7 @@ fun BrowserScreen() {
             )
         }
 
-        // 주소창 아래 크롬 스타일 플로팅 번역 팝업
+        // 주소창 아래 크롬 스타일 슬림 알약 번역 팝업
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -912,9 +837,19 @@ fun BrowserScreen() {
                 engine = prefs.translationEngine,
                 currentHost = currentHost,
                 alwaysTranslateSite = currentHost in prefs.autoTranslateHosts,
+                pinnedLangs = prefs.pinnedTranslateLangs,
                 onChangeSourceLang = { newSrc -> triggerTranslation(newSrc, translateState.targetLang) },
                 onChangeTargetLang = { newDst -> triggerTranslation(translateState.sourceLang, newDst) },
-                onToggleAlwaysTranslate = { SpaceManager.toggleAutoTranslateHost(currentHost) },
+                onTogglePinLang = { code -> SpaceManager.togglePinnedTranslateLang(code) },
+                onToggleAlwaysTranslate = {
+                    val willEnable = currentHost !in prefs.autoTranslateHosts
+                    SpaceManager.toggleAutoTranslateHost(currentHost)
+                    Toast.makeText(
+                        context,
+                        if (willEnable) "$currentHost 항상 자동 번역 켜짐" else "$currentHost 자동 번역 해제됨",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
                 onUndoRestore = {
                     scope.launch {
                         TranslationManager.restoreOriginalInSpace(activeSpace.id)
@@ -964,6 +899,7 @@ fun BrowserScreen() {
                     showBookmarkManager = false
                     editingBookmark = bm
                 },
+                onMoveBookmark = { id, delta -> SpaceManager.moveBookmark(id, delta) },
                 onDeleteBookmark = { id -> SpaceManager.removeBookmark(id) },
                 onAddFolder = { name -> SpaceManager.addBookmarkFolder(name) },
                 onDismiss = { showBookmarkManager = false }
@@ -980,40 +916,26 @@ fun BrowserScreen() {
             )
         }
 
-        // 링크 · 이미지 길게 누르기 컨텍스트 메뉴
+        // 링크 · 이미지 길게 누르기 크롬 1:1 컨텍스트 메뉴 (주/야간 자동 대응)
         longPressTarget?.let { target ->
-            AlertDialog(
-                onDismissRequest = { BrowserActivityBridge.dismissLongPressMenu() },
-                title = { Text(target.linkUrl ?: target.imageUrl ?: "항목 작업", maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (!target.linkUrl.isNullOrBlank()) {
-                            TextButton(onClick = {
-                                SpaceManager.createTab(activeSpace.id, initialUrl = target.linkUrl, selectImmediately = true)
-                                BrowserActivityBridge.dismissLongPressMenu()
-                            }) { Text("새 탭에서 열기") }
-                            TextButton(onClick = {
-                                SpaceManager.createTab(activeSpace.id, initialUrl = target.linkUrl, selectImmediately = false)
-                                BrowserActivityBridge.dismissLongPressMenu()
-                            }) { Text("백그라운드 탭으로 열기") }
-                            TextButton(onClick = {
-                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                cm.setPrimaryClip(ClipData.newPlainText("Link", target.linkUrl))
-                                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
-                                BrowserActivityBridge.dismissLongPressMenu()
-                            }) { Text("링크 주소 복사") }
-                        }
-                        if (!target.imageUrl.isNullOrBlank()) {
-                            TextButton(onClick = {
-                                BrowserActivityBridge.enqueueDownload(context, target.imageUrl)
-                                BrowserActivityBridge.dismissLongPressMenu()
-                            }) { Text("이미지 다운로드") }
-                        }
-                    }
+            ChromeLongPressContextMenu(
+                target = target,
+                activeSpaceId = activeSpace.id,
+                darkTheme = prefs.darkModeEnabled,
+                onPreviewPage = { url -> previewPageUrl = url },
+                onDismiss = { BrowserActivityBridge.dismissLongPressMenu() }
+            )
+        }
+
+        // 페이지 미리보기 하단 시트
+        previewPageUrl?.let { url ->
+            PagePreviewBottomSheet(
+                url = url,
+                onOpenInNewTab = { targetUrl ->
+                    previewPageUrl = null
+                    SpaceManager.createTab(activeSpace.id, initialUrl = targetUrl, selectImmediately = true)
                 },
-                confirmButton = {
-                    TextButton(onClick = { BrowserActivityBridge.dismissLongPressMenu() }) { Text("닫기") }
-                }
+                onDismiss = { previewPageUrl = null }
             )
         }
 
@@ -1074,96 +996,56 @@ fun BrowserScreen() {
             }
         }
 
-        // 우측 MCP / 터널 / 브라우저 설정 드로어
+        // 우상단 크롬형 Drag-to-Open / Drag-to-Select 브라우저 메뉴 오버레이
+        DragToSelectChromeMenuOverlay(
+            visible = showChromeMenu,
+            items = chromeMenuItems,
+            hoveredIndex = hoveredMenuIndex,
+            onDismiss = {
+                showChromeMenu = false
+                hoveredMenuIndex = -1
+            }
+        )
+
+        // 우측 MCP / 터널 전용 설정 드로어
         if (showMcpDrawer) {
             McpSettingsDrawer(
                 onDismiss = { showMcpDrawer = false }
             )
         }
 
-        // 크롬형 모든 탭 보기 다이얼로그 (현재 공간 + 다른 Space 탭 전환)
+        // 크롬 태블릿 1:1 2-패널 전체 화면 설정 페이지
+        if (showChromeSettings) {
+            ChromeSettingsScreen(
+                onOpenMcpDrawer = { showMcpDrawer = true },
+                onDismiss = { showChromeSettings = false }
+            )
+        }
+
+        // 크롬형 전체 화면 썸네일 카드 그리드 모든 탭 보기
         if (showAllTabsDialog) {
-            AlertDialog(
-                onDismissRequest = { showAllTabsDialog = false },
-                title = { Text("${activeSpace.name} 탭 (${activeSpace.tabs.size})") },
-                text = {
-                    LazyColumn(
-                        modifier = Modifier.heightIn(max = 380.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(activeSpace.tabs, key = { it.id }) { tab ->
-                            val selected = tab.id == activeSpace.activeTabId
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        SpaceManager.selectTab(activeSpace.id, tab.id)
-                                        showAllTabsDialog = false
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (tab.isIncognito) {
-                                        Icon(
-                                            imageVector = Icons.Default.VisibilityOff,
-                                            contentDescription = "시크릿 탭",
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = tab.title.ifBlank { tab.url },
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 14.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = tab.url,
-                                            fontSize = 11.sp,
-                                            color = mutedIconColor,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = { SpaceManager.closeTab(activeSpace.id, tab.id) },
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Icon(Icons.Default.Close, contentDescription = "닫기", tint = mutedIconColor)
-                                    }
-                                }
-                            }
-                        }
-                    }
+            ChromeTabSwitcherOverlay(
+                activeSpace = activeSpace,
+                onSelectTab = { tabId ->
+                    SpaceManager.selectTab(activeSpace.id, tabId)
+                    showAllTabsDialog = false
                 },
-                confirmButton = {
-                    TextButton(onClick = {
-                        SpaceManager.createTab(activeSpace.id)
-                        showAllTabsDialog = false
-                    }) {
-                        Text("+ 새 탭")
-                    }
+                onCloseTab = { tabId ->
+                    SpaceManager.closeTab(activeSpace.id, tabId)
                 },
-                dismissButton = {
-                    Row {
-                        TextButton(onClick = {
-                            SpaceManager.closeAllTabsInSpace(activeSpace.id)
-                            showAllTabsDialog = false
-                        }) {
-                            Text("모두 닫기", color = EgoDangerRed)
-                        }
-                        TextButton(onClick = { showAllTabsDialog = false }) {
-                            Text("닫기")
-                        }
-                    }
-                }
+                onCreateTab = {
+                    SpaceManager.createTab(activeSpace.id)
+                    showAllTabsDialog = false
+                },
+                onCreateIncognitoTab = {
+                    SpaceManager.createTab(activeSpace.id, incognito = true)
+                    showAllTabsDialog = false
+                },
+                onCloseAllTabs = {
+                    SpaceManager.closeAllTabsInSpace(activeSpace.id)
+                    showAllTabsDialog = false
+                },
+                onDismiss = { showAllTabsDialog = false }
             )
         }
 
@@ -1285,7 +1167,7 @@ private fun WebViewHostContainer(
 
             val bgAiWebViews = spaces
                 .filter { it.type == SpaceType.AI && it.id != activeSpace.id }
-                .map { bgSpace -> SpaceManager.getOrCreateWebView(bgSpace.id, bgSpace.activeTab) }
+                .mapNotNull { bgSpace -> SpaceManager.getExistingWebView(bgSpace.activeTab.id) }
                 .toSet()
 
             if (activeWv.parent !== host) {
