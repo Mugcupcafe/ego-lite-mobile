@@ -7,6 +7,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
+import android.os.Build
 import android.os.Message
 import android.util.Base64
 import android.view.View
@@ -24,6 +25,7 @@ import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.egolite.mobile.model.LongPressTarget
+import com.egolite.mobile.model.WebFontMode
 import java.io.ByteArrayOutputStream
 
 object EgoWebViewFactory {
@@ -54,6 +56,14 @@ object EgoWebViewFactory {
     private const val MOBILE_CHROME_UA =
         "Mozilla/5.0 (Linux; Android 16; YLP-W00) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
+    private const val GOOGLE_AUTH_UA =
+        "Mozilla/5.0 (Android 16; Mobile; rv:136.0) Gecko/136.0 Firefox/136.0"
+
+    private fun isGoogleAuthHost(host: String): Boolean {
+        val h = host.lowercase()
+        return h == "accounts.google.com" || h.endsWith(".accounts.google.com") || h == "accounts.youtube.com"
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     fun createWebView(
         context: Context,
@@ -62,12 +72,16 @@ object EgoWebViewFactory {
         darkModeProvider: () -> Boolean,
         desktopModeProvider: () -> Boolean,
         textZoomProvider: () -> Int,
+        webFontProvider: () -> WebFontMode = { WebFontMode.SITE_DEFAULT },
         onPageStarted: (url: String) -> Unit,
         onPageFinished: (url: String, title: String, canBack: Boolean, canForward: Boolean) -> Unit,
         onProgressChanged: (Int) -> Unit,
         onCreatePopup: (Message) -> Unit
     ): WebView {
         val webView = WebView(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching { webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false) }
+        }
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -76,6 +90,7 @@ object EgoWebViewFactory {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(true)
             setGeolocationEnabled(true)
@@ -89,6 +104,10 @@ object EgoWebViewFactory {
             allowContentAccess = true
             textZoom = textZoomProvider()
             userAgentString = if (desktopModeProvider()) DESKTOP_CHROME_UA else MOBILE_CHROME_UA
+            // Google 로그인 WebView 탐지 차단: X-Requested-With 패키지명 헤더 제거
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+                runCatching { WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet()) }
+            }
         }
 
         // 파일 다운로드 (PDF, 이미지, APK 등)
@@ -96,13 +115,21 @@ object EgoWebViewFactory {
             BrowserActivityBridge.enqueueDownload(context, url, userAgent, contentDisposition, mimeType)
         }
 
-        // 링크 · 이미지 길게 누르기 컨텍스트 메뉴
+        // 링크 · 이미지 길게 누르기 컨텍스트 메뉴 (크롬 1:1 — 제목/URL/이미지 함께 추출)
         webView.setOnLongClickListener { view ->
             val wv = view as? WebView ?: return@setOnLongClickListener false
             val hit = wv.hitTestResult
             when (hit.type) {
                 WebView.HitTestResult.SRC_ANCHOR_TYPE -> {
-                    BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = hit.extra))
+                    val msg = wv.handler?.obtainMessage()
+                    if (msg != null) {
+                        wv.requestFocusNodeHref(msg)
+                        val linkTitle = msg.data?.getString("title")
+                        val linkHref = msg.data?.getString("url") ?: hit.extra
+                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = linkHref, linkText = linkTitle))
+                    } else {
+                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = hit.extra))
+                    }
                     true
                 }
                 WebView.HitTestResult.IMAGE_TYPE -> {
@@ -114,7 +141,10 @@ object EgoWebViewFactory {
                     if (msg != null) {
                         wv.requestFocusNodeHref(msg)
                         val link = msg.data?.getString("url")
-                        BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = link ?: hit.extra, imageUrl = hit.extra))
+                        val title = msg.data?.getString("title")
+                        BrowserActivityBridge.showLongPressMenu(
+                            LongPressTarget(linkUrl = link ?: hit.extra, linkText = title, imageUrl = hit.extra)
+                        )
                     } else {
                         BrowserActivityBridge.showLongPressMenu(LongPressTarget(linkUrl = hit.extra, imageUrl = hit.extra))
                     }
@@ -148,7 +178,22 @@ object EgoWebViewFactory {
             ): Boolean {
                 val url = request?.url?.toString() ?: return false
                 if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:")) {
-                    currentPageHost = AdBlockEngine.extractHost(url)
+                    val host = AdBlockEngine.extractHost(url)
+                    currentPageHost = host
+                    if (view != null && request.isForMainFrame) {
+                        val desiredUa = if (isGoogleAuthHost(host)) {
+                            GOOGLE_AUTH_UA
+                        } else if (desktopModeProvider()) {
+                            DESKTOP_CHROME_UA
+                        } else {
+                            MOBILE_CHROME_UA
+                        }
+                        if (view.settings.userAgentString != desiredUa) {
+                            view.settings.userAgentString = desiredUa
+                            view.loadUrl(url)
+                            return true
+                        }
+                    }
                     return false
                 }
                 return handleExternalScheme(context, url)
@@ -173,6 +218,7 @@ object EgoWebViewFactory {
                             if (js.isNotBlank()) view.evaluateJavascript(js, null)
                         }
                         applyDarkMode(view, darkModeProvider())
+                        applyWebFont(view, webFontProvider())
                     }
                     onPageFinished(
                         finalUrl,
@@ -268,6 +314,36 @@ object EgoWebViewFactory {
         webView.settings.textZoom = zoom.coerceIn(75, 150)
     }
 
+    fun applyWebFont(webView: WebView, mode: WebFontMode) {
+        val cssFamily = when (mode) {
+            WebFontMode.SITE_DEFAULT -> ""
+            WebFontMode.SYSTEM_FONT -> "system-ui, -apple-system, Roboto, sans-serif"
+            WebFontMode.CLEAN_GOTHIC -> "'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif"
+            WebFontMode.SERIF -> "'Noto Serif KR', Georgia, serif"
+        }
+        val js = if (cssFamily.isEmpty()) {
+            """
+            (function() {
+                var el = document.getElementById('ego-web-font-css');
+                if (el) el.remove();
+            })();
+            """.trimIndent()
+        } else {
+            """
+            (function() {
+                var el = document.getElementById('ego-web-font-css');
+                if (!el) {
+                    el = document.createElement('style');
+                    el.id = 'ego-web-font-css';
+                    (document.head || document.documentElement).appendChild(el);
+                }
+                el.textContent = 'html, body, p, span, div, a, li, h1, h2, h3, h4, h5, h6, input, button, textarea { font-family: $cssFamily !important; }';
+            })();
+            """.trimIndent()
+        }
+        webView.evaluateJavascript(js, null)
+    }
+
     fun getCurrentChromiumVersion(context: Context): String {
         val pkg = WebViewCompat.getCurrentWebViewPackage(context)
         return if (pkg != null) "${pkg.packageName} (${pkg.versionName})" else "System WebView"
@@ -283,6 +359,20 @@ object EgoWebViewFactory {
         bitmap.compress(Bitmap.CompressFormat.JPEG, 78, out)
         bitmap.recycle()
         return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
+    fun captureThumbnailBitmap(webView: WebView): Bitmap? {
+        if (webView.width <= 0 || webView.height <= 0) return null
+        return runCatching {
+            val scale = 0.25f
+            val tw = (webView.width * scale).toInt().coerceIn(160, 420)
+            val th = (webView.height * scale).toInt().coerceIn(160, 520)
+            val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.RGB_565)
+            val canvas = Canvas(bmp)
+            canvas.scale(tw.toFloat() / webView.width.toFloat(), th.toFloat() / webView.height.toFloat())
+            webView.draw(canvas)
+            bmp
+        }.getOrNull()
     }
 
     private fun handleExternalScheme(context: Context, url: String): Boolean {
