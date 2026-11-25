@@ -13,8 +13,8 @@ android {
         applicationId = "com.egolite.mobile"
         minSdk = 29
         targetSdk = 35
-        versionCode = 24
-        versionName = "0.4.14"
+        versionCode = 25
+        versionName = "0.4.15"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -31,7 +31,7 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-v0.4.14"
+            versionNameSuffix = "-v0.4.15"
         }
     }
 
