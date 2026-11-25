@@ -506,6 +506,7 @@ fun BookmarkManagerDialog(
     folders: List<String>,
     onOpenUrl: (String) -> Unit,
     onEditBookmark: (BookmarkItem) -> Unit,
+    onMoveBookmark: (id: String, delta: Int) -> Unit,
     onDeleteBookmark: (String) -> Unit,
     onAddFolder: (String) -> Unit,
     onDismiss: () -> Unit
@@ -513,6 +514,7 @@ fun BookmarkManagerDialog(
     var activeFolder by remember { mutableStateOf("전체") }
     var search by remember { mutableStateOf("") }
     var newFolderName by remember { mutableStateOf("") }
+    var showNewFolderRow by remember { mutableStateOf(false) }
 
     val filtered = remember(bookmarks, activeFolder, search) {
         bookmarks.filter { bm ->
@@ -523,7 +525,21 @@ fun BookmarkManagerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("모든 북마크 (${bookmarks.size})", fontWeight = FontWeight.Bold) },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("북마크 (${bookmarks.size})", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                IconButton(
+                    onClick = { showNewFolderRow = !showNewFolderRow },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(Icons.Default.CreateNewFolder, contentDescription = "새 폴더 만들기", modifier = Modifier.size(20.dp))
+                }
+            }
+        },
         text = {
             Column(
                 modifier = Modifier
@@ -531,13 +547,37 @@ fun BookmarkManagerDialog(
                     .heightIn(max = 460.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(
-                    value = search,
-                    onValueChange = { search = it },
-                    placeholder = { Text("북마크 검색...", fontSize = 13.sp) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                // 크롬 스타일 둥근 북마크 검색 바
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    BasicTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        singleLine = true,
+                        textStyle = TextStyle(fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { inner ->
+                            if (search.isEmpty()) Text("북마크 검색", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            inner()
+                        }
+                    )
+                }
+
                 // 폴더 탭 행
                 Row(
                     modifier = Modifier
@@ -552,7 +592,7 @@ fun BookmarkManagerDialog(
                                 .clip(CircleShape)
                                 .background(
                                     if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                                    else MaterialTheme.colorScheme.surfaceVariant
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                                 )
                                 .clickable { activeFolder = folder }
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -566,24 +606,29 @@ fun BookmarkManagerDialog(
                         }
                     }
                 }
-                // 새 폴더 추가
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = newFolderName,
-                        onValueChange = { newFolderName = it },
-                        placeholder = { Text("새 폴더 만들기", fontSize = 12.sp) },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = {
-                        if (newFolderName.isNotBlank()) {
-                            onAddFolder(newFolderName.trim())
-                            newFolderName = ""
+
+                // 새 폴더 추가 (상단 폴더 아이콘 탭 시 표시)
+                if (showNewFolderRow) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = newFolderName,
+                            onValueChange = { newFolderName = it },
+                            placeholder = { Text("새 폴더 이름", fontSize = 12.sp) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            if (newFolderName.isNotBlank()) {
+                                onAddFolder(newFolderName.trim())
+                                newFolderName = ""
+                                showNewFolderRow = false
+                            }
+                        }) {
+                            Icon(Icons.Default.Add, contentDescription = "폴더 추가")
                         }
-                    }) {
-                        Icon(Icons.Default.Add, contentDescription = "폴더 추가")
                     }
                 }
+
                 HorizontalDivider()
                 LazyColumn(
                     modifier = Modifier.weight(1f, fill = false),
@@ -594,7 +639,7 @@ fun BookmarkManagerDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
                                 .clickable {
                                     onOpenUrl(bm.url)
                                     onDismiss()
@@ -602,14 +647,34 @@ fun BookmarkManagerDialog(
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            BookmarkMiniFavicon(bm)
+                            Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(bm.title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${bm.folder} · ${bm.url}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            IconButton(onClick = { onEditBookmark(bm) }, modifier = Modifier.size(32.dp)) {
+                            Text(
+                                text = "▲",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable { onMoveBookmark(bm.id, -1) }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                            Text(
+                                text = "▼",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable { onMoveBookmark(bm.id, 1) }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                            IconButton(onClick = { onEditBookmark(bm) }, modifier = Modifier.size(30.dp)) {
                                 Icon(Icons.Default.Edit, contentDescription = "수정", modifier = Modifier.size(16.dp))
                             }
-                            IconButton(onClick = { onDeleteBookmark(bm.id) }, modifier = Modifier.size(32.dp)) {
+                            IconButton(onClick = { onDeleteBookmark(bm.id) }, modifier = Modifier.size(30.dp)) {
                                 Icon(Icons.Default.Delete, contentDescription = "삭제", modifier = Modifier.size(16.dp), tint = EgoDangerRed)
                             }
                         }
