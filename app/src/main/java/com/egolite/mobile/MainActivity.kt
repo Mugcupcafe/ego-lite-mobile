@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLogger.install(applicationContext)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         SpaceManager.init(applicationContext)
         requestNotificationPermissionIfNeeded()
