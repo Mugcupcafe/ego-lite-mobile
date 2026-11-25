@@ -246,8 +246,7 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = runtimeState.recentLogs.takeLast(10).joinToString("
-"),
+                            text = runtimeState.recentLogs.takeLast(10).joinToString("\n"),
                             fontFamily = FontFamily.Monospace,
                             fontSize = 11.sp,
                             modifier = Modifier.padding(10.dp),
