@@ -1,13 +1,18 @@
 package com.egolite.mobile.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,11 +22,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,18 +39,34 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.FindInPage
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -62,8 +85,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -73,26 +96,44 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.ui.input.pointer.pointerInput
+import com.egolite.mobile.browser.AdBlockEngine
+import com.egolite.mobile.browser.BrowserActivityBridge
 import com.egolite.mobile.browser.BrowserScripts
+import org.json.JSONObject
+import com.egolite.mobile.browser.TranslationManager
 import com.egolite.mobile.browser.SpaceManager
-import com.egolite.mobile.mcp.Last30DaysEngine
 import com.egolite.mobile.model.AiSpaceStatus
+import com.egolite.mobile.model.BookmarkItem
 import com.egolite.mobile.model.BrowserSpace
 import com.egolite.mobile.model.McpConnectionState
 import com.egolite.mobile.model.SpaceType
+import com.egolite.mobile.model.TranslationPopupState
 import com.egolite.mobile.tunnel.EgoForegroundService
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BrowserScreen() {
+    val context = LocalContext.current
     val spaces by SpaceManager.spaces.collectAsState()
     val activeSpaceId by SpaceManager.activeSpaceId.collectAsState()
     val prefs by SpaceManager.preferences.collectAsState()
     val bookmarks by SpaceManager.bookmarks.collectAsState()
+    val bookmarkFolders by SpaceManager.bookmarkFolders.collectAsState()
+    val recentSearches by SpaceManager.recentSearches.collectAsState()
+    val history by SpaceManager.history.collectAsState()
     val runtimeState by EgoForegroundService.runtimeState.collectAsState()
+    val adBlockState by AdBlockEngine.state.collectAsState()
+    val fullscreenVideo by BrowserActivityBridge.fullscreenVideo.collectAsState()
+    val longPressTarget by BrowserActivityBridge.longPressTarget.collectAsState()
+    val recentlyClosed by SpaceManager.recentlyClosedTabs.collectAsState()
 
     val activeSpace = spaces.firstOrNull { it.id == activeSpaceId } ?: spaces.first()
     val activeTab = activeSpace.activeTab
@@ -102,23 +143,82 @@ fun BrowserScreen() {
     var addressInput by remember(activeTab.id, activeTab.url) { mutableStateOf(activeTab.url) }
     var spaceBarExpanded by remember { mutableStateOf(false) }
     var showMcpDrawer by remember { mutableStateOf(false) }
-    var showSpacesOverview by remember { mutableStateOf(false) }
+    var showAllTabsDialog by remember { mutableStateOf(false) }
+    var showChromeMenu by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
+    var showFindBar by remember { mutableStateOf(false) }
+    var showAdBlockDialog by remember { mutableStateOf(false) }
+    var showOmniboxOverlay by remember { mutableStateOf(false) }
+    var showBookmarkManager by remember { mutableStateOf(false) }
+    var editingBookmark by remember { mutableStateOf<BookmarkItem?>(null) }
+    var showAddBookmarkDialog by remember { mutableStateOf(false) }
+    var readerMarkdown by remember { mutableStateOf<String?>(null) }
+    var translateState by remember { mutableStateOf(TranslationPopupState()) }
+    var findQuery by remember { mutableStateOf("") }
 
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(activeTab.url) {
+    val activeIconColor = MaterialTheme.colorScheme.onSurface
+    val mutedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    val currentHost = remember(activeTab.url) { AdBlockEngine.extractHost(activeTab.url) }
+    val pageBlockedCount = adBlockState.perTabCounts[activeTab.id] ?: 0
+    val isSiteAdBlockOn = AdBlockEngine.isEnabledForHost(currentHost)
+
+    fun triggerTranslation(src: String, dst: String) {
+        if (activeTab.url == NEW_TAB_URL) {
+            Toast.makeText(context, "번역할 웹페이지가 없습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        translateState = translateState.copy(
+            visible = true,
+            isTranslating = true,
+            sourceLang = src,
+            targetLang = dst,
+            statusText = "페이지 번역 중..."
+        )
+        scope.launch {
+            val (ok, detected) = TranslationManager.translatePageInSpace(
+                spaceId = activeSpace.id,
+                sourceLang = src,
+                targetLang = dst,
+                engine = prefs.translationEngine,
+                onProgress = { msg -> translateState = translateState.copy(statusText = msg) }
+            )
+            translateState = translateState.copy(
+                isTranslating = false,
+                isTranslated = ok,
+                statusText = if (ok) "페이지 번역됨" else detected,
+                detectedLangLabel = if (ok && src == "auto") "감지됨(${TranslationManager.labelFor(detected)})" else "감지된 언어"
+            )
+        }
+    }
+
+    LaunchedEffect(activeSpace.id, activeTab.id) {
+        translateState = translateState.copy(
+            visible = false,
+            isTranslating = false,
+            isTranslated = false,
+            statusText = "",
+            detectedLangLabel = "감지된 언어"
+        )
+    }
+
+    LaunchedEffect(activeTab.id, activeTab.url, activeTab.isLoading) {
         addressInput = activeTab.url
+        if (!activeTab.isLoading && activeTab.url != NEW_TAB_URL && currentHost.isNotBlank() && currentHost in prefs.autoTranslateHosts) {
+            triggerTranslation(translateState.sourceLang, translateState.targetLang)
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 1행: 최상단 — 알약 캡슐(Personal/AI) + 현재 공간의 탭 목록만 배치
+            // 1행: 최상단 — 알약 캡슐(Personal/AI) + 현재 공간의 크롬형 탭 목록만 배치
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -149,18 +249,30 @@ fun BrowserScreen() {
                                 .widthIn(min = 110.dp, max = 210.dp)
                                 .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
                                 .background(
-                                    if (isSelected) MaterialTheme.colorScheme.surface
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                    if (prefs.darkModeEnabled) {
+                                        if (isSelected) DarkTabSelected else DarkTabUnselected
+                                    } else {
+                                        if (isSelected) LightTabSelected else LightTabUnselected
+                                    }
                                 )
                                 .clickable { SpaceManager.selectTab(activeSpace.id, tab.id) }
                                 .padding(horizontal = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (tab.isIncognito) {
+                                Icon(
+                                    imageVector = Icons.Default.VisibilityOff,
+                                    contentDescription = "시크릿 탭",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                            }
                             Text(
                                 text = tab.title.ifBlank { tab.url },
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurface,
+                                color = activeIconColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
@@ -172,7 +284,7 @@ fun BrowserScreen() {
                                 modifier = Modifier
                                     .size(16.dp)
                                     .clickable { SpaceManager.closeTab(activeSpace.id, tab.id) },
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = mutedIconColor
                             )
                         }
                     }
@@ -184,13 +296,13 @@ fun BrowserScreen() {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "새 탭",
-                            tint = MaterialTheme.colorScheme.onSurface
+                            tint = activeIconColor
                         )
                     }
                 }
             }
 
-            // 2행: 주소창 + 조건부 붉은 MCP 연결끊김 배지 + 편의기능 + 메뉴(⋮)
+            // 2행: 주소창 + 조건부 붉은 MCP 끊김 배지 + 광고차단 · 번역 · 다크모드 · 크롬형 모든탭보기[N] · 크롬형 메뉴(⋮)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -199,29 +311,38 @@ fun BrowserScreen() {
                     .padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1
                 IconButton(
-                    onClick = { SpaceManager.goBack(activeSpace.id) },
-                    enabled = activeTab.canGoBack,
+                    onClick = { SpaceManager.handleBackOrCloseTab(activeSpace.id) },
+                    enabled = canBackOrClose,
                     modifier = Modifier.size(44.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "뒤로",
+                        tint = if (canBackOrClose) activeIconColor else mutedIconColor.copy(alpha = 0.45f)
+                    )
                 }
                 IconButton(
                     onClick = { SpaceManager.goForward(activeSpace.id) },
                     enabled = activeTab.canGoForward,
                     modifier = Modifier.size(44.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "앞으로")
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "앞으로",
+                        tint = if (activeTab.canGoForward) activeIconColor else mutedIconColor.copy(alpha = 0.45f)
+                    )
                 }
                 IconButton(
                     onClick = { SpaceManager.reload(activeSpace.id) },
                     modifier = Modifier.size(44.dp)
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = "새로고침")
+                    Icon(Icons.Default.Refresh, contentDescription = "새로고침", tint = activeIconColor)
                 }
 
-                // 주소창
-                val isBookmarked = bookmarks.any { it.url == activeTab.url }
+                // 주소창 (터치 시 모바일 크롬과 동일한 Omnibox 오버레이 표시)
+                val existingBookmark = bookmarks.firstOrNull { it.url == activeTab.url }
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -229,41 +350,50 @@ fun BrowserScreen() {
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.background)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        .pointerInput(activeSpace.id) {
+                            var dragSum = 0f
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    if (dragSum > 70f) SpaceManager.switchTabByOffset(activeSpace.id, -1)
+                                    else if (dragSum < -70f) SpaceManager.switchTabByOffset(activeSpace.id, 1)
+                                    dragSum = 0f
+                                },
+                                onHorizontalDrag = { _, amount -> dragSum += amount }
+                            )
+                        }
+                        .clickable { showOmniboxOverlay = true }
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = null,
+                        imageVector = if (activeTab.isIncognito) Icons.Default.VisibilityOff else Icons.Default.Lock,
+                        contentDescription = if (activeTab.isIncognito) "시크릿 모드" else null,
                         modifier = Modifier.size(15.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    BasicTextField(
-                        value = addressInput,
-                        onValueChange = { addressInput = it },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        ),
-                        cursorBrush = SolidColor(EgoCobalt),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(
-                            onGo = {
-                                focusManager.clearFocus()
-                                SpaceManager.navigate(activeSpace.id, addressInput)
-                            }
-                        ),
+                    val isNewTab = activeTab.url == NEW_TAB_URL
+                    Text(
+                        text = if (isNewTab) "Google 검색 또는 URL 입력" else activeTab.url,
+                        fontSize = 14.sp,
+                        color = if (isNewTab) mutedIconColor else activeIconColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
-                        imageVector = if (isBookmarked) Icons.Default.Star else Icons.Default.StarBorder,
-                        contentDescription = "북마크",
-                        tint = if (isBookmarked) EgoCobalt else MaterialTheme.colorScheme.onSurfaceVariant,
+                        imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
+                        contentDescription = "북마크 추가/수정",
+                        tint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor,
                         modifier = Modifier
                             .size(20.dp)
-                            .clickable { SpaceManager.toggleBookmark(activeTab.title, activeTab.url) }
+                            .clickable {
+                                if (existingBookmark != null) {
+                                    editingBookmark = existingBookmark
+                                } else {
+                                    showAddBookmarkDialog = true
+                                }
+                            }
                     )
                 }
 
@@ -298,101 +428,385 @@ fun BrowserScreen() {
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // 광고 차단
-                IconButton(
-                    onClick = { SpaceManager.updatePreferences { it.copy(adBlockEnabled = !it.adBlockEnabled) } },
-                    modifier = Modifier.size(44.dp)
+                // 광고 차단 (짧게: 현재 사이트 ON/OFF + 새로고침, 길게: uBlock 스타일 상세 팝업)
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = {
+                                if (currentHost.isNotBlank() && adBlockState.globalEnabled) {
+                                    AdBlockEngine.toggleWhitelistForHost(currentHost)
+                                } else {
+                                    val next = !adBlockState.globalEnabled
+                                    AdBlockEngine.setGlobalEnabled(next)
+                                    SpaceManager.updatePreferences { it.copy(adBlockEnabled = next) }
+                                }
+                                SpaceManager.reload(activeSpace.id)
+                            },
+                            onLongClick = { showAdBlockDialog = true }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Shield,
-                        contentDescription = "광고 차단",
-                        tint = if (prefs.adBlockEnabled) EgoCobalt else MaterialTheme.colorScheme.onSurfaceVariant
+                        contentDescription = "광고 차단 (길게 눌러 상세 설정)",
+                        tint = if (isSiteAdBlockOn) MaterialTheme.colorScheme.primary else mutedIconColor
                     )
+                    if (isSiteAdBlockOn && pageBlockedCount > 0) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(top = 4.dp, end = 2.dp)
+                                .clip(CircleShape)
+                                .background(EgoDangerRed)
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = pageBlockedCount.coerceAtMost(99).toString(),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color.White
+                            )
+                        }
+                    }
                 }
 
-                // 원클릭 자동 번역
+                // 크롬 스타일 번역 버튼 (클릭 시 팝업 표시 + 즉시 번역)
                 IconButton(
                     onClick = {
-                        scope.launch {
-                            translateActiveSpacePage(activeSpace.id)
+                        if (translateState.visible) {
+                            translateState = translateState.copy(visible = false)
+                        } else {
+                            triggerTranslation(translateState.sourceLang, translateState.targetLang)
                         }
                     },
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(42.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Translate,
-                        contentDescription = "한국어 번역",
-                        tint = MaterialTheme.colorScheme.onSurface
+                        contentDescription = "페이지 번역",
+                        tint = if (translateState.isTranslated) MaterialTheme.colorScheme.primary else activeIconColor
                     )
                 }
 
-                // 다크모드
+                // 주/야간 다크모드 토글 (주간: 달 아이콘, 야간: 해 아이콘으로 명확히 구분)
                 IconButton(
                     onClick = { SpaceManager.updatePreferences { it.copy(darkModeEnabled = !it.darkModeEnabled) } },
-                    modifier = Modifier.size(44.dp)
+                    modifier = Modifier.size(42.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.DarkMode,
-                        contentDescription = "다크모드",
-                        tint = if (prefs.darkModeEnabled) EgoCobalt else MaterialTheme.colorScheme.onSurface
+                        imageVector = if (prefs.darkModeEnabled) Icons.Default.LightMode else Icons.Default.DarkMode,
+                        contentDescription = "다크모드 전환",
+                        tint = if (prefs.darkModeEnabled) MaterialTheme.colorScheme.primary else activeIconColor
                     )
                 }
 
-                // Spaces Overview
-                IconButton(
-                    onClick = { showSpacesOverview = true },
-                    modifier = Modifier.size(44.dp)
+                // 다크모드 우측: 크롬형 모든 탭 보기 버튼 ([N] 사각 카운터)
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .clickable { showAllTabsDialog = true },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.GridView,
-                        contentDescription = "Spaces 전체 보기",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .border(2.dp, activeIconColor, RoundedCornerShape(5.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = activeSpace.tabs.size.coerceAtMost(99).toString(),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = activeIconColor
+                        )
+                    }
                 }
 
-                // 우상단 메뉴 버튼 (2행으로 이동 — MCP/터널 설정 드로어 열기)
-                IconButton(
-                    onClick = { showMcpDrawer = true },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = "메뉴 및 MCP 설정",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
+                // 우측 끝: 크롬형 브라우저 메뉴 (최상단: MCP 설정 메뉴)
+                Box {
+                    IconButton(
+                        onClick = { showChromeMenu = true },
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "브라우저 메뉴",
+                            tint = activeIconColor
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showChromeMenu,
+                        onDismissRequest = { showChromeMenu = false }
+                    ) {
+                        // 최상단: MCP 설정 메뉴
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (isMcpDisconnected) "MCP · 터널 설정 (끊김)" else "MCP · 터널 설정 (연결됨)",
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isMcpDisconnected) EgoDangerRed else EgoEmerald
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Hub,
+                                    contentDescription = null,
+                                    tint = if (isMcpDisconnected) EgoDangerRed else EgoEmerald
+                                )
+                            },
+                            onClick = {
+                                showChromeMenu = false
+                                showMcpDrawer = true
+                            }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("새 탭") },
+                            leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                SpaceManager.createTab(activeSpace.id)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("새 시크릿 탭") },
+                            leadingIcon = { Icon(Icons.Default.VisibilityOff, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                SpaceManager.createTab(activeSpace.id, incognito = true)
+                            }
+                        )
+                        if (recentlyClosed.isNotEmpty()) {
+                            DropdownMenuItem(
+                                text = { Text("닫은 탭 다시 열기") },
+                                leadingIcon = { Icon(Icons.Default.Restore, contentDescription = null) },
+                                onClick = {
+                                    showChromeMenu = false
+                                    SpaceManager.reopenLastClosedTab(activeSpace.id)
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("새 AI Space") },
+                            leadingIcon = { Icon(Icons.Default.SmartToy, contentDescription = null, tint = EgoEmerald) },
+                            onClick = {
+                                showChromeMenu = false
+                                SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("북마크 바 표시") },
+                            leadingIcon = { Icon(Icons.Default.BookmarkBorder, contentDescription = null) },
+                            trailingIcon = {
+                                if (prefs.showBookmarkBar) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            onClick = {
+                                showChromeMenu = false
+                                SpaceManager.updatePreferences { it.copy(showBookmarkBar = !it.showBookmarkBar) }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("북마크 관리") },
+                            leadingIcon = { Icon(Icons.Default.StarBorder, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                showBookmarkManager = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("방문 기록") },
+                            leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                showHistoryDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("읽기 모드 (본문만 보기)") },
+                            leadingIcon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                scope.launch {
+                                    runCatching {
+                                        val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                                        val md = JSONObject(raw).optString("markdown", "")
+                                        readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                                    }
+                                }
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("인쇄 / PDF 저장") },
+                            leadingIcon = { Icon(Icons.Default.Print, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                SpaceManager.printActiveTab(context, activeSpace.id)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("페이지에서 찾기") },
+                            leadingIcon = { Icon(Icons.Default.FindInPage, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                showFindBar = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("공유") },
+                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
+                                    putExtra(Intent.EXTRA_TEXT, activeTab.url)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("링크 복사") },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
+                                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("데스크톱 사이트") },
+                            leadingIcon = { Icon(Icons.Default.DesktopWindows, contentDescription = null) },
+                            trailingIcon = {
+                                if (prefs.desktopModeEnabled) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            },
+                            onClick = {
+                                showChromeMenu = false
+                                SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
+                                SpaceManager.reload(activeSpace.id)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("방문 기록 · 캐시 삭제") },
+                            leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                SpaceManager.clearHistoryAndCache()
+                                Toast.makeText(context, "방문 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("설정") },
+                            leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                            onClick = {
+                                showChromeMenu = false
+                                showMcpDrawer = true
+                            }
+                        )
+                    }
                 }
             }
 
-            // 3행 (선택): 설정에서 ON일 때만 주소창 하단 북마크 바 표시
+            // 페이지에서 찾기 바 (활성화 시)
+            if (showFindBar) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BasicTextField(
+                        value = findQuery,
+                        onValueChange = {
+                            findQuery = it
+                            SpaceManager.findInPage(activeSpace.id, it)
+                        },
+                        singleLine = true,
+                        textStyle = TextStyle(fontSize = 14.sp, color = activeIconColor),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { inner ->
+                            if (findQuery.isEmpty()) Text("페이지 내 검색어 입력...", fontSize = 14.sp, color = mutedIconColor)
+                            inner()
+                        }
+                    )
+                    IconButton(onClick = { SpaceManager.findNextInPage(activeSpace.id, false) }) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "이전", tint = activeIconColor)
+                    }
+                    IconButton(onClick = { SpaceManager.findNextInPage(activeSpace.id, true) }) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "다음", tint = activeIconColor)
+                    }
+                    IconButton(onClick = {
+                        findQuery = ""
+                        SpaceManager.findInPage(activeSpace.id, "")
+                        showFindBar = false
+                    }) {
+                        Icon(Icons.Default.Close, contentDescription = "닫기", tint = activeIconColor)
+                    }
+                }
+            }
+
+            // 3행 (선택): 크롬 스타일 주소창 하단 북마크 바 + 우측 "모든 북마크" 버튼
             if (prefs.showBookmarkBar) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(36.dp)
+                        .height(38.dp)
                         .background(MaterialTheme.colorScheme.surface)
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    bookmarks.forEach { bm ->
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .combinedClickable(
-                                    onClick = { SpaceManager.navigate(activeSpace.id, bm.url) },
-                                    onLongClick = { SpaceManager.removeBookmark(bm.id) }
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        bookmarks.forEach { bm ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                                    .combinedClickable(
+                                        onClick = { SpaceManager.navigate(activeSpace.id, bm.url) },
+                                        onLongClick = { editingBookmark = bm }
+                                    )
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = bm.title,
+                                    fontSize = 12.sp,
+                                    color = activeIconColor,
+                                    maxLines = 1
                                 )
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = bm.title,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1
-                            )
+                            }
                         }
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showBookmarkManager = true }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.StarBorder,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = mutedIconColor
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("모든 북마크", fontSize = 12.sp, color = activeIconColor)
                     }
                 }
             }
@@ -403,11 +817,11 @@ fun BrowserScreen() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(2.dp),
-                    color = if (activeSpace.type == SpaceType.AI) EgoEmerald else EgoCobalt
+                    color = if (activeSpace.type == SpaceType.AI) EgoEmerald else MaterialTheme.colorScheme.primary
                 )
             }
 
-            // AI Space Takeover 제어권 바 (AI Space에서 작업 중이거나 일시정지 상태일 때만)
+            // AI Space Takeover 제어권 바
             if (activeSpace.type == SpaceType.AI &&
                 (activeSpace.aiStatus == AiSpaceStatus.WORKING || activeSpace.aiStatus == AiSpaceStatus.TAKEOVER_PAUSED)
             ) {
@@ -436,7 +850,7 @@ fun BrowserScreen() {
                 }
             }
 
-            // 웹 캔버스 (AI Space일 때 2dp 에메랄드 테두리 + Pull-to-Refresh + 백그라운드 AI WebView 유지)
+            // 웹 캔버스 (AI Space일 때 2dp 에메랄드 테두리 + 안정적 풀스크린 WebView 호스트)
             val canvasBorder = if (activeSpace.type == SpaceType.AI) {
                 Modifier.border(2.dp, EgoEmerald, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             } else Modifier
@@ -452,6 +866,15 @@ fun BrowserScreen() {
                     spaces = spaces,
                     activeSpace = activeSpace
                 )
+                if (activeTab.url == NEW_TAB_URL) {
+                    ChromeNewTabPage(
+                        bookmarks = bookmarks,
+                        onOpenOmnibox = { showOmniboxOverlay = true },
+                        onNavigate = { url -> SpaceManager.navigate(activeSpace.id, url) },
+                        onEditBookmark = { bm -> editingBookmark = bm },
+                        onAddBookmark = { showAddBookmarkDialog = true }
+                    )
+                }
             }
         }
 
@@ -477,40 +900,243 @@ fun BrowserScreen() {
             )
         }
 
-        // 우측 MCP / 터널 / 편의 설정 슬라이드 드로어
+        // 주소창 아래 크롬 스타일 플로팅 번역 팝업
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 100.dp)
+        ) {
+            ChromeStyleTranslatePopup(
+                state = translateState,
+                engine = prefs.translationEngine,
+                currentHost = currentHost,
+                alwaysTranslateSite = currentHost in prefs.autoTranslateHosts,
+                onChangeSourceLang = { newSrc -> triggerTranslation(newSrc, translateState.targetLang) },
+                onChangeTargetLang = { newDst -> triggerTranslation(translateState.sourceLang, newDst) },
+                onToggleAlwaysTranslate = { SpaceManager.toggleAutoTranslateHost(currentHost) },
+                onUndoRestore = {
+                    scope.launch {
+                        TranslationManager.restoreOriginalInSpace(activeSpace.id)
+                        translateState = translateState.copy(isTranslated = false, visible = false)
+                    }
+                },
+                onDismiss = { translateState = translateState.copy(visible = false) }
+            )
+        }
+
+        // 모바일 크롬 스타일 주소창(Omnibox) 오버레이
+        if (showOmniboxOverlay) {
+            ChromeOmniboxOverlay(
+                currentTitle = activeTab.title,
+                currentUrl = activeTab.url,
+                bookmarks = bookmarks,
+                recentSearches = recentSearches,
+                onNavigate = { target -> SpaceManager.navigate(activeSpace.id, target) },
+                onDismiss = { showOmniboxOverlay = false }
+            )
+        }
+
+        // 북마크 추가 / 수정 다이얼로그
+        if (showAddBookmarkDialog || editingBookmark != null) {
+            BookmarkEditDialog(
+                existing = editingBookmark,
+                initialTitle = if (activeTab.url == NEW_TAB_URL) "" else activeTab.title,
+                initialUrl = if (activeTab.url == NEW_TAB_URL) "" else activeTab.url,
+                folders = bookmarkFolders,
+                onSave = { id, title, url, folder -> SpaceManager.addOrUpdateBookmark(id, title, url, folder) },
+                onDelete = { id -> SpaceManager.removeBookmark(id) },
+                onAddFolder = { name -> SpaceManager.addBookmarkFolder(name) },
+                onDismiss = {
+                    showAddBookmarkDialog = false
+                    editingBookmark = null
+                }
+            )
+        }
+
+        // 모든 북마크 관리자 다이얼로그
+        if (showBookmarkManager) {
+            BookmarkManagerDialog(
+                bookmarks = bookmarks,
+                folders = bookmarkFolders,
+                onOpenUrl = { url -> SpaceManager.navigate(activeSpace.id, url) },
+                onEditBookmark = { bm ->
+                    showBookmarkManager = false
+                    editingBookmark = bm
+                },
+                onDeleteBookmark = { id -> SpaceManager.removeBookmark(id) },
+                onAddFolder = { name -> SpaceManager.addBookmarkFolder(name) },
+                onDismiss = { showBookmarkManager = false }
+            )
+        }
+
+        // 방패 길게 누르기: uBlock 스타일 광고차단 상세 팝업
+        if (showAdBlockDialog) {
+            AdBlockControlDialog(
+                currentHost = currentHost,
+                activeTabId = activeTab.id,
+                onReloadPage = { SpaceManager.reload(activeSpace.id) },
+                onDismiss = { showAdBlockDialog = false }
+            )
+        }
+
+        // 링크 · 이미지 길게 누르기 컨텍스트 메뉴
+        longPressTarget?.let { target ->
+            AlertDialog(
+                onDismissRequest = { BrowserActivityBridge.dismissLongPressMenu() },
+                title = { Text(target.linkUrl ?: target.imageUrl ?: "항목 작업", maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (!target.linkUrl.isNullOrBlank()) {
+                            TextButton(onClick = {
+                                SpaceManager.createTab(activeSpace.id, initialUrl = target.linkUrl, selectImmediately = true)
+                                BrowserActivityBridge.dismissLongPressMenu()
+                            }) { Text("새 탭에서 열기") }
+                            TextButton(onClick = {
+                                SpaceManager.createTab(activeSpace.id, initialUrl = target.linkUrl, selectImmediately = false)
+                                BrowserActivityBridge.dismissLongPressMenu()
+                            }) { Text("백그라운드 탭으로 열기") }
+                            TextButton(onClick = {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("Link", target.linkUrl))
+                                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
+                                BrowserActivityBridge.dismissLongPressMenu()
+                            }) { Text("링크 주소 복사") }
+                        }
+                        if (!target.imageUrl.isNullOrBlank()) {
+                            TextButton(onClick = {
+                                BrowserActivityBridge.enqueueDownload(context, target.imageUrl)
+                                BrowserActivityBridge.dismissLongPressMenu()
+                            }) { Text("이미지 다운로드") }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { BrowserActivityBridge.dismissLongPressMenu() }) { Text("닫기") }
+                }
+            )
+        }
+
+        // 읽기 모드 (Reader Mode) 오버레이
+        readerMarkdown?.let { md ->
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("읽기 모드", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        IconButton(onClick = { readerMarkdown = null }) {
+                            Icon(Icons.Default.Close, contentDescription = "닫기")
+                        }
+                    }
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = md,
+                        fontSize = 16.sp,
+                        lineHeight = 26.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+            }
+        }
+
+        // 동영상 전체화면 (YouTube 등) 오버레이
+        fullscreenVideo.view?.let { videoView ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.Black)
+            ) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        FrameLayout(ctx).apply {
+                            (videoView.parent as? ViewGroup)?.removeView(videoView)
+                            addView(
+                                videoView,
+                                FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                            )
+                        }
+                    }
+                )
+            }
+        }
+
+        // 우측 MCP / 터널 / 브라우저 설정 드로어
         if (showMcpDrawer) {
             McpSettingsDrawer(
                 onDismiss = { showMcpDrawer = false }
             )
         }
 
-        // Spaces Overview 다이얼로그
-        if (showSpacesOverview) {
+        // 크롬형 모든 탭 보기 다이얼로그 (현재 공간 + 다른 Space 탭 전환)
+        if (showAllTabsDialog) {
             AlertDialog(
-                onDismissRequest = { showSpacesOverview = false },
-                title = { Text("Spaces 전체 보기") },
+                onDismissRequest = { showAllTabsDialog = false },
+                title = { Text("${activeSpace.name} 탭 (${activeSpace.tabs.size})") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        spaces.forEach { sp ->
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 380.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(activeSpace.tabs, key = { it.id }) { tab ->
+                            val selected = tab.id == activeSpace.activeTabId
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (sp.id == activeSpaceId) EgoCobalt.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
+                                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        SpaceManager.selectSpace(sp.id)
-                                        showSpacesOverview = false
+                                        SpaceManager.selectTab(activeSpace.id, tab.id)
+                                        showAllTabsDialog = false
                                     }
                             ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(sp.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                    Text(
-                                        text = "${sp.tabs.size}개 탭 · ${sp.activeTab.title}",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (tab.isIncognito) {
+                                        Icon(
+                                            imageVector = Icons.Default.VisibilityOff,
+                                            contentDescription = "시크릿 탭",
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = tab.title.ifBlank { tab.url },
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            fontSize = 14.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = tab.url,
+                                            fontSize = 11.sp,
+                                            color = mutedIconColor,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { SpaceManager.closeTab(activeSpace.id, tab.id) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Close, contentDescription = "닫기", tint = mutedIconColor)
+                                    }
                                 }
                             }
                         }
@@ -518,16 +1144,61 @@ fun BrowserScreen() {
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
-                        showSpacesOverview = false
+                        SpaceManager.createTab(activeSpace.id)
+                        showAllTabsDialog = false
                     }) {
-                        Text("+ AI Space 추가")
+                        Text("+ 새 탭")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showSpacesOverview = false }) {
-                        Text("닫기")
+                    Row {
+                        TextButton(onClick = {
+                            SpaceManager.closeAllTabsInSpace(activeSpace.id)
+                            showAllTabsDialog = false
+                        }) {
+                            Text("모두 닫기", color = EgoDangerRed)
+                        }
+                        TextButton(onClick = { showAllTabsDialog = false }) {
+                            Text("닫기")
+                        }
                     }
+                }
+            )
+        }
+
+        // 방문 기록 다이얼로그
+        if (showHistoryDialog) {
+            AlertDialog(
+                onDismissRequest = { showHistoryDialog = false },
+                title = { Text("방문 기록") },
+                text = {
+                    if (history.isEmpty()) {
+                        Text("방문 기록이 없습니다.", color = mutedIconColor)
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 360.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(history, key = { it.id }) { item ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            SpaceManager.navigate(activeSpace.id, item.url)
+                                            showHistoryDialog = false
+                                        }
+                                        .padding(8.dp)
+                                ) {
+                                    Text(item.title, fontWeight = FontWeight.Medium, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(item.url, fontSize = 11.sp, color = mutedIconColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showHistoryDialog = false }) { Text("닫기") }
                 }
             )
         }
@@ -543,70 +1214,88 @@ private fun WebViewHostContainer(
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
-            FrameLayout(ctx).apply {
+            val host = FrameLayout(ctx).apply {
+                tag = "webview_host"
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
             }
-        },
-        update = { root ->
-            // 1) 백그라운드 AI Space WebView도 렌더링·스크린샷이 멈추지 않도록 숨김 레이어에 attached 유지
-            spaces.filter { it.type == SpaceType.AI && it.id != activeSpace.id }.forEach { bgSpace ->
-                val bgWv = SpaceManager.getOrCreateWebView(bgSpace.id, bgSpace.activeTab)
-                if (bgWv.parent == null) {
-                    root.addView(bgWv, FrameLayout.LayoutParams(1080, 720))
-                }
-                bgWv.alpha = 0f
-                bgWv.visibility = View.INVISIBLE
-            }
-
-            // 2) 현재 활성 탭 WebView를 SwipeRefreshLayout 안에 표시
-            val activeWv = SpaceManager.getOrCreateWebView(activeSpace.id, activeTab)
-            val existingSwipe = root.findViewWithTag<SwipeRefreshLayout>("active_swipe")
-            val swipe = existingSwipe ?: SwipeRefreshLayout(root.context).apply {
-                tag = "active_swipe"
-                layoutParams = FrameLayout.LayoutParams(
+            SwipeRefreshLayout(ctx).apply {
+                layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
-                root.addView(this)
+                addView(host)
             }
+        },
+        update = { swipe ->
+            val host = swipe.findViewWithTag<FrameLayout>("webview_host") ?: return@AndroidView
+            val activeWv = SpaceManager.getOrCreateWebView(activeSpace.id, activeTab)
 
+            swipe.setOnChildScrollUpCallback { _, _ -> activeWv.scrollY > 0 }
             swipe.setOnRefreshListener {
                 activeWv.reload()
                 swipe.isRefreshing = false
             }
 
-            if (activeWv.parent !== swipe) {
+            val bgAiWebViews = spaces
+                .filter { it.type == SpaceType.AI && it.id != activeSpace.id }
+                .map { bgSpace -> SpaceManager.getOrCreateWebView(bgSpace.id, bgSpace.activeTab) }
+                .toSet()
+
+            if (activeWv.parent !== host) {
                 (activeWv.parent as? ViewGroup)?.removeView(activeWv)
-                swipe.removeAllViews()
-                swipe.addView(
+                host.addView(
                     activeWv,
-                    ViewGroup.LayoutParams(
+                    FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                 )
+            } else if (activeWv.layoutParams?.width != ViewGroup.LayoutParams.MATCH_PARENT ||
+                activeWv.layoutParams?.height != ViewGroup.LayoutParams.MATCH_PARENT
+            ) {
+                activeWv.layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
             }
-            activeWv.alpha = 1f
-            activeWv.visibility = View.VISIBLE
-            swipe.bringToFront()
+
+            bgAiWebViews.forEach { bgWv ->
+                if (bgWv.parent !== host) {
+                    (bgWv.parent as? ViewGroup)?.removeView(bgWv)
+                    host.addView(
+                        bgWv,
+                        FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
+                }
+            }
+
+            for (i in 0 until host.childCount) {
+                val child = host.getChildAt(i)
+                when {
+                    child === activeWv -> {
+                        child.alpha = 1f
+                        child.visibility = View.VISIBLE
+                    }
+                    child in bgAiWebViews -> {
+                        child.alpha = 0f
+                        child.visibility = View.INVISIBLE
+                    }
+                    else -> {
+                        child.alpha = 0f
+                        child.visibility = View.GONE
+                    }
+                }
+            }
+            activeWv.bringToFront()
+            activeWv.requestLayout()
+            host.requestLayout()
         }
     )
 }
 
-private suspend fun translateActiveSpacePage(spaceId: String) {
-    runCatching {
-        val rawNodes = SpaceManager.evaluateJsInSpace(spaceId, BrowserScripts.COLLECT_TRANSLATABLE_NODES_JS)
-        val arr = JSONArray(rawNodes)
-        if (arr.length() == 0) return
-        val originals = (0 until arr.length()).map { arr.getJSONObject(it).getString("t") }
-        val translated = Last30DaysEngine.translateBatchToKorean(originals)
-        val outArr = JSONArray()
-        for (i in translated.indices) {
-            outArr.put(JSONObject().put("i", arr.getJSONObject(i).getInt("i")).put("t", translated[i]))
-        }
-        SpaceManager.evaluateJsInSpace(spaceId, BrowserScripts.applyTranslationsJs(outArr.toString()))
-    }
-}
