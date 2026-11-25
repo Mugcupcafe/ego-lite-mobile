@@ -162,16 +162,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        SpaceManager.resumeActiveWebView()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIncomingBrowserIntent(intent)
     }
 
     private fun handleIncomingBrowserIntent(intent: Intent?) {
         if (intent?.action == Intent.ACTION_VIEW) {
-            val url = intent.dataString
-            if (!url.isNullOrBlank() && (url.startsWith("http://") || url.startsWith("https://"))) {
-                SpaceManager.openExternalUrl(url)
+            val raw = intent.dataString ?: return
+            val resolvedUrl = when {
+                raw.startsWith("http://") || raw.startsWith("https://") -> raw
+                raw.startsWith("intent://") -> runCatching {
+                    Intent.parseUri(raw, Intent.URI_INTENT_SCHEME).getStringExtra("browser_fallback_url")
+                }.getOrNull()
+                else -> null
+            }
+            if (!resolvedUrl.isNullOrBlank() && (resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
+                SpaceManager.openExternalUrl(resolvedUrl)
             }
         }
     }
