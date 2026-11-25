@@ -367,6 +367,12 @@ object SpaceManager {
         mainHandler.post { webViews[tabId]?.reload() }
     }
 
+    fun openExternalUrl(url: String) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        selectSpace("personal")
+        createTab("personal", initialUrl = url, selectImmediately = true)
+    }
+
     fun goHome(spaceId: String) {
         val home = _preferences.value.homepageUrl.ifBlank { "ego://newtab" }
         val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return
@@ -419,7 +425,8 @@ object SpaceManager {
                 EgoWebViewFactory.applyDarkMode(wv, updated.darkModeEnabled)
                 EgoWebViewFactory.applyDesktopMode(wv, updated.desktopModeEnabled)
                 EgoWebViewFactory.applyTextZoom(wv, updated.textZoom)
-                EgoWebViewFactory.applyWebFont(wv, updated.webFontMode)
+                EgoWebViewFactory.applyWebFont(wv, updated.webFontMode, updated.customFontPath)
+                EgoWebViewFactory.applySitePreferences(wv, updated)
             }
         }
     }
@@ -431,14 +438,29 @@ object SpaceManager {
     fun handleBackOrCloseTab(spaceId: String): Boolean {
         val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return false
         val tab = space.activeTab
-        if (tab.canGoBack) {
-            goBack(spaceId)
+        val wv = webViews[tab.id]
+        // 1) Check LIVE WebView back stack (fixes SPA pushState & stale canGoBack state)
+        if (wv != null && wv.canGoBack()) {
+            wv.goBack()
+            updateTab(spaceId, tab.id) {
+                it.copy(canGoBack = wv.canGoBack(), canGoForward = wv.canGoForward())
+            }
             return true
         }
+        // 2) If multiple tabs are open, close current tab and return to previous/parent tab
         if (space.tabs.size > 1) {
             closeTab(spaceId, tab.id)
             return true
         }
+        // 3) If on the last tab and NOT on Home/NewTab page yet, return to Home page first!
+        if (tab.url != "ego://newtab") {
+            updateTab(spaceId, tab.id) {
+                it.copy(title = "새 탭", url = "ego://newtab", isLoading = false, canGoBack = false, canGoForward = false)
+            }
+            if (spaceId == "personal") savePersonalTabs()
+            return true
+        }
+        // 4) Already on single Home page -> let MainActivity handle double-back-to-exit Toast
         return false
     }
 
