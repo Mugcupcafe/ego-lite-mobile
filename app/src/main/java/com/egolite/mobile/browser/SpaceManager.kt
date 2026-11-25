@@ -280,6 +280,8 @@ object SpaceManager {
         if (spaceId == "personal") savePersonalTabs()
     }
 
+    fun getExistingWebView(tabId: String): WebView? = webViews[tabId]
+
     fun getOrCreateWebView(spaceId: String, tab: BrowserTab): WebView {
         return webViews.getOrPut(tab.id) {
             EgoWebViewFactory.createWebView(
@@ -289,6 +291,7 @@ object SpaceManager {
                 darkModeProvider = { _preferences.value.darkModeEnabled },
                 desktopModeProvider = { _preferences.value.desktopModeEnabled },
                 textZoomProvider = { _preferences.value.textZoom },
+                webFontProvider = { _preferences.value.webFontMode },
                 onPageStarted = { url ->
                     AdBlockEngine.resetTabCount(tab.id)
                     updateTab(spaceId, tab.id) { it.copy(url = url, isLoading = true) }
@@ -402,8 +405,13 @@ object SpaceManager {
                 EgoWebViewFactory.applyDarkMode(wv, updated.darkModeEnabled)
                 EgoWebViewFactory.applyDesktopMode(wv, updated.desktopModeEnabled)
                 EgoWebViewFactory.applyTextZoom(wv, updated.textZoom)
+                EgoWebViewFactory.applyWebFont(wv, updated.webFontMode)
             }
         }
+    }
+
+    fun addToReadingList(title: String, url: String) {
+        addOrUpdateBookmark(id = null, title = title.ifBlank { url }, url = url, folder = "읽기 목록")
     }
 
     fun handleBackOrCloseTab(spaceId: String): Boolean {
@@ -445,6 +453,24 @@ object SpaceManager {
 
     fun removeBookmark(id: String) {
         _bookmarks.update { list -> list.filterNot { it.id == id } }
+        saveBookmarks()
+    }
+
+    fun moveBookmark(id: String, delta: Int) {
+        val current = _bookmarks.value.toMutableList()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx == -1) return
+        val folder = current[idx].folder
+        // 같은 폴더 내 인접 항목과 위치 교환
+        val sameFolderIndices = current.indices.filter { current[it].folder == folder }
+        val posInFolder = sameFolderIndices.indexOf(idx)
+        val targetPosInFolder = posInFolder + delta
+        if (targetPosInFolder !in sameFolderIndices.indices) return
+        val targetGlobalIdx = sameFolderIndices[targetPosInFolder]
+        val item = current[idx]
+        current[idx] = current[targetGlobalIdx]
+        current[targetGlobalIdx] = item
+        _bookmarks.value = current
         saveBookmarks()
     }
 
@@ -498,6 +524,24 @@ object SpaceManager {
             val next = if (clean in prefs.autoTranslateHosts) prefs.autoTranslateHosts - clean else prefs.autoTranslateHosts + clean
             prefs.copy(autoTranslateHosts = next)
         }
+    }
+
+    fun togglePinnedTranslateLang(code: String) {
+        val clean = code.trim()
+        if (clean.isBlank() || clean == "auto") return
+        updatePreferences { prefs ->
+            val next = if (clean in prefs.pinnedTranslateLangs) {
+                prefs.pinnedTranslateLangs - clean
+            } else {
+                listOf(clean) + prefs.pinnedTranslateLangs
+            }
+            prefs.copy(pinnedTranslateLangs = next)
+        }
+    }
+
+    fun captureTabThumbnail(tabId: String): android.graphics.Bitmap? {
+        val wv = webViews[tabId] ?: return null
+        return EgoWebViewFactory.captureThumbnailBitmap(wv)
     }
 
     suspend fun evaluateJsInSpace(spaceId: String, js: String, timeoutMs: Long = 15000L): String {
