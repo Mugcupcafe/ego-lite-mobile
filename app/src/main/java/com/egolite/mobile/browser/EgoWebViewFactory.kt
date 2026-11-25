@@ -12,6 +12,9 @@ import android.os.Message
 import android.util.Base64
 import android.view.MotionEvent
 import android.view.View
+import android.webkit.WebResourceError
+import android.webkit.RenderProcessGoneDetail
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
@@ -149,7 +152,9 @@ object EgoWebViewFactory {
         onPageStarted: (url: String) -> Unit,
         onPageFinished: (url: String, title: String, canBack: Boolean, canForward: Boolean) -> Unit,
         onProgressChanged: (Int) -> Unit,
-        onCreatePopup: (Message) -> Unit
+        onCreatePopup: (Message) -> Unit,
+        onCloseWindow: () -> Unit = {},
+        onRenderProcessCrashed: () -> Unit = {}
     ): WebView {
         val webView = WebView(context)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -304,7 +309,8 @@ object EgoWebViewFactory {
                 if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:")) {
                     val host = AdBlockEngine.extractHost(url)
                     currentPageHost = host
-                    if (view != null && request.isForMainFrame) {
+                    val isGet = request.method.isNullOrBlank() || request.method.equals("GET", ignoreCase = true)
+                    if (view != null && request.isForMainFrame && isGet) {
                         if (isGoogleAuthHost(host)) {
                             if (view.settings.userAgentString != GOOGLE_AUTH_UA) {
                                 view.settings.userAgentString = GOOGLE_AUTH_UA
@@ -372,6 +378,52 @@ object EgoWebViewFactory {
                     )
                 }
             }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (view == null || request?.isForMainFrame != true) return
+                val code = error?.errorCode ?: return
+                // 사용자 취소(ERR_ABORTED = -1)나 외부 앱 스킴(-10)은 정상 전환이므로 무시
+                if (code == WebViewClient.ERROR_UNSUPPORTED_SCHEME || code == -1) return
+                val failedUrl = request.url?.toString().orEmpty()
+                if (failedUrl.isBlank() || failedUrl.startsWith("about:")) return
+                val desc = error.description?.toString().orEmpty().ifBlank { "네트워크 연결을 확인해 주세요" }
+                val isDark = darkModeProvider()
+                val bg = if (isDark) "#0F172A" else "#F8FAFC"
+                val card = if (isDark) "#1E293B" else "#FFFFFF"
+                val fg = if (isDark) "#F1F5F9" else "#0F172A"
+                val sub = if (isDark) "#94A3B8" else "#64748B"
+                val safeUrl = failedUrl.replace("&", "&amp;").replace("<", "&lt;").replace("\"", "&quot;").replace("'", "&#39;")
+                val safeDesc = desc.replace("&", "&amp;").replace("<", "&lt;")
+                val html = """
+                    <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+                    <style>
+                    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:$bg;color:$fg;font-family:sans-serif;padding:24px;box-sizing:border-box;}
+                    .c{max-width:420px;width:100%;background:$card;border-radius:18px;padding:24px;box-shadow:0 8px 28px rgba(0,0,0,.15);}
+                    h2{margin:0 0 8px;font-size:18px;}
+                    p{margin:0 0 14px;font-size:13px;color:$sub;word-break:break-all;line-height:1.5;}
+                    button{background:#10B981;color:#fff;border:0;border-radius:999px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;}
+                    </style></head><body><div class="c">
+                    <h2>페이지를 열 수 없습니다</h2>
+                    <p>$safeUrl<br/><br/>원인: $safeDesc</p>
+                    <button onclick="location.href='$safeUrl'">다시 시도</button>
+                    </div></body></html>
+                """.trimIndent()
+                view.loadDataWithBaseURL(failedUrl, html, "text/html", "UTF-8", failedUrl)
+            }
+
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                // 렌더러 프로세스 비정상 종료 시 앱 전체 강제종료 방지 및 탭 자동 복구
+                if (view != null) {
+                    (view.parent as? ViewGroup)?.removeView(view)
+                }
+                onRenderProcessCrashed()
+                return true
+            }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -395,6 +447,11 @@ object EgoWebViewFactory {
                     return true
                 }
                 return false
+            }
+
+            override fun onCloseWindow(window: WebView?) {
+                super.onCloseWindow(window)
+                onCloseWindow()
             }
 
             // 동영상 전체화면 (YouTube 등)
@@ -505,10 +562,12 @@ object EgoWebViewFactory {
             return
         }
 
-        val customData = if (mode == WebFontMode.CUSTOM_TTF && customFontPath.isNotBlank()) {
+        val customFile = if (mode == WebFontMode.CUSTOM_TTF && customFontPath.isNotBlank()) File(customFontPath) else null
+        val hasCustomFile = customFile != null && customFile.exists() && customFile.isFile
+        val isLargeCustomFont = hasCustomFile && (customFile!!.length() > 3L * 1024L * 1024L)
+        val customData = if (hasCustomFile && !isLargeCustomFont) {
             loadCustomFontBase64(customFontPath)
         } else null
-        val hasCustomFile = customData != null
 
         val cssFamily = when {
             hasCustomFile -> "'EgoCustomFont', system-ui, sans-serif"
@@ -523,25 +582,45 @@ object EgoWebViewFactory {
         val fullCss = selector.split(", ").joinToString(", ") { it + excludeIcons } + " { font-family: $cssFamily !important; }"
         val quotedCss = JSONObject.quote(fullCss)
 
-        val fontFaceLoaderJs = if (customData != null) {
-            val (ver, b64) = customData
-            """
-                try {
-                    if (!window.__egoCustomFontLoaded || window.__egoCustomFontVer !== $ver) {
-                        var b64 = "$b64";
-                        var bin = atob(b64);
-                        var bytes = new Uint8Array(bin.length);
-                        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-                        var ff = new FontFace('EgoCustomFont', bytes.buffer, { weight: '100 900' });
-                        ff.load().then(function(loaded) {
-                            document.fonts.add(loaded);
-                            window.__egoCustomFontLoaded = true;
-                            window.__egoCustomFontVer = $ver;
-                        }).catch(function() {});
-                    }
-                } catch (e) {}
-            """.trimIndent()
-        } else ""
+        val fontFaceLoaderJs = when {
+            customData != null -> {
+                val (ver, b64) = customData
+                """
+                    try {
+                        if (!window.__egoCustomFontLoaded || window.__egoCustomFontVer !== $ver) {
+                            var b64 = "$b64";
+                            var bin = atob(b64);
+                            var bytes = new Uint8Array(bin.length);
+                            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                            var ff = new FontFace('EgoCustomFont', bytes.buffer, { weight: '100 900' });
+                            ff.load().then(function(loaded) {
+                                document.fonts.add(loaded);
+                                window.__egoCustomFontLoaded = true;
+                                window.__egoCustomFontVer = $ver;
+                            }).catch(function() {});
+                        }
+                    } catch (e) {}
+                """.trimIndent()
+            }
+            hasCustomFile && isLargeCustomFont -> {
+                val ver = customFile!!.lastModified()
+                """
+                    try {
+                        if (!window.__egoCustomFontLoaded || window.__egoCustomFontVer !== $ver) {
+                            fetch('$CUSTOM_FONT_VIRTUAL_URL?v=$ver')
+                                .then(function(r) { return r.arrayBuffer(); })
+                                .then(function(buf) { return new FontFace('EgoCustomFont', buf, { weight: '100 900' }).load(); })
+                                .then(function(loaded) {
+                                    document.fonts.add(loaded);
+                                    window.__egoCustomFontLoaded = true;
+                                    window.__egoCustomFontVer = $ver;
+                                }).catch(function() {});
+                        }
+                    } catch (e) {}
+                """.trimIndent()
+            }
+            else -> ""
+        }
 
         val injectJs = """
             (function() {
