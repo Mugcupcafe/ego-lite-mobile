@@ -335,6 +335,12 @@ object SpaceManager {
                 },
                 onCreatePopup = { resultMsg ->
                     handlePopupWindow(spaceId, resultMsg)
+                },
+                onCloseWindow = {
+                    mainHandler.post { closeTab(spaceId, tab.id) }
+                },
+                onRenderProcessCrashed = {
+                    recoverCrashedWebView(spaceId, tab.id)
                 }
             ).apply {
                 if (tab.url.startsWith("http://") || tab.url.startsWith("https://")) {
@@ -709,11 +715,36 @@ object SpaceManager {
         }
     }
 
+    private fun recoverCrashedWebView(spaceId: String, tabId: String) {
+        mainHandler.post {
+            webViews.remove(tabId)?.let { dead ->
+                runCatching {
+                    (dead.parent as? android.view.ViewGroup)?.removeView(dead)
+                    dead.destroy()
+                }
+            }
+            val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return@post
+            val tab = space.tabs.firstOrNull { it.id == tabId } ?: return@post
+            // 강제 리컴포지션 유도 및 새 WebView로 자동 복구
+            updateTab(spaceId, tabId) { it.copy(isLoading = true, progress = 10) }
+            if (tab.url.startsWith("http://") || tab.url.startsWith("https://")) {
+                getOrCreateWebView(spaceId, tab).loadUrl(tab.url)
+            }
+        }
+    }
+
     private fun destroyWebView(tabId: String) {
         mainHandler.post {
             webViews.remove(tabId)?.apply {
-                stopLoading()
-                destroy()
+                runCatching {
+                    (parent as? android.view.ViewGroup)?.removeView(this)
+                    onPause()
+                    stopLoading()
+                    loadUrl("about:blank")
+                    clearHistory()
+                    removeAllViews()
+                    destroy()
+                }
             }
         }
     }
