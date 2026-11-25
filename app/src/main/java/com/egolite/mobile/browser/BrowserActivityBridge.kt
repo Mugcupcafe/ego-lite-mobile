@@ -50,6 +50,13 @@ object BrowserActivityBridge {
     private val _longPressTarget = MutableStateFlow<LongPressTarget?>(null)
     val longPressTarget: StateFlow<LongPressTarget?> = _longPressTarget.asStateFlow()
 
+    private val _externalOpenSeq = MutableStateFlow(0L)
+    val externalOpenSeq: StateFlow<Long> = _externalOpenSeq.asStateFlow()
+
+    fun notifyExternalUrlOpened() {
+        _externalOpenSeq.value = _externalOpenSeq.value + 1L
+    }
+
     fun enterFullscreen(view: View, callback: WebChromeClient.CustomViewCallback) {
         _fullscreenVideo.value = FullscreenVideoState(view, callback)
     }
