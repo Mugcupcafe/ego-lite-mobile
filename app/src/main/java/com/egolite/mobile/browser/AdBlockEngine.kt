@@ -173,6 +173,16 @@ object AdBlockEngine {
         }
     }
 
+    private fun matchesBlockedDomain(host: String, customSet: Set<String>): Boolean {
+        var cur = host
+        while (true) {
+            if (cur in defaultBlockedHosts || cur in customSet) return true
+            val dot = cur.indexOf('.')
+            if (dot == -1) return false
+            cur = cur.substring(dot + 1)
+        }
+    }
+
     fun shouldBlock(requestUrl: String?, pageHost: String, tabId: String): Boolean {
         if (requestUrl.isNullOrBlank()) return false
         if (!isEnabledForHost(pageHost)) return false
@@ -183,10 +193,9 @@ object AdBlockEngine {
         if (host == pageHost.lowercase()) return false
 
         val st = _state.value
-        val hostMatch = defaultBlockedHosts.any { host == it || host.endsWith(".$it") } ||
-            st.customBlockedHosts.any { host == it || host.endsWith(".$it") }
+        val hostMatch = matchesBlockedDomain(host, st.customBlockedHosts)
         val path = uri.path?.lowercase().orEmpty()
-        val pathMatch = blockedPathKeywords.any { path.contains(it) }
+        val pathMatch = !hostMatch && blockedPathKeywords.any { path.contains(it) }
 
         if (hostMatch || pathMatch) {
             _state.update { cur ->
@@ -204,7 +213,14 @@ object AdBlockEngine {
     }
 
     fun emptyResponse(): WebResourceResponse {
-        return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+        return WebResourceResponse(
+            "text/plain",
+            "utf-8",
+            204,
+            "No Content",
+            mapOf("Cache-Control" to "no-store"),
+            ByteArrayInputStream(ByteArray(0))
+        )
     }
 
     fun buildCosmeticFilterJs(pageHost: String): String {
