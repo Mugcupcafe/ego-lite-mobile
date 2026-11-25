@@ -10,6 +10,7 @@ import com.egolite.mobile.model.BookmarkItem
 import com.egolite.mobile.model.BrowserPreferences
 import com.egolite.mobile.model.BrowserSpace
 import com.egolite.mobile.model.BrowserTab
+import com.egolite.mobile.model.PersistedTab
 import com.egolite.mobile.model.SpaceType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,27 +18,42 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.json.JSONTokener
 import java.util.concurrent.ConcurrentHashMap
 
 object SpaceManager {
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val jsonCodec = Json { ignoreUnknownKeys = true }
     private val webViews = ConcurrentHashMap<String, WebView>()
     private lateinit var appContext: Context
 
     private val _preferences = MutableStateFlow(BrowserPreferences())
     val preferences: StateFlow<BrowserPreferences> = _preferences.asStateFlow()
 
+    private val _bookmarkFolders = MutableStateFlow(listOf("북마크 바", "모바일 북마크", "AI"))
+    val bookmarkFolders: StateFlow<List<String>> = _bookmarkFolders.asStateFlow()
+
+    private val _recentSearches = MutableStateFlow<List<String>>(emptyList())
+    private val _recentlyClosedTabs = MutableStateFlow<List<PersistedTab>>(emptyList())
+    val recentlyClosedTabs: StateFlow<List<PersistedTab>> = _recentlyClosedTabs.asStateFlow()
+    val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
+
     private val _bookmarks = MutableStateFlow(
         listOf(
-            BookmarkItem(title = "Google", url = "https://www.google.com"),
-            BookmarkItem(title = "Naver", url = "https://www.naver.com"),
-            BookmarkItem(title = "GitHub", url = "https://github.com")
+            BookmarkItem(title = "Google", url = "https://www.google.com", folder = "북마크 바"),
+            BookmarkItem(title = "NAVER", url = "https://www.naver.com", folder = "북마크 바"),
+            BookmarkItem(title = "알구몬", url = "https://www.algumon.com/n/deal", folder = "북마크 바"),
+            BookmarkItem(title = "GitHub", url = "https://github.com", folder = "모바일 북마크")
         )
     )
     val bookmarks: StateFlow<List<BookmarkItem>> = _bookmarks.asStateFlow()
 
-    private val initialPersonalTab = BrowserTab(title = "Google", url = "https://www.google.com")
+    private val _history = MutableStateFlow<List<BookmarkItem>>(emptyList())
+    val history: StateFlow<List<BookmarkItem>> = _history.asStateFlow()
+
+    private val initialPersonalTab = BrowserTab(title = "새 탭", url = "ego://newtab")
     private val initialAiTab = BrowserTab(title = "AI Space 1", url = "https://www.google.com")
 
     private val _spaces = MutableStateFlow(
@@ -69,7 +85,76 @@ object SpaceManager {
     fun init(context: Context) {
         if (!::appContext.isInitialized) {
             appContext = context.applicationContext
+            AdBlockEngine.init(appContext)
+            com.egolite.mobile.tunnel.EgoForegroundService.init(appContext)
+            loadPersistedData()
         }
+    }
+
+    private fun loadPersistedData() {
+        val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+        sp.getString("browser_prefs_json", null)?.let { raw ->
+            runCatching { jsonCodec.decodeFromString<BrowserPreferences>(raw) }.getOrNull()?.let { loaded ->
+                _preferences.value = loaded
+            }
+        }
+        sp.getString("bookmarks_json", null)?.let { raw ->
+            runCatching { jsonCodec.decodeFromString<List<BookmarkItem>>(raw) }.getOrNull()?.let {
+                if (it.isNotEmpty()) _bookmarks.value = it
+            }
+        }
+        sp.getString("folders_json", null)?.let { raw ->
+            runCatching { jsonCodec.decodeFromString<List<String>>(raw) }.getOrNull()?.let {
+                if (it.isNotEmpty()) _bookmarkFolders.value = it
+            }
+        }
+        sp.getString("searches_json", null)?.let { raw ->
+            runCatching { jsonCodec.decodeFromString<List<String>>(raw) }.getOrNull()?.let {
+                _recentSearches.value = it
+            }
+        }
+        sp.getString("personal_tabs_json", null)?.let { raw ->
+            runCatching { jsonCodec.decodeFromString<List<PersistedTab>>(raw) }.getOrNull()?.let { saved ->
+                if (saved.isNotEmpty()) {
+                    val restored = saved.map { BrowserTab(title = it.title, url = it.url) }
+                    _spaces.update { list ->
+                        list.map { space ->
+                            if (space.id == "personal") space.copy(tabs = restored, activeTabId = restored.last().id)
+                            else space
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun savePreferences() {
+        if (!::appContext.isInitialized) return
+        val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+        sp.edit().putString("browser_prefs_json", jsonCodec.encodeToString(_preferences.value)).apply()
+    }
+
+    private fun savePersonalTabs() {
+        if (!::appContext.isInitialized) return
+        val personal = _spaces.value.firstOrNull { it.id == "personal" } ?: return
+        val toSave = personal.tabs.filterNot { it.isIncognito }.map { PersistedTab(it.title, it.url) }
+        val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+        sp.edit().putString("personal_tabs_json", jsonCodec.encodeToString(toSave)).apply()
+    }
+
+    private fun saveBookmarks() {
+        if (!::appContext.isInitialized) return
+        val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+        sp.edit()
+            .putString("bookmarks_json", jsonCodec.encodeToString(_bookmarks.value))
+            .putString("folders_json", jsonCodec.encodeToString(_bookmarkFolders.value))
+            .apply()
+    }
+
+    private fun saveSearches() {
+        if (!::appContext.isInitialized) return
+        val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+        sp.edit().putString("searches_json", jsonCodec.encodeToString(_recentSearches.value)).apply()
     }
 
     fun getActiveSpace(): BrowserSpace {
@@ -107,16 +192,55 @@ object SpaceManager {
         }
     }
 
-    fun createTab(spaceId: String, initialUrl: String = "https://www.google.com"): BrowserTab {
-        val tab = BrowserTab(title = "새 탭", url = initialUrl)
+    fun createTab(spaceId: String, initialUrl: String = "ego://newtab", incognito: Boolean = false, selectImmediately: Boolean = true): BrowserTab {
+        val currentActive = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId
+        val tab = BrowserTab(title = if (incognito) "시크릿 탭" else "새 탭", url = initialUrl, parentTabId = currentActive, isIncognito = incognito)
         _spaces.update { list ->
             list.map { space ->
                 if (space.id == spaceId) {
-                    space.copy(tabs = space.tabs + tab, activeTabId = tab.id)
+                    space.copy(tabs = space.tabs + tab, activeTabId = if (selectImmediately) tab.id else space.activeTabId)
                 } else space
             }
         }
+        if (spaceId == "personal") savePersonalTabs()
         return tab
+    }
+
+    fun reopenLastClosedTab(spaceId: String): Boolean {
+        val last = _recentlyClosedTabs.value.firstOrNull() ?: return false
+        _recentlyClosedTabs.update { it.drop(1) }
+        createTab(spaceId, initialUrl = last.url)
+        return true
+    }
+
+    fun switchTabByOffset(spaceId: String, delta: Int) {
+        val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        if (space.tabs.size <= 1) return
+        val idx = space.tabs.indexOfFirst { it.id == space.activeTabId }.coerceAtLeast(0)
+        val nextIdx = (idx + delta + space.tabs.size) % space.tabs.size
+        selectTab(spaceId, space.tabs[nextIdx].id)
+    }
+
+    fun printActiveTab(context: Context, spaceId: String) {
+        val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        val tab = space.activeTab
+        mainHandler.post {
+            val wv = webViews[tab.id] ?: return@post
+            BrowserActivityBridge.printWebViewToPdf(context, wv, tab.title)
+        }
+    }
+
+    fun importBookmarks(items: List<BookmarkItem>): Int {
+        if (items.isEmpty()) return 0
+        val existingUrls = _bookmarks.value.map { it.url }.toSet()
+        val fresh = items.filter { it.url !in existingUrls }
+        if (fresh.isEmpty()) return 0
+        if ("가져온 북마크" !in _bookmarkFolders.value) {
+            _bookmarkFolders.update { it + "가져온 북마크" }
+        }
+        _bookmarks.update { it + fresh }
+        saveBookmarks()
+        return fresh.size
     }
 
     fun selectTab(spaceId: String, tabId: String) {
@@ -135,29 +259,46 @@ object SpaceManager {
             navigate(spaceId, "https://www.google.com")
             return
         }
+        val closing = targetSpace.tabs.firstOrNull { it.id == tabId }
+        if (closing != null && !closing.isIncognito && closing.url.startsWith("http")) {
+            _recentlyClosedTabs.update { (listOf(PersistedTab(closing.title, closing.url)) + it).take(15) }
+        }
         destroyWebView(tabId)
         _spaces.update { list ->
             list.map { space ->
                 if (space.id == spaceId) {
                     val remaining = space.tabs.filterNot { it.id == tabId }
-                    val newActive = if (space.activeTabId == tabId) remaining.last().id else space.activeTabId
+                    val closedTab = space.tabs.firstOrNull { it.id == tabId }
+                    val newActive = if (space.activeTabId == tabId) {
+                        val parent = closedTab?.parentTabId
+                        if (parent != null && remaining.any { it.id == parent }) parent else remaining.last().id
+                    } else space.activeTabId
                     space.copy(tabs = remaining, activeTabId = newActive)
                 } else space
             }
         }
+        if (spaceId == "personal") savePersonalTabs()
     }
 
     fun getOrCreateWebView(spaceId: String, tab: BrowserTab): WebView {
         return webViews.getOrPut(tab.id) {
             EgoWebViewFactory.createWebView(
                 context = appContext,
+                tabId = tab.id,
                 adBlockProvider = { _preferences.value.adBlockEnabled },
                 darkModeProvider = { _preferences.value.darkModeEnabled },
                 desktopModeProvider = { _preferences.value.desktopModeEnabled },
+                textZoomProvider = { _preferences.value.textZoom },
                 onPageStarted = { url ->
+                    AdBlockEngine.resetTabCount(tab.id)
                     updateTab(spaceId, tab.id) { it.copy(url = url, isLoading = true) }
                 },
                 onPageFinished = { url, title, canBack, canForward ->
+                    if (url.startsWith("http") && !tab.isIncognito) {
+                        _history.update { prev ->
+                            (listOf(BookmarkItem(title = title.ifBlank { url }.take(40), url = url)) + prev.filterNot { it.url == url }).take(80)
+                        }
+                    }
                     updateTab(spaceId, tab.id) {
                         it.copy(
                             url = url,
@@ -168,6 +309,7 @@ object SpaceManager {
                             canGoForward = canForward
                         )
                     }
+                    if (spaceId == "personal") savePersonalTabs()
                 },
                 onProgressChanged = { progress ->
                     updateTab(spaceId, tab.id) { it.copy(progress = progress, isLoading = progress < 100) }
@@ -176,7 +318,9 @@ object SpaceManager {
                     handlePopupWindow(spaceId, resultMsg)
                 }
             ).apply {
-                loadUrl(tab.url)
+                if (tab.url.startsWith("http://") || tab.url.startsWith("https://")) {
+                    loadUrl(tab.url)
+                }
             }
         }
     }
@@ -190,6 +334,12 @@ object SpaceManager {
     }
 
     fun navigate(spaceId: String, rawInput: String) {
+        val trimmed = rawInput.trim()
+        val isIncog = _spaces.value.firstOrNull { it.id == spaceId }?.activeTab?.isIncognito == true
+        if (!isIncog && trimmed.isNotBlank() && !trimmed.startsWith("http://") && !trimmed.startsWith("https://") && !trimmed.contains(".")) {
+            _recentSearches.update { prev -> (listOf(trimmed) + prev.filterNot { it == trimmed }).take(25) }
+            saveSearches()
+        }
         val url = normalizeUrl(rawInput)
         val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return
         val activeTab = space.activeTab
@@ -214,27 +364,93 @@ object SpaceManager {
         mainHandler.post { webViews[tabId]?.reload() }
     }
 
+    fun findInPage(spaceId: String, query: String) {
+        val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return
+        mainHandler.post {
+            val wv = webViews[tabId] ?: return@post
+            if (query.isBlank()) wv.clearMatches() else wv.findAllAsync(query)
+        }
+    }
+
+    fun findNextInPage(spaceId: String, forward: Boolean) {
+        val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return
+        mainHandler.post { webViews[tabId]?.findNext(forward) }
+    }
+
+    fun clearHistoryAndCache() {
+        _history.value = emptyList()
+        mainHandler.post {
+            webViews.values.forEach { it.clearCache(true) }
+        }
+    }
+
+    fun closeAllTabsInSpace(spaceId: String) {
+        val targetSpace = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        targetSpace.tabs.forEach { destroyWebView(it.id) }
+        val freshTab = BrowserTab(title = "새 탭", url = "ego://newtab")
+        _spaces.update { list ->
+            list.map { if (it.id == spaceId) it.copy(tabs = listOf(freshTab), activeTabId = freshTab.id) else it }
+        }
+    }
+
     fun updatePreferences(transform: (BrowserPreferences) -> BrowserPreferences) {
         val updated = transform(_preferences.value)
         _preferences.value = updated
+        savePreferences()
         mainHandler.post {
             webViews.values.forEach { wv ->
                 EgoWebViewFactory.applyDarkMode(wv, updated.darkModeEnabled)
                 EgoWebViewFactory.applyDesktopMode(wv, updated.desktopModeEnabled)
+                EgoWebViewFactory.applyTextZoom(wv, updated.textZoom)
             }
         }
     }
 
-    fun toggleBookmark(title: String, url: String) {
-        val exists = _bookmarks.value.any { it.url == url }
-        _bookmarks.update { list ->
-            if (exists) list.filterNot { it.url == url }
-            else list + BookmarkItem(title = title.ifBlank { url }.take(24), url = url)
+    fun handleBackOrCloseTab(spaceId: String): Boolean {
+        val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return false
+        val tab = space.activeTab
+        if (tab.canGoBack) {
+            goBack(spaceId)
+            return true
         }
+        if (space.tabs.size > 1) {
+            closeTab(spaceId, tab.id)
+            return true
+        }
+        return false
+    }
+
+    fun addOrUpdateBookmark(id: String?, title: String, url: String, folder: String) {
+        val cleanTitle = title.ifBlank { url }.take(40)
+        val cleanFolder = folder.ifBlank { "모바일 북마크" }
+        if (cleanFolder !in _bookmarkFolders.value) {
+            _bookmarkFolders.update { it + cleanFolder }
+        }
+        _bookmarks.update { list ->
+            if (id != null && list.any { it.id == id }) {
+                list.map { if (it.id == id) it.copy(title = cleanTitle, url = url, folder = cleanFolder) else it }
+            } else {
+                list + BookmarkItem(title = cleanTitle, url = url, folder = cleanFolder)
+            }
+        }
+        saveBookmarks()
+    }
+
+    fun addBookmarkFolder(name: String) {
+        val clean = name.trim()
+        if (clean.isBlank() || clean in _bookmarkFolders.value) return
+        _bookmarkFolders.update { it + clean }
+        saveBookmarks()
     }
 
     fun removeBookmark(id: String) {
         _bookmarks.update { list -> list.filterNot { it.id == id } }
+        saveBookmarks()
+    }
+
+    fun removeRecentSearch(query: String) {
+        _recentSearches.update { list -> list.filterNot { it == query } }
+        saveSearches()
     }
 
     fun setAiStatus(spaceId: String, status: AiSpaceStatus, summary: String = "") {
@@ -260,6 +476,28 @@ object SpaceManager {
             _spaces.value.firstOrNull { it.id == spaceId && it.type == SpaceType.AI }?.let { return it }
         }
         return _spaces.value.firstOrNull { it.type == SpaceType.AI } ?: createAiSpace() ?: _spaces.value.first()
+    }
+
+    suspend fun evaluateJsInExactSpace(spaceId: String, js: String, timeoutMs: Long = 15000L): String {
+        val space = _spaces.value.firstOrNull { it.id == spaceId } ?: getActiveSpace()
+        val tab = space.activeTab
+        val deferred = CompletableDeferred<String>()
+        mainHandler.post {
+            val wv = getOrCreateWebView(space.id, tab)
+            wv.evaluateJavascript(js) { raw ->
+                deferred.complete(decodeEvaluateJsResult(raw))
+            }
+        }
+        return withTimeout(timeoutMs) { deferred.await() }
+    }
+
+    fun toggleAutoTranslateHost(host: String) {
+        val clean = host.lowercase().trim()
+        if (clean.isBlank()) return
+        updatePreferences { prefs ->
+            val next = if (clean in prefs.autoTranslateHosts) prefs.autoTranslateHosts - clean else prefs.autoTranslateHosts + clean
+            prefs.copy(autoTranslateHosts = next)
+        }
     }
 
     suspend fun evaluateJsInSpace(spaceId: String, js: String, timeoutMs: Long = 15000L): String {
@@ -329,6 +567,6 @@ object SpaceManager {
         if (trimmed.contains(".") && !trimmed.contains(" ")) {
             return "https://$trimmed"
         }
-        return "https://www.google.com/search?q=${android.net.Uri.encode(trimmed)}"
+        return "${_preferences.value.searchEngine.searchUrlPrefix}${android.net.Uri.encode(trimmed)}"
     }
 }
