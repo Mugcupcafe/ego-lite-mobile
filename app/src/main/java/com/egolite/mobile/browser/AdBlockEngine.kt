@@ -202,6 +202,7 @@ object AdBlockEngine {
         // Never block the main page document host or human-verification (Cloudflare Turnstile / hCaptcha / reCAPTCHA)
         if (host == pageHost.lowercase()) return false
         if (captchaAllowHosts.any { host == it || host.endsWith(".$it") }) return false
+        if (requestUrl.contains("/cdn-cgi/", ignoreCase = true)) return false
 
         val st = _state.value
         val hostMatch = matchesBlockedDomain(host, st.customBlockedHosts)
