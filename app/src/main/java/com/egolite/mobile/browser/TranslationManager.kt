@@ -1,31 +1,32 @@
 package com.egolite.mobile.browser
 
-import android.net.Uri
 import com.egolite.mobile.model.TranslationEngine
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.languageid.LanguageIdentification
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.contentType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -33,12 +34,9 @@ data class LangOption(val code: String, val label: String)
 
 object TranslationManager {
     private val json = Json { ignoreUnknownKeys = true }
-    private val httpClient = HttpClient(CIO) {
-        engine { requestTimeout = 20_000 }
-    }
 
     private const val BROWSER_UA =
-        "Mozilla/5.0 (Linux; Android 16; YLP-W00) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Linux; Android 16; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
 
     val targetLanguages: List<LangOption> = listOf(
         LangOption("ko", "한국어"),
@@ -131,7 +129,7 @@ object TranslationManager {
         }
         val originals = items.map { it.second }
 
-        val (translated, detectedCode, successCount) = when (engine) {
+        var result = when (engine) {
             TranslationEngine.ONLINE_GOOGLE -> {
                 onProgress("번역 중...")
                 translateOnlineChunked(originals, sourceLang, targetLang)
@@ -142,17 +140,26 @@ object TranslationManager {
             }
         }
 
-        if (successCount == 0) {
+        // 온라인 번역이 일시적으로 차단/실패한 경우 오프라인 ML Kit으로 자동 폴백
+        if (result.okCount == 0 && engine == TranslationEngine.ONLINE_GOOGLE) {
+            onProgress("오프라인 엔진으로 전환 중...")
+            val fallback = translateOfflineMlKit(originals, sourceLang, targetLang)
+            if (fallback.okCount > 0) {
+                result = fallback
+            }
+        }
+
+        if (result.okCount == 0) {
             return false to "번역 실패 (네트워크 확인)"
         }
 
         val outArr = JSONArray()
         for (idx in items.indices) {
-            val newText = translated.getOrNull(idx) ?: originals[idx]
+            val newText = result.texts.getOrNull(idx) ?: originals[idx]
             outArr.put(JSONObject().put("i", items[idx].first).put("t", newText))
         }
         SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.applyTranslationsJs(outArr.toString()))
-        return true to detectedCode
+        return true to result.detected
     }
 
     suspend fun restoreOriginalInSpace(spaceId: String) {
@@ -172,13 +179,13 @@ object TranslationManager {
         sourceLang: String,
         targetLang: String
     ): ChunkResult = coroutineScope {
-        // 문자 수 예산 기반 소청크 분할 (최대 8문장, 900자 이하)
+        // GET URL 길이 및 레이트 리밋을 고려한 안전한 소청크 분할 (최대 6문장, 480자 이하)
         val chunks = mutableListOf<List<String>>()
         var cur = mutableListOf<String>()
         var curChars = 0
         for (t in texts) {
             val clean = t.replace("\r", " ").replace("\n", " ").trim()
-            if (cur.isNotEmpty() && (cur.size >= 8 || curChars + clean.length > 900)) {
+            if (cur.isNotEmpty() && (cur.size >= 6 || curChars + clean.length > 480)) {
                 chunks.add(cur)
                 cur = mutableListOf()
                 curChars = 0
@@ -191,11 +198,12 @@ object TranslationManager {
         var detected = sourceLang
         var totalOk = 0
 
-        // 동시 4개씩 병렬 처리 (레이트 리밋 방지)
+        // 동시 2개씩 병렬 처리 + 짧은 간격으로 429 레이트 리밋 방지
         val allTranslated = mutableListOf<String>()
-        for (batch in chunks.chunked(4)) {
+        for ((batchIdx, batch) in chunks.chunked(2).withIndex()) {
+            if (batchIdx > 0) delay(45L)
             val batchResults = batch.map { chunk ->
-                async { translateOnlineBatchWithFallback(chunk, sourceLang, targetLang) }
+                async(Dispatchers.IO) { translateOnlineBatchWithFallback(chunk, sourceLang, targetLang) }
             }.awaitAll()
             for (res in batchResults) {
                 if (res.detected.isNotBlank() && res.detected != "auto" && detected == "auto") {
@@ -214,7 +222,7 @@ object TranslationManager {
         targetLang: String
     ): ChunkResult {
         val joined = chunk.joinToString("\n")
-        val direct = callGoogleTranslatePost(joined, sourceLang, targetLang)
+        val direct = callGoogleTranslateWithFallback(joined, sourceLang, targetLang)
         if (direct != null) {
             val (translatedFull, detected) = direct
             val lines = translatedFull.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
@@ -227,7 +235,7 @@ object TranslationManager {
         var detected = sourceLang
         var okCount = 0
         val fallbackList = chunk.map { single ->
-            val res = callGoogleTranslatePost(single, sourceLang, targetLang)
+            val res = callGoogleTranslateWithFallback(single, sourceLang, targetLang)
             if (res != null) {
                 if (res.second.isNotBlank() && res.second != "auto" && detected == "auto") {
                     detected = res.second
@@ -241,32 +249,112 @@ object TranslationManager {
         return ChunkResult(fallbackList, detected, okCount)
     }
 
-    private suspend fun callGoogleTranslatePost(
+    private suspend fun callGoogleTranslateWithFallback(
         text: String,
         sourceLang: String,
         targetLang: String
-    ): Pair<String, String>? {
+    ): Pair<String, String>? = withContext(Dispatchers.IO) {
+        val sl = sourceLang.ifBlank { "auto" }
+        val tl = targetLang.ifBlank { "ko" }
+        // 1순위: translate.googleapis.com GET (안드로이드 네이티브 HttpURLConnection)
+        callGtxGet(text, sl, tl)
+            // 2순위: Chrome 번역 확장 API (clients5.google.com)
+            ?: callClients5Get(text, sl, tl)
+            // 3순위: translate.googleapis.com POST
+            ?: callGtxPost(text, sl, tl)
+    }
+
+    private fun callGtxGet(text: String, sl: String, tl: String): Pair<String, String>? {
         return runCatching {
-            val sl = Uri.encode(sourceLang.ifBlank { "auto" })
-            val tl = Uri.encode(targetLang.ifBlank { "ko" })
-            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$sl&tl=$tl&dt=t"
-            val response = httpClient.post(url) {
-                header(HttpHeaders.UserAgent, BROWSER_UA)
-                contentType(ContentType.Application.FormUrlEncoded)
-                setBody("q=${Uri.encode(text)}")
-            }
-            if (response.status.value !in 200..299) return null
-            val body = response.bodyAsText()
-            val root = json.parseToJsonElement(body).jsonArray
-            val sentences = root[0].jsonArray
-            val detected = root.getOrNull(2)?.jsonPrimitive?.contentOrNull ?: sourceLang
-            val full = buildString {
-                sentences.forEach { s ->
-                    append(s.jsonArray[0].jsonPrimitive.contentOrNull.orEmpty())
-                }
-            }
-            if (full.isBlank()) null else full to detected
+            val encSl = URLEncoder.encode(sl, "UTF-8")
+            val encTl = URLEncoder.encode(tl, "UTF-8")
+            val encQ = URLEncoder.encode(text, "UTF-8")
+            val endpoint = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$encSl&tl=$encTl&dt=t&q=$encQ"
+            val body = httpGetText(endpoint) ?: return null
+            parseGtxResponse(body, sl)
         }.getOrNull()
+    }
+
+    private fun callClients5Get(text: String, sl: String, tl: String): Pair<String, String>? {
+        return runCatching {
+            val encSl = URLEncoder.encode(sl, "UTF-8")
+            val encTl = URLEncoder.encode(tl, "UTF-8")
+            val encQ = URLEncoder.encode(text, "UTF-8")
+            val endpoint = "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=$encSl&tl=$encTl&q=$encQ"
+            val body = httpGetText(endpoint) ?: return null
+            val root = json.parseToJsonElement(body).jsonArray
+            if (root.isEmpty()) return null
+            val first = root[0]
+            when (first) {
+                is JsonArray -> {
+                    val translated = first.getOrNull(0)?.jsonPrimitive?.contentOrNull.orEmpty()
+                    val detected = first.getOrNull(1)?.jsonPrimitive?.contentOrNull ?: sl
+                    if (translated.isBlank()) null else translated to detected
+                }
+                is JsonPrimitive -> {
+                    val translated = first.contentOrNull.orEmpty()
+                    if (translated.isBlank()) null else translated to sl
+                }
+                else -> null
+            }
+        }.getOrNull()
+    }
+
+    private fun callGtxPost(text: String, sl: String, tl: String): Pair<String, String>? {
+        return runCatching {
+            val encSl = URLEncoder.encode(sl, "UTF-8")
+            val encTl = URLEncoder.encode(tl, "UTF-8")
+            val endpoint = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$encSl&tl=$encTl&dt=t"
+            val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10_000
+                readTimeout = 15_000
+                doOutput = true
+                setRequestProperty("User-Agent", BROWSER_UA)
+                setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                setRequestProperty("Accept", "application/json, text/plain, */*")
+            }
+            try {
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write("q=${URLEncoder.encode(text, "UTF-8")}")
+                    writer.flush()
+                }
+                if (conn.responseCode !in 200..299) return null
+                val body = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                parseGtxResponse(body, sl)
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrNull()
+    }
+
+    private fun httpGetText(endpoint: String): String? {
+        val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10_000
+            readTimeout = 15_000
+            setRequestProperty("User-Agent", BROWSER_UA)
+            setRequestProperty("Accept", "application/json, text/plain, */*")
+        }
+        return try {
+            if (conn.responseCode !in 200..299) return null
+            BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun parseGtxResponse(body: String, fallbackSource: String): Pair<String, String>? {
+        val root = json.parseToJsonElement(body).jsonArray
+        val sentences = root.getOrNull(0)?.jsonArray ?: return null
+        val detected = root.getOrNull(2)?.jsonPrimitive?.contentOrNull ?: fallbackSource
+        val full = buildString {
+            sentences.forEach { s ->
+                val part = runCatching { s.jsonArray[0].jsonPrimitive.contentOrNull.orEmpty() }.getOrDefault("")
+                append(part)
+            }
+        }
+        return if (full.isBlank()) null else full to detected
     }
 
     private suspend fun translateOfflineMlKit(
