@@ -28,6 +28,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.egolite.mobile.model.LongPressTarget
 import com.egolite.mobile.model.WebFontMode
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -472,6 +473,26 @@ object EgoWebViewFactory {
 
     const val CUSTOM_FONT_VIRTUAL_URL = "https://ego-local-font.internal/custom.ttf"
 
+    private var cachedCustomFontKey: String = ""
+    private var cachedCustomFontBase64: String = ""
+
+    private fun loadCustomFontBase64(path: String): Pair<Long, String>? {
+        val file = File(path)
+        if (!file.exists() || !file.isFile) return null
+        val ver = file.lastModified()
+        val key = "$path:$ver"
+        if (cachedCustomFontKey == key && cachedCustomFontBase64.isNotBlank()) {
+            return ver to cachedCustomFontBase64
+        }
+        return runCatching {
+            val bytes = file.readBytes()
+            val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            cachedCustomFontKey = key
+            cachedCustomFontBase64 = b64
+            ver to b64
+        }.getOrNull()
+    }
+
     fun applyWebFont(webView: WebView, mode: WebFontMode, customFontPath: String = SpaceManager.preferences.value.customFontPath) {
         if (mode == WebFontMode.SITE_DEFAULT) {
             val removeJs = """
@@ -484,34 +505,55 @@ object EgoWebViewFactory {
             return
         }
 
-        val hasCustomFile = mode == WebFontMode.CUSTOM_TTF && customFontPath.isNotBlank() && File(customFontPath).exists()
-        val fontFaceRule = if (hasCustomFile) {
-            val ver = File(customFontPath).lastModified()
-            "@font-face { font-family: \"EgoCustomFont\"; src: url(\"$CUSTOM_FONT_VIRTUAL_URL?v=$ver\") format(\"truetype\"); font-weight: 100 900; font-display: swap; } "
-        } else ""
+        val customData = if (mode == WebFontMode.CUSTOM_TTF && customFontPath.isNotBlank()) {
+            loadCustomFontBase64(customFontPath)
+        } else null
+        val hasCustomFile = customData != null
 
         val cssFamily = when {
-            hasCustomFile -> "\"EgoCustomFont\", sans-serif"
-            mode == WebFontMode.SYSTEM_FONT -> "sans-serif"
-            mode == WebFontMode.CLEAN_GOTHIC -> "\"Noto Sans KR\", \"Malgun Gothic\", sans-serif"
-            mode == WebFontMode.SERIF -> "\"Noto Serif KR\", Georgia, serif"
-            else -> "sans-serif"
+            hasCustomFile -> "'EgoCustomFont', system-ui, sans-serif"
+            mode == WebFontMode.SYSTEM_FONT -> "system-ui, -apple-system, sans-serif"
+            mode == WebFontMode.CLEAN_GOTHIC -> "'Noto Sans KR', 'Malgun Gothic', sans-serif"
+            mode == WebFontMode.SERIF -> "'Noto Serif KR', Georgia, serif"
+            else -> "system-ui, sans-serif"
         }
 
-        val selector = "html, body, p, span, div, a, li, td, th, h1, h2, h3, h4, h5, h6, input, button, textarea, article, section"
-        val excludeIcons = ":not([class*=\"icon\"]):not([class*=\"Icon\"]):not([class*=\"fa-\"]):not(.material-icons):not(.material-symbols-outlined)"
-        val fullCss = fontFaceRule + selector.split(", ").joinToString(", ") { it + excludeIcons } + " { font-family: $cssFamily !important; }"
+        val selector = "html, body, p, span, div, a, li, td, th, h1, h2, h3, h4, h5, h6, input, button, textarea, article, section, strong, b, em, label, dd, dt"
+        val excludeIcons = ":not([class*='icon']):not([class*='Icon']):not([class*='fa-']):not(.material-icons):not(.material-symbols-outlined)"
+        val fullCss = selector.split(", ").joinToString(", ") { it + excludeIcons } + " { font-family: $cssFamily !important; }"
+        val quotedCss = JSONObject.quote(fullCss)
+
+        val fontFaceLoaderJs = if (customData != null) {
+            val (ver, b64) = customData
+            """
+                try {
+                    if (!window.__egoCustomFontLoaded || window.__egoCustomFontVer !== $ver) {
+                        var b64 = "$b64";
+                        var bin = atob(b64);
+                        var bytes = new Uint8Array(bin.length);
+                        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                        var ff = new FontFace('EgoCustomFont', bytes.buffer, { weight: '100 900' });
+                        ff.load().then(function(loaded) {
+                            document.fonts.add(loaded);
+                            window.__egoCustomFontLoaded = true;
+                            window.__egoCustomFontVer = $ver;
+                        }).catch(function() {});
+                    }
+                } catch (e) {}
+            """.trimIndent()
+        } else ""
 
         val injectJs = """
             (function() {
                 if (document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running, #cf-wrapper')) return;
+                $fontFaceLoaderJs
                 var el = document.getElementById('ego-web-font-css');
                 if (!el) {
                     el = document.createElement('style');
                     el.id = 'ego-web-font-css';
                     (document.head || document.documentElement).appendChild(el);
                 }
-                el.textContent = "$fullCss";
+                el.textContent = $quotedCss;
             })();
         """.trimIndent()
         webView.evaluateJavascript(injectJs, null)
