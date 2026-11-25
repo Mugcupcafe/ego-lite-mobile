@@ -1,6 +1,7 @@
 package com.egolite.mobile.browser
 
 import android.content.Context
+import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
@@ -8,6 +9,7 @@ import android.webkit.WebView
 import com.egolite.mobile.model.AiSpaceStatus
 import com.egolite.mobile.model.BookmarkItem
 import com.egolite.mobile.model.BrowserPreferences
+import com.egolite.mobile.model.ThemeMode
 import com.egolite.mobile.model.BrowserSpace
 import com.egolite.mobile.model.BrowserTab
 import com.egolite.mobile.model.PersistedTab
@@ -288,7 +290,7 @@ object SpaceManager {
                 context = appContext,
                 tabId = tab.id,
                 adBlockProvider = { _preferences.value.adBlockEnabled },
-                darkModeProvider = { _preferences.value.darkModeEnabled },
+                darkModeProvider = { isEffectiveDarkMode() },
                 desktopModeProvider = { _preferences.value.desktopModeEnabled },
                 textZoomProvider = { _preferences.value.textZoom },
                 webFontProvider = { _preferences.value.webFontMode },
@@ -422,7 +424,7 @@ object SpaceManager {
         savePreferences()
         mainHandler.post {
             webViews.values.forEach { wv ->
-                EgoWebViewFactory.applyDarkMode(wv, updated.darkModeEnabled)
+                EgoWebViewFactory.applyDarkMode(wv, isEffectiveDarkMode(updated))
                 EgoWebViewFactory.applyDesktopMode(wv, updated.desktopModeEnabled)
                 EgoWebViewFactory.applyTextZoom(wv, updated.textZoom)
                 EgoWebViewFactory.applyWebFont(wv, updated.webFontMode, updated.customFontPath)
@@ -648,5 +650,27 @@ object SpaceManager {
             return "https://$trimmed"
         }
         return "${_preferences.value.searchEngine.searchUrlPrefix}${android.net.Uri.encode(trimmed)}"
+    }
+
+    fun isSystemDarkMode(): Boolean {
+        val ctx = appContext ?: return false
+        val mask = ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return mask == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    fun isEffectiveDarkMode(prefs: BrowserPreferences = _preferences.value): Boolean {
+        return when (prefs.themeMode) {
+            ThemeMode.SYSTEM -> isSystemDarkMode()
+            ThemeMode.DARK -> true
+            ThemeMode.LIGHT -> false
+        }
+    }
+
+    fun syncWebViewsDarkMode(isDark: Boolean) {
+        mainHandler.post {
+            webViews.values.forEach { wv ->
+                EgoWebViewFactory.applyDarkMode(wv, isDark)
+            }
+        }
     }
 }
