@@ -127,7 +127,7 @@ object BrowserActivityBridge {
     fun exportNetscapeBookmarksHtml(bookmarks: List<BookmarkItem>): String {
         val sb = StringBuilder()
         sb.appendLine("<!DOCTYPE NETSCAPE-Bookmark-file-1>")
-        sb.appendLine("<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">")
+        sb.appendLine("<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">")
         sb.appendLine("<TITLE>Ego Lite Mobile Bookmarks</TITLE>")
         sb.appendLine("<H1>Bookmarks</H1>")
         sb.appendLine("<DL><p>")
@@ -136,7 +136,8 @@ object BrowserActivityBridge {
             sb.appendLine("  <DL><p>")
             items.forEach { bm ->
                 val safeTitle = bm.title.replace("<", "&lt;").replace(">", "&gt;")
-                sb.appendLine("    <DT><A HREF="${bm.url}">$safeTitle</A>")
+                val safeUrl = bm.url.replace("\"", "&quot;")
+                sb.appendLine("    <DT><A HREF=\"$safeUrl\">$safeTitle</A>")
             }
             sb.appendLine("  </DL><p>")
         }
