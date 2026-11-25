@@ -161,7 +161,7 @@ object BrowserScripts {
             let idx = 0;
             window.__egoTranslateNodes = [];
             window.__egoOrigNodes = [];
-            while ((node = walker.nextNode()) && items.length < 180) {
+            while ((node = walker.nextNode()) && items.length < 350) {
                 const parent = node.parentElement;
                 if (!parent) continue;
                 const tag = parent.tagName.toLowerCase();
@@ -169,11 +169,11 @@ object BrowserScripts {
                 const rect = parent.getBoundingClientRect();
                 if (rect.width === 0 && rect.height === 0) continue;
                 const orig = node.nodeValue || '';
-                const text = orig.trim();
+                const text = orig.replace(/\s+/g, ' ').trim();
                 if (text.length < 2 || /^[0-9\W_]+$/.test(text)) continue;
                 window.__egoTranslateNodes.push(node);
                 window.__egoOrigNodes.push({ node: node, orig: orig });
-                items.push({ i: idx++, t: text.slice(0, 320) });
+                items.push({ i: idx++, t: text.slice(0, 400) });
             }
             return JSON.stringify(items);
         })();
