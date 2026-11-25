@@ -8,11 +8,13 @@ import android.net.Uri
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +22,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,23 +41,36 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.egolite.mobile.browser.BrowserActivityBridge
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.model.LongPressTarget
+import kotlin.math.roundToInt
 
 /**
- * 모바일 크롬 1:1 롱프레스 컨텍스트 메뉴 (주/야간 테마 자동 대응)
+ * 모바일 크롬 태블릿 1:1 롱프레스 컨텍스트 메뉴
+ * - 배경 어두워짐(Dim) 없음 (완전 투명 백드롭)
+ * - 터치한 위치 기준으로 팝업 생성 및 화면 경계 자동 보정
  */
 @Composable
 fun ChromeLongPressContextMenu(
@@ -64,6 +81,7 @@ fun ChromeLongPressContextMenu(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val rawUrl = target.linkUrl ?: target.imageUrl.orEmpty()
     val host = remember(rawUrl) {
         runCatching { Uri.parse(rawUrl).host?.removePrefix("www.").orEmpty() }.getOrDefault("")
@@ -81,27 +99,64 @@ fun ChromeLongPressContextMenu(
 
     // 크롬 주/야간 팝업 팔레트 1:1 매칭
     val cardBg = if (darkTheme) Color(0xFF282A2E) else Color(0xFFFFFFFF)
+    val cardBorder = if (darkTheme) Color(0xFF3C4043) else Color(0xFFDADCE0)
     val avatarBg = if (darkTheme) Color(0xFF3C4043) else Color(0xFFE8EAED)
     val titleColor = if (darkTheme) Color(0xFFE8EAED) else Color(0xFF1F1F1F)
     val subColor = if (darkTheme) Color(0xFF9AA0A6) else Color(0xFF5F6368)
     val dividerColor = if (darkTheme) Color(0xFF3C4043) else Color(0xFFE0E3E7)
 
-    Box(
+    var containerWinPos by remember { mutableStateOf(Offset.Zero) }
+    var menuSize by remember { mutableStateOf(IntSize.Zero) }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
+            .onGloballyPositioned { coords -> containerWinPos = coords.positionInWindow() }
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
-            ) { onDismiss() },
-        contentAlignment = Alignment.Center
+            ) { onDismiss() }
     ) {
+        val containerW = constraints.maxWidth
+        val containerH = constraints.maxHeight
+        val marginPx = with(density) { 10.dp.roundToPx() }
+        val touchOffsetPx = with(density) { 8.dp.roundToPx() }
+        val fallbackMenuW = with(density) { 292.dp.roundToPx() }
+        val effMenuW = if (menuSize.width > 0) menuSize.width else fallbackMenuW
+        val effMenuH = if (menuSize.height > 0) menuSize.height else (containerH * 0.5f).roundToInt()
+
+        val popupOffset = if (target.touchX >= 0f && target.touchY >= 0f) {
+            val localX = (target.touchX - containerWinPos.x).roundToInt()
+            val localY = (target.touchY - containerWinPos.y).roundToInt()
+            val preferredX = if (localX + touchOffsetPx + effMenuW <= containerW - marginPx) {
+                localX + touchOffsetPx
+            } else {
+                localX - effMenuW - touchOffsetPx
+            }
+            val preferredY = if (localY + touchOffsetPx + effMenuH <= containerH - marginPx) {
+                localY + touchOffsetPx
+            } else {
+                localY - effMenuH - touchOffsetPx
+            }
+            val clampedX = preferredX.coerceIn(marginPx, (containerW - effMenuW - marginPx).coerceAtLeast(marginPx))
+            val clampedY = preferredY.coerceIn(marginPx, (containerH - effMenuH - marginPx).coerceAtLeast(marginPx))
+            IntOffset(clampedX, clampedY)
+        } else {
+            val cx = ((containerW - effMenuW) / 2).coerceAtLeast(marginPx)
+            val cy = ((containerH - effMenuH) / 2).coerceAtLeast(marginPx)
+            IntOffset(cx, cy)
+        }
+
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = cardBg,
-            shadowElevation = 16.dp,
+            border = BorderStroke(0.6.dp, cardBorder),
+            shadowElevation = 14.dp,
             modifier = Modifier
+                .offset { popupOffset }
                 .width(292.dp)
+                .heightIn(max = (maxHeight - 24.dp).coerceAtLeast(240.dp))
+                .onSizeChanged { menuSize = it }
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() }
