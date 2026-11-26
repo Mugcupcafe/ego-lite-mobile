@@ -1,5 +1,6 @@
 package com.egolite.mobile.ui
 
+import com.egolite.mobile.model.EqualizerMorphStyle
 import android.app.DownloadManager
 import android.app.role.RoleManager
 import android.content.ClipData
@@ -99,7 +100,6 @@ import com.egolite.mobile.browser.EgoWebViewFactory
 import com.egolite.mobile.browser.FaviconCache
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.browser.TranslationManager
-import com.egolite.mobile.model.EqualizerMorphStyle
 import com.egolite.mobile.model.McpConnectionState
 import com.egolite.mobile.model.MonitorPosition
 import com.egolite.mobile.model.SearchEngine
