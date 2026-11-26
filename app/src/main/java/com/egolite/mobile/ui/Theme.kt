@@ -10,47 +10,71 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-val EgoCobalt = Color(0xFF2563EB)
+val EgoCobalt = Color(0xFF1A73E8)
 val EgoEmerald = Color(0xFF10B981)
 val EgoEmeraldGlow = Color(0xFF2EF2AA)
-val EgoDangerRed = Color(0xFFDC2626)
+val EgoDangerRed = Color(0xFFD93025)
+
+// Google Material 3 표준 주간/야간 배경 및 서피스 톤
+val M3LightBackground = Color(0xFFF8F9FA)
+val M3LightSurfaceLowest = Color(0xFFFFFFFF)
+val M3LightSurfaceLow = Color(0xFFF1F3F4)
+val M3LightSurfaceMid = Color(0xFFE8EAED)
+val M3LightSurfaceHigh = Color(0xFFE2E5EA)
+val M3LightSurfaceHighest = Color(0xFFDADCE0)
+
+val M3DarkBackground = Color(0xFF131314)
+val M3DarkSurfaceLowest = Color(0xFF0E0E0F)
+val M3DarkSurfaceLow = Color(0xFF1B1B1D)
+val M3DarkSurfaceMid = Color(0xFF1E1F22)
+val M3DarkSurfaceHigh = Color(0xFF282A2C)
+val M3DarkSurfaceHighest = Color(0xFF333537)
 
 // Selected vs unselected tab fallback colors
-val LightTabSelected = Color(0xFFFFFFFF)
-val LightTabUnselected = Color(0xFFDCE3EC)
-val DarkTabStripBg = Color(0xFF0B1120)
-val DarkTabSelected = Color(0xFF334155)
-val DarkTabUnselected = Color(0xFF162033)
+val LightTabSelected = M3LightSurfaceLowest
+val LightTabUnselected = M3LightSurfaceMid
+val DarkTabStripBg = M3DarkBackground
+val DarkTabSelected = M3DarkSurfaceHigh
+val DarkTabUnselected = M3DarkSurfaceLow
 
 private val FallbackLightColors = lightColorScheme(
     primary = EgoCobalt,
     secondary = EgoEmerald,
-    background = Color(0xFFF1F5F9),
-    surface = Color(0xFFFFFFFF),
-    surfaceVariant = Color(0xFFE2E8F0),
+    background = M3LightBackground,
+    surface = M3LightBackground,
+    surfaceVariant = M3LightSurfaceMid,
+    surfaceContainerLowest = M3LightSurfaceLowest,
+    surfaceContainerLow = M3LightSurfaceLow,
+    surfaceContainer = M3LightSurfaceMid,
+    surfaceContainerHigh = M3LightSurfaceHigh,
+    surfaceContainerHighest = M3LightSurfaceHighest,
     onPrimary = Color.White,
     onSecondary = Color.White,
-    onBackground = Color(0xFF0F172A),
-    onSurface = Color(0xFF0F172A),
-    onSurfaceVariant = Color(0xFF475569)
+    onBackground = Color(0xFF1F1F1F),
+    onSurface = Color(0xFF1F1F1F),
+    onSurfaceVariant = Color(0xFF444746)
 )
 
 private val FallbackDarkColors = darkColorScheme(
-    primary = Color(0xFF60A5FA),
-    secondary = Color(0xFF34D399),
-    background = DarkTabStripBg,
-    surface = Color(0xFF1E293B),
-    surfaceVariant = Color(0xFF334155),
-    onPrimary = Color(0xFF0F172A),
-    onSecondary = Color(0xFF0F172A),
-    onBackground = Color(0xFFF8FAFC),
-    onSurface = Color(0xFFF8FAFC),
-    onSurfaceVariant = Color(0xFFCBD5E1)
+    primary = Color(0xFFA8C7FA),
+    secondary = Color(0xFF6DD58C),
+    background = M3DarkBackground,
+    surface = M3DarkBackground,
+    surfaceVariant = M3DarkSurfaceHigh,
+    surfaceContainerLowest = M3DarkSurfaceLowest,
+    surfaceContainerLow = M3DarkSurfaceLow,
+    surfaceContainer = M3DarkSurfaceMid,
+    surfaceContainerHigh = M3DarkSurfaceHigh,
+    surfaceContainerHighest = M3DarkSurfaceHighest,
+    onPrimary = Color(0xFF062E6F),
+    onSecondary = Color(0xFF0A3818),
+    onBackground = Color(0xFFE3E3E3),
+    onSurface = Color(0xFFE3E3E3),
+    onSurfaceVariant = Color(0xFFC4C7C5)
 )
 
 /**
- * Material 3 Dynamic Color (Material You) 자동 적용 테마
- * - Android 12(API 31) 이상에서는 기기에서 선택한 시스템 색상을 브라우저 뼈대 전체에 자동 반영
+ * Material 3 Dynamic Color (Material You) + Google Material 3 표준 뉴트럴 주간/야간 배경
  */
 @Composable
 fun EgoLiteTheme(
@@ -61,7 +85,27 @@ fun EgoLiteTheme(
     val context = LocalContext.current
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (darkTheme) {
+                dynamicDarkColorScheme(context).copy(
+                    background = M3DarkBackground,
+                    surface = M3DarkBackground,
+                    surfaceContainerLowest = M3DarkSurfaceLowest,
+                    surfaceContainerLow = M3DarkSurfaceLow,
+                    surfaceContainer = M3DarkSurfaceMid,
+                    surfaceContainerHigh = M3DarkSurfaceHigh,
+                    surfaceContainerHighest = M3DarkSurfaceHighest
+                )
+            } else {
+                dynamicLightColorScheme(context).copy(
+                    background = M3LightBackground,
+                    surface = M3LightBackground,
+                    surfaceContainerLowest = M3LightSurfaceLowest,
+                    surfaceContainerLow = M3LightSurfaceLow,
+                    surfaceContainer = M3LightSurfaceMid,
+                    surfaceContainerHigh = M3LightSurfaceHigh,
+                    surfaceContainerHighest = M3LightSurfaceHighest
+                )
+            }
         }
         darkTheme -> FallbackDarkColors
         else -> FallbackLightColors
