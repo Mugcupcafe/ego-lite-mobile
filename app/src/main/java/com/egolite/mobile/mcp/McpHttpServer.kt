@@ -43,6 +43,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
 class McpHttpServer(
@@ -163,16 +164,22 @@ class McpHttpServer(
                     }
 
                     val responseObj = when (method) {
-                        "initialize" -> rpcResult(id, buildJsonObject {
-                            put("protocolVersion", "2025-03-26")
-                            put("capabilities", buildJsonObject {
-                                put("tools", buildJsonObject { put("listChanged", false) })
+                        "initialize" -> {
+                            val clientName = params?.get("clientInfo")?.jsonObject?.get("name")?.jsonPrimitive?.contentOrNull
+                            val supportsSampling = params?.get("capabilities")?.jsonObject?.containsKey("sampling") == true
+                            SpaceManager.updateConnectedAiClient(clientName)
+                            McpCommandBridge.registerClient(clientName, supportsSampling)
+                            rpcResult(id, buildJsonObject {
+                                put("protocolVersion", "2025-03-26")
+                                put("capabilities", buildJsonObject {
+                                    put("tools", buildJsonObject { put("listChanged", false) })
+                                })
+                                put("serverInfo", buildJsonObject {
+                                    put("name", "ego-lite-mobile")
+                                    put("version", "0.4.41")
+                                })
                             })
-                            put("serverInfo", buildJsonObject {
-                                put("name", "ego-lite-mobile")
-                                put("version", "0.4.24")
-                            })
-                        })
+                        }
                         "ping" -> rpcResult(id, buildJsonObject {})
                         "tools/list" -> rpcResult(id, buildToolsList())
                         "tools/call" -> handleToolCall(id, params)
@@ -287,6 +294,29 @@ class McpHttpServer(
                     put("required", buildJsonArray { add(JsonPrimitive("topic")) })
                 })
             })
+            // Tool: Wait for user natural-language browser command (long-poll)
+            add(buildJsonObject {
+                put("name", "wait_for_browser_command")
+                put("description", "Wait up to timeout_seconds (1..25) for a natural-language command sent from the Ego Lite browser UI targeted at this AI client, including exact target spaceId and tabId.")
+                put("inputSchema", buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("client_name", buildJsonObject { put("type", "string") })
+                        put("timeout_seconds", buildJsonObject { put("type", "integer") })
+                    })
+                })
+            })
+            // Tool: Instant poll for queued browser commands
+            add(buildJsonObject {
+                put("name", "get_browser_commands")
+                put("description", "Immediately retrieve any pending natural-language commands sent from the Ego Lite browser UI for this AI client, including target spaceId, tabId, and tabUrl.")
+                put("inputSchema", buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("client_name", buildJsonObject { put("type", "string") })
+                    })
+                })
+            })
         })
     }
 
@@ -339,6 +369,13 @@ class McpHttpServer(
                                 timeout
                             )
                         } else {
+                            runCatching {
+                                SpaceManager.evaluateJsInSpace(
+                                    space.id,
+                                    BrowserScripts.showCursorPresenceJs(space.accentColorHex, "navigate"),
+                                    3000L
+                                )
+                            }
                             """{"ok":true,"url":"${space.activeTab.url}"}"""
                         }
                         SpaceManager.enterAiThinkingMode(space.id)
@@ -366,6 +403,13 @@ class McpHttpServer(
                         val url = args["url"]?.jsonPrimitive?.contentOrNull
                         if (!url.isNullOrBlank()) {
                             SpaceManager.navigateAndWait(space.id, url)
+                        }
+                        runCatching {
+                            SpaceManager.evaluateJsInSpace(
+                                space.id,
+                                BrowserScripts.showCursorPresenceJs(space.accentColorHex, mode),
+                                3000L
+                            )
                         }
                         val result = when (mode) {
                             "snapshot" -> toolTextResult(id, SpaceManager.evaluateJsInSpace(space.id, BrowserScripts.SNAPSHOT_JS))
@@ -410,6 +454,21 @@ class McpHttpServer(
                     toolTextResult(id, data.toString())
                 }
 
+                "wait_for_browser_command" -> {
+                    val client = args["client_name"]?.jsonPrimitive?.contentOrNull
+                        ?: SpaceManager.connectedAiClientName.value
+                    val timeoutSec = args["timeout_seconds"]?.jsonPrimitive?.intOrNull ?: 20
+                    val cmds = McpCommandBridge.waitForCommand(client, timeoutSec)
+                    toolTextResult(id, McpCommandBridge.formatCommandsPayload(cmds), attachPendingNotice = false)
+                }
+
+                "get_browser_commands" -> {
+                    val client = args["client_name"]?.jsonPrimitive?.contentOrNull
+                        ?: SpaceManager.connectedAiClientName.value
+                    val cmds = McpCommandBridge.drainCommandsForClient(client)
+                    toolTextResult(id, McpCommandBridge.formatCommandsPayload(cmds), attachPendingNotice = false)
+                }
+
                 else -> rpcError(id, -32602, "Unknown tool: $toolName")
             }
         } catch (e: Exception) {
@@ -417,14 +476,24 @@ class McpHttpServer(
         }
     }
 
-    private fun toolTextResult(id: JsonElement?, text: String): JsonObject = rpcResult(id, buildJsonObject {
-        put("content", buildJsonArray {
-            add(buildJsonObject {
-                put("type", "text")
-                put("text", text)
+    private fun toolTextResult(
+        id: JsonElement?,
+        text: String,
+        attachPendingNotice: Boolean = true
+    ): JsonObject {
+        val notice = if (attachPendingNotice) {
+            McpCommandBridge.buildInlineNoticeIfAny(SpaceManager.connectedAiClientName.value)
+        } else null
+        val finalText = if (notice != null) text + notice else text
+        return rpcResult(id, buildJsonObject {
+            put("content", buildJsonArray {
+                add(buildJsonObject {
+                    put("type", "text")
+                    put("text", finalText)
+                })
             })
         })
-    })
+    }
 
     private fun rpcResult(id: JsonElement?, result: JsonObject): JsonObject = buildJsonObject {
         put("jsonrpc", "2.0")
