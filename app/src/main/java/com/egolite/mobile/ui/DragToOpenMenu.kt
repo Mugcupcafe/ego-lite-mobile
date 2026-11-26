@@ -1,6 +1,7 @@
 package com.egolite.mobile.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -46,6 +47,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -67,12 +69,15 @@ data class ChromeMenuItemSpec(
 /**
  * 크롬 스타일 Drag-to-Open / Drag-to-Select 우상단 앵커 확장 메뉴
  * - 크롬과 동일한 인라인 확대/축소(- 100% +) 조절 행 및 체크박스 토글 지원
+ * - topPadding / endPadding으로 메인 툴바 및 탭 스위처 상단 바 모두 정밀 정렬
  */
 @Composable
 fun DragToSelectChromeMenuOverlay(
     visible: Boolean,
     items: List<ChromeMenuItemSpec>,
     hoveredIndex: Int,
+    topPadding: Dp = 98.dp,
+    endPadding: Dp = 8.dp,
     onDismiss: () -> Unit
 ) {
     if (visible) {
@@ -89,19 +94,19 @@ fun DragToSelectChromeMenuOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 98.dp, end = 8.dp),
+            .padding(top = topPadding, end = endPadding),
         contentAlignment = Alignment.TopEnd
     ) {
         AnimatedVisibility(
             visible = visible,
-            enter = fadeIn(tween(120)) + scaleIn(
-                animationSpec = tween(150),
-                initialScale = 0.85f,
+            enter = fadeIn(tween(130)) + scaleIn(
+                animationSpec = EgoMotion.bouncySpring(),
+                initialScale = 0.72f,
                 transformOrigin = TransformOrigin(1f, 0f)
             ),
-            exit = fadeOut(tween(100)) + scaleOut(
-                animationSpec = tween(120),
-                targetScale = 0.9f,
+            exit = fadeOut(tween(110)) + scaleOut(
+                animationSpec = tween(140),
+                targetScale = 0.84f,
                 transformOrigin = TransformOrigin(1f, 0f)
             )
         ) {
@@ -119,16 +124,17 @@ fun DragToSelectChromeMenuOverlay(
                 ) {
                     items.forEachIndexed { idx, item ->
                         val isHovered = hoveredIndex == idx
+                        val hoverBg by animateColorAsState(
+                            targetValue = if (isHovered) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
+                            animationSpec = tween(120),
+                            label = "menuHoverBg"
+                        )
                         if (item.zoomPercent != null) {
-                            // 크롬 1:1 인라인 확대/축소 (글자 크기) 조절 행 — 탭해도 메뉴 닫히지 않음
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(44.dp)
-                                    .background(
-                                        if (isHovered) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                                        else Color.Transparent
-                                    )
+                                    .background(hoverBg)
                                     .padding(start = 14.dp, end = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -190,10 +196,7 @@ fun DragToSelectChromeMenuOverlay(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(44.dp)
-                                    .background(
-                                        if (isHovered) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                                        else Color.Transparent
-                                    )
+                                    .background(hoverBg)
                                     .clickable {
                                         onDismiss()
                                         item.onClick()
