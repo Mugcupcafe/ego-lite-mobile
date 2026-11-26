@@ -140,21 +140,39 @@ fun AiLiveMonitorTray(
     var thumbnails by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
     val haptic = LocalHapticFeedback.current
 
-    // 트레이가 열려 있을 때만 1.3초 주기로 경량 RGB_565 썸네일 갱신
-    LaunchedEffect(visible, monitoredSpaces.map { "${it.id}:${it.activeTab.id}:${it.aiStatus}:${it.lastActionSummary}" }) {
+    // 발열 최적화: 열릴 때 1회 캡처 후, 실제 작업 중(WORKING/THINKING)인 스페이스만 2.5초 주기로 갱신
+    LaunchedEffect(visible, monitoredSpaces.map { "${it.id}:${it.activeTab.id}:${it.activeTab.url}:${it.aiStatus}:${it.lastActionSummary}" }) {
         if (!visible) return@LaunchedEffect
+        val initial = mutableMapOf<String, Bitmap>()
+        monitoredSpaces.forEach { sp ->
+            val bmp = SpaceManager.captureTabThumbnail(sp.activeTab.id)
+            if (bmp != null) {
+                initial[sp.id] = bmp
+            } else {
+                thumbnails[sp.id]?.let { initial[sp.id] = it }
+            }
+        }
+        thumbnails = initial
+
+        val hasActiveWork = monitoredSpaces.any {
+            it.aiStatus == AiSpaceStatus.WORKING || it.aiStatus == AiSpaceStatus.THINKING
+        }
+        if (!hasActiveWork) return@LaunchedEffect
+
         while (true) {
-            val fresh = mutableMapOf<String, Bitmap>()
+            delay(2500L)
+            val updated = thumbnails.toMutableMap()
+            var changed = false
             monitoredSpaces.forEach { sp ->
-                val bmp = SpaceManager.captureTabThumbnail(sp.activeTab.id)
-                if (bmp != null) {
-                    fresh[sp.id] = bmp
-                } else {
-                    thumbnails[sp.id]?.let { fresh[sp.id] = it }
+                if (sp.aiStatus == AiSpaceStatus.WORKING || sp.aiStatus == AiSpaceStatus.THINKING) {
+                    val bmp = SpaceManager.captureTabThumbnail(sp.activeTab.id)
+                    if (bmp != null) {
+                        updated[sp.id] = bmp
+                        changed = true
+                    }
                 }
             }
-            thumbnails = fresh
-            delay(1300L)
+            if (changed) thumbnails = updated
         }
     }
 
@@ -657,7 +675,7 @@ private fun MonitorSpaceCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(statusSlotHeight),
+                        .height(statusSlotHeight.coerceAtLeast(0.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     AnimatedContent(
