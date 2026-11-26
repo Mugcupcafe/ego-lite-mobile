@@ -102,7 +102,7 @@ object SpaceManager {
             "grok" in low || "xai" in low -> "Grok"
             "deepseek" in low -> "DeepSeek"
             "cursor" in low -> "Cursor"
-            else -> rawClientName.trim().take(16)
+            else -> rawClientName?.trim()?.take(16).orEmpty()
         }
         _connectedAiClientName.value = normalized
     }
