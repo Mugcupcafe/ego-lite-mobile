@@ -7,6 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import com.egolite.mobile.R
+import android.view.ContextThemeWrapper
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Message
@@ -43,6 +46,7 @@ import java.io.FileInputStream
 object EgoWebViewFactory {
 
     private val innerScrolledTabs = ConcurrentHashMap<String, Boolean>()
+    private val nativeDarkWebViews = java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(java.util.WeakHashMap<WebView, Boolean>()))
 
     fun isInnerScrolled(tabId: String): Boolean = innerScrolledTabs[tabId] == true
 
@@ -172,61 +176,102 @@ object EgoWebViewFactory {
     private const val DESKTOP_CHROME_UA =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
+    // 네이티브 WebView 다크 엔진(isLightTheme=false + Algorithmic Darkening)이 켜진 경우:
+    // light only 메타 강제 차단만 해제하고, 실제 prefers-color-scheme: dark가 미동작일 때만 폴백 실행
+    private const val UNLOCK_NATIVE_DARK_JS = """
+        (function() {
+            try {
+                if (document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running, #cf-wrapper')) return;
+                var metas = document.querySelectorAll('meta[name="color-scheme"]');
+                for (var i = 0; i < metas.length; i++) {
+                    var c = (metas[i].getAttribute('content') || '').toLowerCase();
+                    if (c.indexOf('light') !== -1 && (c.indexOf('only') !== -1 || c.indexOf('dark') === -1)) {
+                        metas[i].setAttribute('content', 'dark light');
+                    }
+                }
+                if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    var oldFallback = document.getElementById('ego-dark-mode-css');
+                    if (oldFallback) oldFallback.remove();
+                    if (document.documentElement) document.documentElement.classList.remove('ego-smart-dark');
+                    return 'NATIVE_OK';
+                }
+                return 'NEED_FALLBACK';
+            } catch (e) { return 'ERR'; }
+        })();
+    """
+
+    // 런타임 테마 전환 등 네이티브 다크 컨텍스트가 아닌 기존 탭용 스마트 폴백:
+    // 레이아웃을 깨뜨리는 transparent 규칙 없이, 밝은 페이지에만 저대비 필터 + 미디어 역반전 보호 적용
     private const val APPLY_DARK_CSS_JS = """
         (function() {
             try {
                 if (document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running, #cf-wrapper')) return;
                 var head = document.head || document.documentElement;
-                if (!document.getElementById('ego-color-scheme-meta')) {
-                    var meta = document.createElement('meta');
-                    meta.id = 'ego-color-scheme-meta';
-                    meta.name = 'color-scheme';
-                    meta.content = 'dark';
-                    head.appendChild(meta);
-                }
+                if (!head || !document.documentElement) return;
                 function parseRgb(c) {
                     if (!c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)') return null;
                     var m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
                     if (!m) return null;
                     var a = m[4] !== undefined ? parseFloat(m[4]) : 1;
-                    if (a < 0.15) return null;
+                    if (a < 0.2) return null;
                     return (0.299 * parseInt(m[1], 10) + 0.587 * parseInt(m[2], 10) + 0.114 * parseInt(m[3], 10)) / 255.0;
                 }
-                var bodyLum = document.body ? parseRgb(getComputedStyle(document.body).backgroundColor) : null;
-                var htmlLum = document.documentElement ? parseRgb(getComputedStyle(document.documentElement).backgroundColor) : null;
-                var lum = bodyLum !== null ? bodyLum : (htmlLum !== null ? htmlLum : 1.0);
+                function sampleViewportLuminance() {
+                    var bodyLum = document.body ? parseRgb(getComputedStyle(document.body).backgroundColor) : null;
+                    var htmlLum = parseRgb(getComputedStyle(document.documentElement).backgroundColor);
+                    var baseLum = bodyLum !== null ? bodyLum : htmlLum;
+                    if (baseLum !== null && baseLum <= 0.42) return baseLum;
+                    if (document.elementsFromPoint && window.innerWidth > 0 && window.innerHeight > 0) {
+                        var cx = Math.floor(window.innerWidth * 0.5);
+                        var ys = [Math.floor(window.innerHeight * 0.25), Math.floor(window.innerHeight * 0.5)];
+                        for (var k = 0; k < ys.length; k++) {
+                            var els = document.elementsFromPoint(cx, ys[k]);
+                            for (var j = 0; j < els.length; j++) {
+                                var lum = parseRgb(getComputedStyle(els[j]).backgroundColor);
+                                if (lum !== null) {
+                                    if (lum <= 0.42) return lum;
+                                    return lum;
+                                }
+                            }
+                        }
+                    }
+                    return baseLum !== null ? baseLum : 1.0;
+                }
                 var existing = document.getElementById('ego-dark-mode-css');
-                if (lum <= 0.45) {
-                    if (existing) existing.remove();
+                if (existing) {
+                    // 이미 적용된 상태면 중복 계산 방지
                     return;
                 }
-                if (existing) return;
+                var lum = sampleViewportLuminance();
+                if (lum <= 0.42) {
+                    document.documentElement.classList.remove('ego-smart-dark');
+                    return;
+                }
                 var style = document.createElement('style');
                 style.id = 'ego-dark-mode-css';
                 style.textContent =
-                    ':root { color-scheme: dark !important; } ' +
-                    'html, body { background-color: #1E1F24 !important; background-image: none !important; color: #E3E3E8 !important; } ' +
-                    'header, nav, main, article, section, aside, footer, div, ul, ol, li, dl, dt, dd, ' +
-                    'table, thead, tbody, tfoot, tr, th, td, blockquote, pre, code, form, fieldset, details, summary, p, span { ' +
-                    '  background-color: transparent !important; border-color: #2E3138 !important; ' +
+                    'html.ego-smart-dark { filter: invert(0.92) hue-rotate(180deg) !important; background-color: #F4F5F7 !important; } ' +
+                    'html.ego-smart-dark img, html.ego-smart-dark video, html.ego-smart-dark canvas, ' +
+                    'html.ego-smart-dark iframe, html.ego-smart-dark object, html.ego-smart-dark embed, ' +
+                    'html.ego-smart-dark [style*="background-image: url"], html.ego-smart-dark [style*="background-image:url"] { ' +
+                    '  filter: invert(1) hue-rotate(180deg) !important; ' +
                     '} ' +
-                    'body, p, li, td, th, dd, dt, span, div, article, section, blockquote, pre, code { color: #D8DAE0 !important; } ' +
-                    'h1, h2, h3, h4, h5, h6, strong, b, th { color: #F1F3F4 !important; } ' +
-                    'a, a * { color: #8AB4F8 !important; } ' +
-                    'a:visited, a:visited * { color: #C58AF9 !important; } ' +
-                    'pre, code, blockquote { background-color: #1E1F24 !important; } ' +
-                    'input, textarea, select, button { background-color: #292C33 !important; color: #E3E3E8 !important; border-color: #3C4049 !important; }';
+                    'html.ego-smart-dark iframe img, html.ego-smart-dark iframe video { filter: none !important; }';
                 head.appendChild(style);
+                document.documentElement.classList.add('ego-smart-dark');
             } catch (e) {}
         })();
     """
 
     private const val REMOVE_DARK_CSS_JS = """
         (function() {
-            var existing = document.getElementById('ego-dark-mode-css');
-            if (existing) existing.remove();
-            var meta = document.getElementById('ego-color-scheme-meta');
-            if (meta) meta.remove();
+            try {
+                var existing = document.getElementById('ego-dark-mode-css');
+                if (existing) existing.remove();
+                var meta = document.getElementById('ego-color-scheme-meta');
+                if (meta) meta.remove();
+                if (document.documentElement) document.documentElement.classList.remove('ego-smart-dark');
+            } catch (e) {}
         })();
     """
 
@@ -257,7 +302,18 @@ object EgoWebViewFactory {
         onCloseWindow: () -> Unit = {},
         onRenderProcessCrashed: () -> Unit = {}
     ): WebView {
-        val webView = WebView(context)
+        val initialDark = darkModeProvider()
+        val themedContext = ContextThemeWrapper(
+            context,
+            if (initialDark) R.style.Theme_EgoLiteMobile_WebDark else R.style.Theme_EgoLiteMobile_WebLight
+        )
+        val webView = WebView(themedContext)
+        if (initialDark) {
+            nativeDarkWebViews.add(webView)
+            webView.setBackgroundColor(Color.parseColor("#121316"))
+        } else {
+            webView.setBackgroundColor(Color.WHITE)
+        }
         webView.addJavascriptInterface(
             object {
                 @JavascriptInterface
@@ -303,6 +359,9 @@ object EgoWebViewFactory {
             }
         }
 
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, initialDark)
+        }
         syncUserAgentAndClientHints(webView, desktopModeProvider())
 
         // blob: / data: 다운로드 전용 JS 브리지 등록
@@ -508,8 +567,12 @@ object EgoWebViewFactory {
             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
                 if (view != null) {
+                    val u = url ?: view.url.orEmpty()
+                    if (!isCloudflareChallengeUrl(u)) {
+                        runCatching { applyDarkMode(view, darkModeProvider()) }
+                    }
                     onPageFinished(
-                        url ?: view.url.orEmpty(),
+                        u,
                         view.title?.ifBlank { url.orEmpty() } ?: "새 탭",
                         view.canGoBack(),
                         view.canGoForward()
@@ -517,8 +580,20 @@ object EgoWebViewFactory {
                 }
             }
 
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                super.onPageCommitVisible(view, url)
+                if (view != null && !isCloudflareChallengeUrl(url.orEmpty())) {
+                    runCatching { applyDarkMode(view, darkModeProvider()) }
+                }
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                val darkNow = darkModeProvider()
+                view?.setBackgroundColor(if (darkNow) Color.parseColor("#121316") else Color.WHITE)
+                if (view != null && WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                    WebSettingsCompat.setAlgorithmicDarkeningAllowed(view.settings, darkNow)
+                }
                 innerScrolledTabs[tabId] = false
                 SpaceManager.setTabAudioPlaying(tabId, false)
                 if (!url.isNullOrBlank()) {
@@ -700,14 +775,28 @@ object EgoWebViewFactory {
     }
 
     fun applyDarkMode(webView: WebView, enabled: Boolean) {
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+        val supportsAlgo = WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)
+        if (supportsAlgo) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, enabled)
         }
+        webView.setBackgroundColor(if (enabled) Color.parseColor("#121316") else Color.WHITE)
         if (enabled) {
-            webView.evaluateJavascript(APPLY_DARK_CSS_JS, null)
-            webView.postDelayed({
-                runCatching { webView.evaluateJavascript(APPLY_DARK_CSS_JS, null) }
-            }, 350L)
+            val nativeDarkActive = supportsAlgo && nativeDarkWebViews.contains(webView)
+            if (nativeDarkActive) {
+                // 네이티브 isLightTheme=false + Chromium Algorithmic Darkening 활성:
+                // light-only 메타 차단 해제 후, ROM/WebView에서 prefers-color-scheme: dark가 미동작이면 자동 스마트 폴백
+                webView.evaluateJavascript(UNLOCK_NATIVE_DARK_JS) { result ->
+                    if (result == ""NEED_FALLBACK"") {
+                        runCatching { webView.evaluateJavascript(APPLY_DARK_CSS_JS, null) }
+                    }
+                }
+            } else {
+                // 기존 라이트 탭에서 야간모드를 켠 경우: 스마트 저대비 반전 + 미디어 보호 폴백
+                webView.evaluateJavascript(APPLY_DARK_CSS_JS, null)
+                webView.postDelayed({
+                    runCatching { webView.evaluateJavascript(APPLY_DARK_CSS_JS, null) }
+                }, 300L)
+            }
         } else {
             webView.evaluateJavascript(REMOVE_DARK_CSS_JS, null)
         }
