@@ -65,6 +65,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.ExitTransition
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -92,17 +101,21 @@ fun ChromeDownloadStatusBanner(
     onOpenDetails: () -> Unit,
     onOpenFile: (DownloadRecord) -> Unit,
     onDismiss: () -> Unit,
+    onDustDismiss: (VanishSnapshot) -> Unit = { onDismiss() },
     modifier: Modifier = Modifier
 ) {
+    var bannerRect by remember { mutableStateOf<Rect?>(null) }
+    val bannerCaptureLayer = rememberGraphicsLayer()
+    var dismissedViaDust by remember(banner.visible, banner.record?.id) { mutableStateOf(false) }
     AnimatedVisibility(
         visible = banner.visible && banner.record != null,
         enter = slideInVertically(EgoMotion.intOffsetSpring) { -it } + fadeIn(tween(180)),
-        exit = slideOutVertically(tween(170)) { -it } + fadeOut(tween(140)),
+        exit = if (dismissedViaDust) ExitTransition.None else (slideOutVertically(tween(170)) { -it } + fadeOut(tween(140))),
         modifier = modifier
     ) {
         val rec = banner.record ?: return@AnimatedVisibility
         val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-        val cardBg = if (isDark) Color(0xFF28292E) else Color(0xFFF3F6FC)
+        val cardBg = if (isDark) Color(0xFF292C33) else Color(0xFFF3F6FC)
         val sizeStr = DownloadCenter.formatSize(rec.sizeBytes)
         val completedSub = buildString {
             if (sizeStr.isNotBlank()) append("($sizeStr) ")
@@ -120,6 +133,11 @@ fun ChromeDownloadStatusBanner(
             shadowElevation = 8.dp,
             modifier = Modifier
                 .widthIn(min = 320.dp, max = 460.dp)
+                .onGloballyPositioned { coords -> bannerRect = coords.boundsInRoot() }
+                .drawWithContent {
+                    bannerCaptureLayer.record { this@drawWithContent.drawContent() }
+                    drawLayer(bannerCaptureLayer)
+                }
                 .graphicsLayer {
                     translationX = swipeX.value
                     alpha = (1f - (abs(swipeX.value) / (dismissThresholdPx * 2.2f))).coerceIn(0.15f, 1f)
@@ -200,6 +218,28 @@ fun ChromeDownloadStatusBanner(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            dismissedViaDust = true
+                            scope.launch {
+                                val bmp = runCatching { bannerCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+                                val origin = bannerRect?.let { Offset(it.right - 22f, it.center.y) }
+                                onDustDismiss(VanishSnapshot(rect = bannerRect, touchRoot = origin, bitmap = bmp))
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    EgoIcon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "다운로드 알림 닫기",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                        symbolSize = 16.dp
+                    )
+                }
             }
         }
     }
@@ -212,7 +252,7 @@ fun ChromeDuplicateDownloadDialog(
 ) {
     val context = LocalContext.current
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val dialogBg = if (isDark) Color(0xFF28292E) else Color(0xFFF3F6FC)
+    val dialogBg = if (isDark) Color(0xFF292C33) else Color(0xFFF3F6FC)
     val sizeText = DownloadCenter.formatSize(prompt.existingSizeBytes)
 
     Dialog(onDismissRequest = onDismiss) {
@@ -296,8 +336,9 @@ fun ChromeDownloadsScreen(
     var selectedFilter by remember { mutableStateOf("전체") }
 
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val canvasBg = if (isDark) Color(0xFF131314) else Color(0xFFECEEF5)
-    val cardBg = if (isDark) Color(0xFF1F2024) else Color(0xFFFFFFFF)
+    val dlChrome = LocalEgoChromeColors.current
+    val canvasBg = dlChrome.settingsCanvasBg
+    val cardBg = dlChrome.settingsCardBg
 
     val filters = listOf("전체", "이미지", "문서", "압축/앱", "미디어")
     val filtered = remember(records, searchQuery, selectedFilter) {
