@@ -196,12 +196,12 @@ fun AiCommandOverlay(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        Icon(
+                                        EgoIcon(
                                             imageVector = Icons.Default.AutoAwesome,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.onPrimary,
                                             modifier = Modifier.size(13.dp)
-                                        )
+                                        , symbolSize = 13.dp)
                                         Text(
                                             text = "AI 명령",
                                             fontSize = 11.5.sp,
@@ -245,12 +245,12 @@ fun AiCommandOverlay(
                                     onClick = onDismiss,
                                     modifier = Modifier.size(28.dp)
                                 ) {
-                                    Icon(
+                                    EgoIcon(
                                         imageVector = Icons.Default.Close,
                                         contentDescription = "AI 명령창 닫기",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(18.dp)
-                                    )
+                                    , symbolSize = 18.dp)
                                 }
                             }
 
@@ -356,12 +356,12 @@ fun AiCommandOverlay(
                                         .clickable(enabled = promptText.isNotBlank()) { submitAction() }
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Icon(
+                                        EgoIcon(
                                             imageVector = Icons.AutoMirrored.Filled.Send,
                                             contentDescription = "명령 전송",
                                             tint = if (promptText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(16.dp)
-                                        )
+                                        , symbolSize = 16.dp)
                                     }
                                 }
                             }
@@ -437,12 +437,12 @@ fun AiCommandOverlay(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Icon(
+                                            EgoIcon(
                                                 imageVector = Icons.Default.History,
                                                 contentDescription = null,
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.size(16.dp)
-                                            )
+                                            , symbolSize = 16.dp)
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
                                                     text = cmd.prompt,
