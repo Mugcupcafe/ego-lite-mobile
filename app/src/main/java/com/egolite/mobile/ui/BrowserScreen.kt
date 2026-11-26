@@ -240,8 +240,9 @@ fun BrowserScreen() {
     var hoveredDropSpaceId by remember { mutableStateOf<String?>(null) }
     var hoveredNewSpaceDrop by remember { mutableStateOf(false) }
     var dwellProgress by remember { mutableFloatStateOf(0f) }
-    val tabBoundsMap = remember { mutableStateMapOf<String, Rect>() }
-    val spaceBoundsMap = remember { mutableStateMapOf<String, Rect>() }
+    // 발열/리컴포지션 최적화: 좌표 맵은 UI 렌더링에 직접 읽히지 않으므로 일반 HashMap으로 유지
+    val tabBoundsMap = remember { HashMap<String, Rect>() }
+    val spaceBoundsMap = remember { HashMap<String, Rect>() }
     var newSpaceDropBounds by remember { mutableStateOf<Rect?>(null) }
     var personalCapsuleBounds by remember { mutableStateOf<Rect?>(null) }
     var rootBoxBounds by remember { mutableStateOf<Rect?>(null) }
@@ -531,9 +532,11 @@ fun BrowserScreen() {
             .imePadding()
             .onGloballyPositioned { coords ->
                 val b = coords.boundsInRoot()
-                rootBoxBounds = b
-                rootBoxLeftPx = b.left
-                rootBoxTopPx = b.top
+                if (rootBoxBounds != b) {
+                    rootBoxBounds = b
+                    rootBoxLeftPx = b.left
+                    rootBoxTopPx = b.top
+                }
             }
     ) {
         val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -752,7 +755,7 @@ fun BrowserScreen() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
-                            .padding(start = 10.dp + tabStartPadding, end = 10.dp),
+                            .padding(start = (10.dp + tabStartPadding).coerceAtLeast(0.dp), end = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         var pressedTabIndex by remember(activeSpace.id) { mutableIntStateOf(-1) }
@@ -822,17 +825,19 @@ fun BrowserScreen() {
                                     label = "tabBgAnim"
                                 )
                                 val tabFg = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else activeIconColor
+                                val safeStartR = startRadius.coerceAtLeast(0.dp)
+                                val safeEndR = endRadius.coerceAtLeast(0.dp)
                                 val tabShape = RoundedCornerShape(
-                                    topStart = startRadius,
-                                    bottomStart = startRadius,
-                                    topEnd = endRadius,
-                                    bottomEnd = endRadius
+                                    topStart = safeStartR,
+                                    bottomStart = safeStartR,
+                                    topEnd = safeEndR,
+                                    bottomEnd = safeEndR
                                 )
 
                                 val isBeingDragged = draggingTabId == tab.id
                                 Row(
                                     modifier = Modifier
-                                        .padding(horizontal = extraMargin)
+                                        .padding(horizontal = extraMargin.coerceAtLeast(0.dp))
                                         .onGloballyPositioned { coords ->
                                             tabBoundsMap[tab.id] = coords.boundsInRoot()
                                         }
@@ -1106,6 +1111,7 @@ fun BrowserScreen() {
                     modifier = Modifier
                         .weight(1f)
                         .height(38.dp)
+                        .graphicsLayer { alpha = if (showOmniboxOverlay) 0f else 1f }
                         .onGloballyPositioned { coords ->
                             val pos = coords.positionInRoot()
                             addressBarLeftPx = (pos.x - rootBoxLeftPx).coerceAtLeast(0f)
@@ -1599,7 +1605,8 @@ fun BrowserScreen() {
                 .padding(start = 10.dp, top = 7.dp)
                 .zIndex(15f)
                 .onGloballyPositioned { coords ->
-                    personalCapsuleBounds = coords.boundsInRoot()
+                    val b = coords.boundsInRoot()
+                    if (personalCapsuleBounds != b) personalCapsuleBounds = b
                 }
         ) {
             PillSpaceCapsule(
@@ -1834,15 +1841,13 @@ fun BrowserScreen() {
         // 모바일 크롬 스타일 주소창(Omnibox) 오버레이 (주소창에서 펼쳐지는 스프링 모프)
         AnimatedVisibility(
             visible = showOmniboxOverlay,
-            enter = fadeIn(tween(130)) + scaleIn(
-                animationSpec = EgoMotion.smoothSpring(),
-                initialScale = 0.94f,
-                transformOrigin = TransformOrigin(0.5f, 0f)
+            enter = fadeIn(tween(90)) + expandVertically(
+                animationSpec = EgoMotion.intSizeSpring,
+                expandFrom = Alignment.Top
             ),
-            exit = fadeOut(tween(110)) + scaleOut(
-                animationSpec = tween(130),
-                targetScale = 0.96f,
-                transformOrigin = TransformOrigin(0.5f, 0f)
+            exit = fadeOut(tween(130)) + shrinkVertically(
+                animationSpec = tween(210),
+                shrinkTowards = Alignment.Top
             )
         ) {
             ChromeOmniboxOverlay(
@@ -1892,8 +1897,20 @@ fun BrowserScreen() {
             )
         }
 
-        // 번역 버튼 길게 누르기: 번역 설정 팝업
-        if (showTranslateSettingsDialog) {
+        // 번역 버튼 길게 누르기: 버튼을 덮으며 확장되는 번역 설정 모프 팝업
+        AnimatedVisibility(
+            visible = showTranslateSettingsDialog,
+            enter = fadeIn(tween(140)) + scaleIn(
+                animationSpec = EgoMotion.smoothSpring(),
+                initialScale = 0.25f,
+                transformOrigin = TransformOrigin(0.92f, 0.05f)
+            ),
+            exit = fadeOut(tween(120)) + scaleOut(
+                animationSpec = tween(160),
+                targetScale = 0.25f,
+                transformOrigin = TransformOrigin(0.92f, 0.05f)
+            )
+        ) {
             TranslateSettingsPopupDialog(
                 engine = prefs.translationEngine,
                 defaultTargetLang = prefs.defaultTranslateTarget,
@@ -1921,8 +1938,20 @@ fun BrowserScreen() {
             )
         }
 
-        // 방패 길게 누르기: uBlock 스타일 광고차단 상세 팝업
-        if (showAdBlockDialog) {
+        // 방패 길게 누르기: 방패 버튼을 덮으며 확장되는 광고차단 모프 팝업
+        AnimatedVisibility(
+            visible = showAdBlockDialog,
+            enter = fadeIn(tween(140)) + scaleIn(
+                animationSpec = EgoMotion.smoothSpring(),
+                initialScale = 0.25f,
+                transformOrigin = TransformOrigin(0.88f, 0.05f)
+            ),
+            exit = fadeOut(tween(120)) + scaleOut(
+                animationSpec = tween(160),
+                targetScale = 0.25f,
+                transformOrigin = TransformOrigin(0.88f, 0.05f)
+            )
+        ) {
             AdBlockControlDialog(
                 currentHost = currentHost,
                 activeTabId = activeTab.id,
@@ -2023,11 +2052,19 @@ fun BrowserScreen() {
             }
         )
 
-        // 우측 MCP / 터널 전용 설정 드로어 (우측 스프링 슬라이드 인)
+        // MCP 버튼을 덮으며 확장되는 컴팩트 모프 팝업 (우측 대형 서랍 대체)
         AnimatedVisibility(
             visible = showMcpDrawer,
-            enter = slideInHorizontally(EgoMotion.intOffsetSpring) { it } + fadeIn(tween(180)),
-            exit = slideOutHorizontally(tween(190)) { it } + fadeOut(tween(150))
+            enter = fadeIn(tween(140)) + scaleIn(
+                animationSpec = EgoMotion.smoothSpring(),
+                initialScale = 0.26f,
+                transformOrigin = TransformOrigin(0.82f, 0.05f)
+            ),
+            exit = fadeOut(tween(120)) + scaleOut(
+                animationSpec = tween(160),
+                targetScale = 0.26f,
+                transformOrigin = TransformOrigin(0.82f, 0.05f)
+            )
         ) {
             McpSettingsDrawer(
                 onDismiss = { showMcpDrawer = false }
@@ -2260,26 +2297,58 @@ private fun WebViewHostContainer(
                 }
             }
 
-            for (i in 0 until host.childCount) {
-                val child = host.getChildAt(i)
-                when {
-                    child === activeWv -> {
-                        child.alpha = 1f
-                        child.visibility = View.VISIBLE
-                    }
-                    child in bgAiWebViews -> {
-                        child.alpha = 0f
-                        child.visibility = View.INVISIBLE
-                    }
-                    else -> {
-                        child.alpha = 0f
-                        child.visibility = View.GONE
+            // 발열 최적화: 현재 활성 탭, 오디오 재생 탭, 작업 중인 AI 스페이스만 깨워두고 나머지 숨김 WebView는 onPause()
+            val keepAwakeWebViews = buildSet {
+                add(activeWv)
+                spaces.forEach { sp ->
+                    val isAiBusy = sp.aiStatus == AiSpaceStatus.WORKING || sp.aiStatus == AiSpaceStatus.THINKING
+                    sp.tabs.forEach { t ->
+                        val keep = (isAiBusy && t.id == sp.activeTabId) || (t.isPlayingAudio && !t.isMuted)
+                        if (keep) {
+                            SpaceManager.getExistingWebView(t.id)?.let { add(it) }
+                        }
                     }
                 }
             }
-            activeWv.bringToFront()
-            activeWv.requestLayout()
-            host.requestLayout()
+
+            var needsFront = false
+            for (i in 0 until host.childCount) {
+                val child = host.getChildAt(i)
+                val wv = child as? android.webkit.WebView
+                when {
+                    child === activeWv -> {
+                        if (child.visibility != View.VISIBLE || child.alpha != 1f) {
+                            child.alpha = 1f
+                            child.visibility = View.VISIBLE
+                            needsFront = true
+                        }
+                        wv?.onResume()
+                    }
+                    child in bgAiWebViews -> {
+                        if (child.visibility != View.INVISIBLE || child.alpha != 0f) {
+                            child.alpha = 0f
+                            child.visibility = View.INVISIBLE
+                        }
+                        if (wv != null) {
+                            if (wv in keepAwakeWebViews) wv.onResume() else wv.onPause()
+                        }
+                    }
+                    else -> {
+                        if (child.visibility != View.GONE || child.alpha != 0f) {
+                            child.alpha = 0f
+                            child.visibility = View.GONE
+                        }
+                        if (wv != null) {
+                            if (wv in keepAwakeWebViews) wv.onResume() else wv.onPause()
+                        }
+                    }
+                }
+            }
+            if (needsFront || host.getChildAt(host.childCount - 1) !== activeWv) {
+                activeWv.bringToFront()
+                activeWv.requestLayout()
+                host.requestLayout()
+            }
         }
     )
 }
