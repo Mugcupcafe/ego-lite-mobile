@@ -1,5 +1,9 @@
 package com.egolite.mobile.ui
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.toArgb
 import com.egolite.mobile.model.TabWidthMode
@@ -31,6 +35,18 @@ import com.egolite.mobile.R
 import com.egolite.mobile.model.ThemeMode
 import android.view.View
 import android.view.ViewGroup
+import kotlin.math.abs
+import kotlin.math.sin
+import kotlin.math.cos
+import kotlin.math.PI
+import androidx.compose.ui.graphics.Path
+import androidx.compose.runtime.key
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.LinearEasing
+import android.view.ViewConfiguration
+import android.view.MotionEvent
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -186,6 +202,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.browser.AdBlockEngine
 import com.egolite.mobile.browser.BrowserActivityBridge
 import com.egolite.mobile.browser.BrowserScripts
@@ -239,6 +256,9 @@ fun BrowserScreen() {
     val mcpPendingCount by McpCommandBridge.pendingCount.collectAsState()
     var monitorAutoOpenedByDrag by remember { mutableStateOf(false) }
     var draggingTabId by remember { mutableStateOf<String?>(null) }
+    var dragStartTabIndex by remember { mutableIntStateOf(-1) }
+    var dragTargetTabIndex by remember { mutableIntStateOf(-1) }
+    var draggedTabWidthPx by remember { mutableFloatStateOf(160f) }
     var dragPointerRoot by remember { mutableStateOf(Offset.Zero) }
     var hoveredDropSpaceId by remember { mutableStateOf<String?>(null) }
     var hoveredNewSpaceDrop by remember { mutableStateOf(false) }
@@ -254,6 +274,9 @@ fun BrowserScreen() {
     var returningSpaceId by remember { mutableStateOf<String?>(null) }
     var showMcpDrawer by remember { mutableStateOf(false) }
     var showChromeSettings by remember { mutableStateOf(false) }
+    var settingsInitialCategory by remember { mutableStateOf(SettingsCategory.ACCOUNT) }
+    val googleAccount by GoogleAccountManager.state.collectAsState()
+    val googleAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
     var showAllTabsDialog by remember { mutableStateOf(false) }
     var showChromeMenu by remember { mutableStateOf(false) }
     var showHistoryDialog by remember { mutableStateOf(false) }
@@ -599,51 +622,71 @@ fun BrowserScreen() {
             label = "tabStripLeftSlide"
         )
 
-        // 메인 뷰포트 양방향 컨테이너 모프 전환 (모니터 방향으로 축소·모핑 후 새 공간이 모니터에서 펼쳐짐)
+        // 메인 뷰포트 양방향 컨테이너 모프 전환:
+        // WebView Surface의 graphicsLayer 제약을 우회하기 위해 떠나는 화면의 비트맵 스냅샷을 순수 Compose Image로 모프 축소
+        var swapOutgoingBitmap by remember { mutableStateOf<Bitmap?>(null) }
+        val outScale = remember { Animatable(1f) }
+        val outAlpha = remember { Animatable(0f) }
+        val outOffsetX = remember { Animatable(0f) }
+        val outOffsetY = remember { Animatable(0f) }
+        val outCorner = remember { Animatable(16f) }
+
         val mainSwapScale = remember { Animatable(1f) }
         val mainSwapBlur = remember { Animatable(0f) }
         val mainSwapAlpha = remember { Animatable(1f) }
         val mainSwapOffsetX = remember { Animatable(0f) }
         val mainSwapOffsetY = remember { Animatable(0f) }
         val mainSwapCorner = remember { Animatable(16f) }
+
         fun triggerSpaceSwap(targetId: String) {
             if (targetId == activeSpaceId) return
             val fromLeft = activeMonitorPos == MonitorPosition.LEFT
-            val shiftPx = with(density) { 54.dp.toPx() }
+            val shiftPx = with(density) { 120.dp.toPx() }
+            val oldTabId = activeSpace.activeTab.id
+            swapOutgoingBitmap = SpaceManager.captureTabThumbnail(oldTabId)
             returningSpaceId = activeSpaceId
-            scope.launch {
-                // Phase 1: 현재 페이지가 모니터 쪽으로 모프 축소
-                val p1 = launch {
-                    launch { mainSwapScale.animateTo(0.84f, animationSpec = tween(110)) }
-                    launch { mainSwapBlur.animateTo(10f, animationSpec = tween(110)) }
-                    launch { mainSwapAlpha.animateTo(0.28f, animationSpec = tween(110)) }
-                    launch { mainSwapCorner.animateTo(32f, animationSpec = tween(110)) }
-                    if (fromLeft) {
-                        launch { mainSwapOffsetX.animateTo(-shiftPx, animationSpec = tween(110)) }
-                    } else {
-                        launch { mainSwapOffsetY.animateTo(-shiftPx, animationSpec = tween(110)) }
-                    }
-                }
-                p1.join()
 
-                // 공간 교체 후 모니터 측에서 탄성 있게 모프 확장
-                SpaceManager.selectSpace(targetId)
-                mainSwapScale.snapTo(0.78f)
-                mainSwapCorner.snapTo(34f)
+            // 새 공간으로 즉시 전환하면서 떠나는 스냅샷은 모니터로 빨려들어가고, 새 공간은 모니터에서 펼쳐짐
+            SpaceManager.selectSpace(targetId)
+            scope.launch {
+                outScale.snapTo(1f)
+                outAlpha.snapTo(1f)
+                outOffsetX.snapTo(0f)
+                outOffsetY.snapTo(0f)
+                outCorner.snapTo(16f)
+
+                mainSwapScale.snapTo(0.72f)
+                mainSwapBlur.snapTo(12f)
+                mainSwapAlpha.snapTo(0.25f)
+                mainSwapCorner.snapTo(36f)
                 if (fromLeft) {
-                    mainSwapOffsetX.snapTo(-shiftPx * 1.15f)
+                    mainSwapOffsetX.snapTo(-shiftPx * 0.7f)
                     mainSwapOffsetY.snapTo(0f)
                 } else {
-                    mainSwapOffsetY.snapTo(-shiftPx * 1.15f)
+                    mainSwapOffsetY.snapTo(-shiftPx * 0.7f)
                     mainSwapOffsetX.snapTo(0f)
                 }
-                launch { mainSwapScale.animateTo(1f, animationSpec = EgoMotion.smoothSpring()) }
-                launch { mainSwapOffsetX.animateTo(0f, animationSpec = EgoMotion.smoothSpring()) }
-                launch { mainSwapOffsetY.animateTo(0f, animationSpec = EgoMotion.smoothSpring()) }
-                launch { mainSwapCorner.animateTo(16f, animationSpec = EgoMotion.smoothSpring()) }
-                launch { mainSwapBlur.animateTo(0f, animationSpec = tween(320)) }
-                launch { mainSwapAlpha.animateTo(1f, animationSpec = tween(220)) }
-                kotlinx.coroutines.delay(520L)
+
+                // 떠나는 스냅샷 → 모니터 방향으로 모프 축소 (320ms)
+                launch { outScale.animateTo(0.46f, animationSpec = EgoMotion.morphSpring()) }
+                launch { outCorner.animateTo(40f, animationSpec = tween(260)) }
+                launch { outAlpha.animateTo(0f, animationSpec = tween(280)) }
+                if (fromLeft) {
+                    launch { outOffsetX.animateTo(-shiftPx * 1.4f, animationSpec = EgoMotion.morphSpring()) }
+                } else {
+                    launch { outOffsetY.animateTo(-shiftPx * 1.4f, animationSpec = EgoMotion.morphSpring()) }
+                }
+
+                // 들어오는 새 공간 → 모니터에서 탄성 있게 모프 확장 (~360ms)
+                launch { mainSwapScale.animateTo(1f, animationSpec = EgoMotion.morphSpring()) }
+                launch { mainSwapOffsetX.animateTo(0f, animationSpec = EgoMotion.morphSpring()) }
+                launch { mainSwapOffsetY.animateTo(0f, animationSpec = EgoMotion.morphSpring()) }
+                launch { mainSwapCorner.animateTo(16f, animationSpec = EgoMotion.morphSpring()) }
+                launch { mainSwapBlur.animateTo(0f, animationSpec = tween(360)) }
+                launch { mainSwapAlpha.animateTo(1f, animationSpec = tween(280)) }
+
+                kotlinx.coroutines.delay(460L)
+                swapOutgoingBitmap = null
                 returningSpaceId = null
             }
         }
@@ -721,6 +764,7 @@ fun BrowserScreen() {
                         onRegisterSpaceBounds = { id, rect -> spaceBoundsMap[id] = rect },
                         onRegisterNewSpaceBounds = { rect -> newSpaceDropBounds = rect },
                         onSelectSpace = { id -> triggerSpaceSwap(id) },
+                        onCloseSpace = { id -> SpaceManager.closeAiSpace(id) },
                         onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
                         onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
                         onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
@@ -779,6 +823,7 @@ fun BrowserScreen() {
                             onRegisterSpaceBounds = { id, rect -> spaceBoundsMap[id] = rect },
                             onRegisterNewSpaceBounds = { rect -> newSpaceDropBounds = rect },
                             onSelectSpace = { id -> triggerSpaceSwap(id) },
+                            onCloseSpace = { id -> SpaceManager.closeAiSpace(id) },
                             onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
                             onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
                             onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
@@ -804,6 +849,7 @@ fun BrowserScreen() {
                         ) {
                             val totalTabs = activeSpace.tabs.size
                             activeSpace.tabs.forEachIndexed { idx, tab ->
+                                key(tab.id) {
                                 val isSelected = tab.id == activeSpace.activeTabId
                                 val isPressed = pressedTabIndex == idx
                                 val isFirst = idx == 0
@@ -870,17 +916,44 @@ fun BrowserScreen() {
                                 )
 
                                 val isBeingDragged = draggingTabId == tab.id
+                                val isReorderingInBar = draggingTabId != null &&
+                                    hoveredDropSpaceId == null &&
+                                    !hoveredNewSpaceDrop &&
+                                    dragStartTabIndex >= 0 &&
+                                    dragTargetTabIndex >= 0
+                                val rawDragShiftPx = when {
+                                    !isReorderingInBar -> 0f
+                                    isBeingDragged -> (dragTargetTabIndex - dragStartTabIndex) * draggedTabWidthPx
+                                    dragStartTabIndex < dragTargetTabIndex && idx in (dragStartTabIndex + 1)..dragTargetTabIndex -> -draggedTabWidthPx
+                                    dragStartTabIndex > dragTargetTabIndex && idx in dragTargetTabIndex until dragStartTabIndex -> draggedTabWidthPx
+                                    else -> 0f
+                                }
+                                val animatedDragShiftPx by animateFloatAsState(
+                                    targetValue = rawDragShiftPx,
+                                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 460f),
+                                    label = "tabDragShift_${tab.id}"
+                                )
+                                val slotBorderMod = if (isBeingDragged && isReorderingInBar) {
+                                    Modifier.border(
+                                        width = 1.5.dp,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.58f),
+                                        shape = tabShape
+                                    )
+                                } else Modifier
+
                                 Row(
                                     modifier = Modifier
                                         .padding(horizontal = extraMargin.coerceAtLeast(0.dp))
                                         .onGloballyPositioned { coords ->
-                                            tabBoundsMap[tab.id] = coords.boundsInRoot()
+                                            if (draggingTabId == null) {
+                                                tabBoundsMap[tab.id] = coords.boundsInRoot()
+                                            }
                                         }
                                         .graphicsLayer {
                                             scaleX = tabScale
                                             scaleY = tabScale
-                                            translationX = neighborNudge.toPx()
-                                            alpha = if (isBeingDragged) 0.28f else 1f
+                                            translationX = neighborNudge.toPx() + animatedDragShiftPx
+                                            alpha = if (isBeingDragged) 0.36f else 1f
                                         }
                                         .height(36.dp)
                                         .then(
@@ -891,22 +964,31 @@ fun BrowserScreen() {
                                             }
                                         )
                                         .clip(tabShape)
-                                        .background(tabBg)
-                                        .pointerInput(tab.id, idx) {
+                                        .background(
+                                            if (isBeingDragged && isReorderingInBar) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                            else tabBg
+                                        )
+                                        .then(slotBorderMod)
+                                        .pointerInput(tab.id) {
                                             awaitPointerEventScope {
                                                 while (true) {
                                                     awaitFirstDown(requireUnconsumed = false)
-                                                    pressedTabIndex = idx
+                                                    pressedTabIndex = activeSpace.tabs.indexOfFirst { it.id == tab.id }
                                                     waitForUpOrCancellation()
-                                                    if (pressedTabIndex == idx) pressedTabIndex = -1
+                                                    pressedTabIndex = -1
                                                 }
                                             }
                                         }
                                         .pointerInput(tab.id, activeSpace.id) {
                                             detectDragGesturesAfterLongPress(
                                                 onDragStart = { startOffset ->
-                                                    val origin = tabBoundsMap[tab.id]?.topLeft ?: Offset.Zero
+                                                    val rect = tabBoundsMap[tab.id]
+                                                    val origin = rect?.topLeft ?: Offset.Zero
+                                                    val startIdx = activeSpace.tabs.indexOfFirst { it.id == tab.id }
                                                     draggingTabId = tab.id
+                                                    dragStartTabIndex = startIdx
+                                                    dragTargetTabIndex = startIdx
+                                                    draggedTabWidthPx = ((rect?.width ?: 150f) + with(density) { 4.dp.toPx() })
                                                     dragPointerRoot = origin + startOffset
                                                     hoveredDropSpaceId = null
                                                     hoveredNewSpaceDrop = false
@@ -937,23 +1019,29 @@ fun BrowserScreen() {
                                                         hoveredNewSpaceDrop = false
                                                     }
 
-                                                    // 모니터 드롭 중이 아닐 때 탭바 좌우 순서 이동
+                                                    // 드래그 중에는 리스트를 직접 변경하지 않고 목표 슬롯 인덱스만 계산 -> 제스처 끊김 완전 방지 + 인접 탭 비켜주기
                                                     if (hoveredDropSpaceId == null && !hoveredNewSpaceDrop) {
-                                                        val targetTabId = tabBoundsMap.entries.firstOrNull { (tid, rect) ->
-                                                            tid != curId &&
-                                                                ptr.y >= rect.top - 48f &&
-                                                                ptr.y <= rect.bottom + 48f &&
-                                                                ptr.x >= rect.left &&
-                                                                ptr.x <= rect.right
-                                                        }?.key
-                                                        if (targetTabId != null) {
-                                                            SpaceManager.moveTabById(activeSpace.id, curId, targetTabId)
-                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        val currentTabs = activeSpace.tabs
+                                                        val startRect = tabBoundsMap[curId]
+                                                        val inBarY = startRect == null || (ptr.y >= startRect.top - 72f && ptr.y <= startRect.bottom + 72f)
+                                                        if (inBarY && currentTabs.isNotEmpty()) {
+                                                            var newIdx = dragStartTabIndex.coerceIn(0, currentTabs.lastIndex)
+                                                            val centers = currentTabs.mapIndexed { i, t ->
+                                                                val r = tabBoundsMap[t.id]
+                                                                i to ((r?.left ?: 0f) + (r?.width ?: 140f) / 2f)
+                                                            }
+                                                            newIdx = centers.count { (_, cx) -> ptr.x > cx }.coerceIn(0, currentTabs.lastIndex)
+                                                            if (newIdx != dragTargetTabIndex) {
+                                                                dragTargetTabIndex = newIdx
+                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            }
                                                         }
                                                     }
                                                 },
                                                 onDragEnd = {
                                                     val curId = draggingTabId
+                                                    val fromIdx = dragStartTabIndex
+                                                    val toIdx = dragTargetTabIndex
                                                     val dropSpaceId = hoveredDropSpaceId
                                                     val dropNew = hoveredNewSpaceDrop
                                                     val wasAutoOpened = monitorAutoOpenedByDrag
@@ -1008,7 +1096,15 @@ fun BrowserScreen() {
                                                         }
                                                     }
 
+                                                    if (!didDrop && curId != null && fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+                                                        val targetTab = activeSpace.tabs.getOrNull(toIdx)
+                                                        if (targetTab != null && targetTab.id != curId) {
+                                                            SpaceManager.moveTabById(activeSpace.id, curId, targetTab.id)
+                                                        }
+                                                    }
                                                     draggingTabId = null
+                                                    dragStartTabIndex = -1
+                                                    dragTargetTabIndex = -1
                                                     hoveredDropSpaceId = null
                                                     hoveredNewSpaceDrop = false
                                                     dwellProgress = 0f
@@ -1026,6 +1122,8 @@ fun BrowserScreen() {
                                                 onDragCancel = {
                                                     val wasAutoOpened = monitorAutoOpenedByDrag
                                                     draggingTabId = null
+                                                    dragStartTabIndex = -1
+                                                    dragTargetTabIndex = -1
                                                     hoveredDropSpaceId = null
                                                     hoveredNewSpaceDrop = false
                                                     dwellProgress = 0f
@@ -1103,20 +1201,23 @@ fun BrowserScreen() {
                                         tint = if (isSelected) tabFg.copy(alpha = 0.78f) else mutedIconColor
                                     )
                                 }
+                                }
                             }
+                        }
 
-                    IconButton(
-                        onClick = { SpaceManager.createTab(activeSpace.id) },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "새 탭",
-                            tint = activeIconColor
-                        )
+                        // 새 탭(+) 버튼: 탭 개수와 무관하게 항상 탭 바 최우측 상단에 고정
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { SpaceManager.createTab(activeSpace.id) },
+                            modifier = Modifier.size(36.dp).pressBounceScale()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "새 탭",
+                                tint = activeIconColor
+                            )
+                        }
                     }
-                }
-            }
                 }
             }
 
@@ -1233,7 +1334,7 @@ fun BrowserScreen() {
                 }
 
                 // 조건부 경고 배지: MCP 연결 끊김일 때만 주소창과 광고차단 버튼 사이에 붉은색으로 표시
-                if (isMcpDisconnected) {
+                if (prefs.showMcpBadgeButton && isMcpDisconnected) {
                     Spacer(modifier = Modifier.width(6.dp))
                     Row(
                         modifier = Modifier
@@ -1263,7 +1364,7 @@ fun BrowserScreen() {
 
                 // MCP 연결 시에만 주소창과 광고차단 사이에 아이콘 전용 AI 명령 버튼 표시
                 AnimatedVisibility(
-                    visible = runtimeState.connectionState == McpConnectionState.CONNECTED,
+                    visible = prefs.showAiCommandButton && runtimeState.connectionState == McpConnectionState.CONNECTED,
                     enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.78f, animationSpec = EgoMotion.bouncySpring()),
                     exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.78f, animationSpec = tween(140))
                 ) {
@@ -1313,6 +1414,7 @@ fun BrowserScreen() {
                 Spacer(modifier = Modifier.width(4.dp))
 
                 // 광고 차단 (짧게: 현재 사이트 ON/OFF + 새로고침, 길게: 크롬 확장 스타일 팝업)
+                if (prefs.showAdBlockButton) {
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -1357,7 +1459,10 @@ fun BrowserScreen() {
                     }
                 }
 
+                }
+
                 // 크롬 스타일 번역 버튼 (짧게: 즉시 번역/팝업 토글, 길게: 번역 설정 팝업)
+                if (prefs.showTranslateButton) {
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -1384,7 +1489,10 @@ fun BrowserScreen() {
                     )
                 }
 
+                }
+
                 // 주/야간 다크모드 토글 (아이콘 모프 전환 + Micro-press)
+                if (prefs.showDarkModeButton) {
                 IconButton(
                     onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
                     modifier = Modifier.size(42.dp).pressBounceScale()
@@ -1402,6 +1510,109 @@ fun BrowserScreen() {
                             contentDescription = "다크모드 전환",
                             tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor
                         )
+                    }
+                }
+
+                }
+
+                // 사용자 커스텀 툴바 버튼 (설정 → 디자인에서 개별 ON/OFF)
+                if (prefs.showNewTabToolbarButton) {
+                    IconButton(
+                        onClick = { SpaceManager.createTab(activeSpace.id, selectImmediately = true) },
+                        modifier = Modifier.size(40.dp).pressBounceScale()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "새 탭", tint = activeIconColor)
+                    }
+                }
+                if (prefs.showShareButton && isWebPage) {
+                    IconButton(
+                        onClick = {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
+                                putExtra(Intent.EXTRA_TEXT, activeTab.url)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
+                        },
+                        modifier = Modifier.size(40.dp).pressBounceScale()
+                    ) {
+                        Icon(Icons.Default.Share, contentDescription = "공유", tint = activeIconColor)
+                    }
+                }
+                if (prefs.showFindInPageButton && isWebPage) {
+                    IconButton(
+                        onClick = { showFindBar = !showFindBar },
+                        modifier = Modifier.size(40.dp).pressBounceScale()
+                    ) {
+                        Icon(Icons.Default.FindInPage, contentDescription = "페이지 내 찾기", tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor)
+                    }
+                }
+                if (prefs.showDesktopSiteButton) {
+                    IconButton(
+                        onClick = { SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) } },
+                        modifier = Modifier.size(40.dp).pressBounceScale()
+                    ) {
+                        Icon(
+                            Icons.Default.DesktopWindows,
+                            contentDescription = "데스크톱 사이트 전환",
+                            tint = if (prefs.desktopModeEnabled) MaterialTheme.colorScheme.primary else mutedIconColor
+                        )
+                    }
+                }
+                if (prefs.showReaderModeButton && isWebPage) {
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                runCatching {
+                                    val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                                    val md = JSONObject(raw).optString("markdown", "")
+                                    readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                                }
+                            }
+                        },
+                        modifier = Modifier.size(40.dp).pressBounceScale()
+                    ) {
+                        Icon(Icons.Default.MenuBook, contentDescription = "읽기 모드", tint = activeIconColor)
+                    }
+                }
+                if (prefs.showProfileAvatarButton) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .pressBounceScale()
+                            .clip(CircleShape)
+                            .clickable {
+                                settingsInitialCategory = SettingsCategory.ACCOUNT
+                                showChromeSettings = true
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (googleAccount.isSignedIn && googleAvatar != null) {
+                            Image(
+                                bitmap = googleAvatar!!.asImageBitmap(),
+                                contentDescription = "Google 프로필",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(CircleShape)
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (googleAccount.isSignedIn) googleAccount.displayName.take(1).uppercase().ifBlank { "G" } else "G",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -1646,6 +1857,24 @@ fun BrowserScreen() {
                     spaces = spaces,
                     activeSpace = activeSpace
                 )
+                val outBmp = swapOutgoingBitmap
+                if (outBmp != null && outAlpha.value > 0.02f) {
+                    Image(
+                        bitmap = outBmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = outScale.value
+                                scaleY = outScale.value
+                                translationX = outOffsetX.value
+                                translationY = outOffsetY.value
+                                alpha = outAlpha.value
+                            }
+                            .clip(RoundedCornerShape(outCorner.value.coerceAtLeast(12f).dp))
+                    )
+                }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = activeTab.url == NEW_TAB_URL,
                     enter = fadeIn(tween(180)),
@@ -1676,7 +1905,8 @@ fun BrowserScreen() {
             }
         }
 
-        // 최상단 좌측 고정 알약 캡슐 (AI 라이브 모니터가 열려도 좌측 상단에 그대로 유지)
+        // 최상단 좌측 고정 알약 캡슐 (설정·전체 탭·리더 전체화면에서는 숨김)
+        if (!showChromeSettings && !showAllTabsDialog && readerMarkdown == null) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -1708,6 +1938,7 @@ fun BrowserScreen() {
                     }
                 }
             )
+        }
         }
 
         // 세로모드 상태바 60%+ 0.5초 / 가로모드 좌측 0.45초 자동 열기 진행 게이지
@@ -2131,11 +2362,24 @@ fun BrowserScreen() {
 
         AnimatedVisibility(
             visible = showChromeSettings,
+            modifier = Modifier.zIndex(50f),
             enter = slideInHorizontally(EgoMotion.intOffsetSpring) { it / 3 } + fadeIn(tween(200)),
             exit = slideOutHorizontally(tween(190)) { it / 3 } + fadeOut(tween(160))
         ) {
             ChromeSettingsScreen(
+                initialCategory = settingsInitialCategory,
                 onOpenMcpDrawer = { showMcpDrawer = true },
+                onOpenGoogleSignInTab = {
+                    SpaceManager.createTab(activeSpace.id, initialUrl = "https://myaccount.google.com/", selectImmediately = true)
+                },
+                onExtractGoogleProfile = { cb ->
+                    val wv = SpaceManager.getActiveWebView(activeSpace.id)
+                    if (wv != null) {
+                        GoogleAccountManager.extractProfileFromWebView(wv, cb)
+                    } else {
+                        cb(false, "Google 페이지가 열린 탭이 없습니다.")
+                    }
+                },
                 onDismiss = { showChromeSettings = false }
             )
         }
@@ -2143,6 +2387,7 @@ fun BrowserScreen() {
         // 크롬형 전체 화면 썸네일 카드 그리드 모든 탭 보기 (스프링 줌 모프 전환)
         AnimatedVisibility(
             visible = showAllTabsDialog,
+            modifier = Modifier.zIndex(50f),
             enter = scaleIn(animationSpec = EgoMotion.smoothSpring(), initialScale = 0.90f) + fadeIn(tween(180)),
             exit = scaleOut(animationSpec = tween(150), targetScale = 0.92f) + fadeOut(tween(140))
         ) {
@@ -2271,15 +2516,202 @@ fun BrowserScreen() {
     }
 }
 
+private class M3PullRefreshFrameLayout(context: Context) : FrameLayout(context) {
+    var canChildScrollUp: () -> Boolean = { false }
+    var onPullProgress: (Float) -> Unit = {}
+    var onRefreshTrigger: () -> Unit = {}
+
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val triggerDistPx = 110f * context.resources.displayMetrics.density
+    private var startX = 0f
+    private var startY = 0f
+    private var isPulling = false
+    private var currentProgress = 0f
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                startX = ev.x
+                startY = ev.y
+                isPulling = false
+                currentProgress = 0f
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (ev.pointerCount > 1) return false
+                val dy = ev.y - startY
+                val dx = abs(ev.x - startX)
+                if (dy > touchSlop * 1.4f && dy > dx * 1.6f && !canChildScrollUp()) {
+                    isPulling = true
+                    return true
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isPulling = false
+            }
+        }
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (!isPulling) return super.onTouchEvent(ev)
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                val dy = (ev.y - startY).coerceAtLeast(0f)
+                val damped = (dy / (triggerDistPx * 1.45f)).coerceIn(0f, 1.35f)
+                currentProgress = damped
+                onPullProgress(damped)
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val shouldRefresh = ev.actionMasked == MotionEvent.ACTION_UP && currentProgress >= 0.78f
+                isPulling = false
+                currentProgress = 0f
+                onPullProgress(0f)
+                if (shouldRefresh) onRefreshTrigger()
+                return true
+            }
+        }
+        return super.onTouchEvent(ev)
+    }
+}
+
+@Composable
+private fun M3ExpressiveLoadingIndicator(
+    pullProgress: Float,
+    isRefreshing: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val visible = isRefreshing || pullProgress > 0.04f
+    if (!visible) return
+
+    val containerColor = MaterialTheme.colorScheme.primaryContainer
+    val shapeColor = MaterialTheme.colorScheme.onPrimaryContainer
+
+    val morphAnim = if (isRefreshing) {
+        val inf = rememberInfiniteTransition(label = "m3ExpressiveMorph")
+        val phase by inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 4f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "m3ShapePhase"
+        )
+        val spin by inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2600, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "m3ShapeSpin"
+        )
+        phase to spin
+    } else {
+        (pullProgress * 1.2f) to (pullProgress * 180f)
+    }
+
+    val targetOffsetY = if (isRefreshing) 18f else (pullProgress.coerceIn(0f, 1.25f) * 58f - 36f)
+    val animatedOffsetY by animateFloatAsState(
+        targetValue = targetOffsetY,
+        animationSpec = spring(dampingRatio = 0.76f, stiffness = 360f),
+        label = "m3RefreshY"
+    )
+    val targetScale = if (isRefreshing) 1f else (0.52f + pullProgress.coerceIn(0f, 1f) * 0.48f)
+    val animatedScale by animateFloatAsState(
+        targetValue = targetScale,
+        animationSpec = spring(dampingRatio = 0.74f, stiffness = 400f),
+        label = "m3RefreshScale"
+    )
+
+    Surface(
+        shape = CircleShape,
+        color = containerColor,
+        shadowElevation = 5.dp,
+        modifier = modifier
+            .graphicsLayer {
+                translationY = animatedOffsetY * density
+                scaleX = animatedScale
+                scaleY = animatedScale
+                alpha = if (isRefreshing) 1f else (pullProgress * 2.2f).coerceIn(0f, 1f)
+            }
+            .size(46.dp)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Canvas(modifier = Modifier.size(32.dp)) {
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+                val baseR = size.minDimension * 0.40f
+                val phase = morphAnim.first
+                val spinRad = (morphAnim.second * PI / 180.0).toFloat()
+
+                // Material 3 Expressive 4-shape parametric morph:
+                // 0: 10-petal Scallop Cookie (Morphe/Google M3E signature)
+                // 1: 4-petal Soft Clover
+                // 2: 8-petal Soft Starburst
+                // 3: Rounded Squircle
+                fun radiusFor(shapeIdx: Int, theta: Float): Float {
+                    return when (shapeIdx % 4) {
+                        0 -> baseR * (1.0f + 0.145f * cos(10f * theta))
+                        1 -> baseR * (0.94f + 0.21f * cos(4f * theta))
+                        2 -> baseR * (0.96f + 0.17f * cos(8f * theta))
+                        else -> {
+                            val c = abs(cos(theta))
+                            val s = abs(sin(theta))
+                            val norm = (c * c * c + s * s * s)
+                            val sq = if (norm > 0.001f) 1f / kotlin.math.cbrt(norm.toDouble()).toFloat() else 1f
+                            baseR * 0.86f * sq.coerceAtMost(1.18f)
+                        }
+                    }
+                }
+
+                val idxA = phase.toInt() % 4
+                val idxB = (idxA + 1) % 4
+                val rawT = phase - phase.toInt()
+                val easedT = rawT * rawT * (3f - 2f * rawT)
+
+                val steps = 96
+                val path = Path()
+                for (i in 0 until steps) {
+                    val theta = (2.0 * PI * i / steps).toFloat()
+                    val rA = radiusFor(idxA, theta)
+                    val rB = radiusFor(idxB, theta)
+                    val r = rA + (rB - rA) * easedT
+                    val angle = theta + spinRad
+                    val x = cx + r * cos(angle)
+                    val y = cy + r * sin(angle)
+                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                }
+                path.close()
+                drawPath(path = path, color = shapeColor)
+            }
+        }
+    }
+}
+
 @Composable
 private fun WebViewHostContainer(
     spaces: List<BrowserSpace>,
     activeSpace: BrowserSpace
 ) {
     val activeTab = activeSpace.activeTab
-    val m3RefreshBg = MaterialTheme.colorScheme.surfaceContainerHigh.toArgb()
-    val m3RefreshPrimary = MaterialTheme.colorScheme.primary.toArgb()
-    val m3RefreshTertiary = MaterialTheme.colorScheme.tertiary.toArgb()
+    var pullProgress by remember { mutableFloatStateOf(0f) }
+    var isExpressiveRefreshing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isExpressiveRefreshing, activeTab.isLoading) {
+        if (isExpressiveRefreshing) {
+            delay(850L)
+            if (!activeTab.isLoading) {
+                isExpressiveRefreshing = false
+            } else {
+                delay(1400L)
+                isExpressiveRefreshing = false
+            }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
@@ -2290,33 +2722,27 @@ private fun WebViewHostContainer(
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
             }
-            SwipeRefreshLayout(ctx).apply {
+            M3PullRefreshFrameLayout(ctx).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
-                val d = ctx.resources.displayMetrics.density
-                setProgressBackgroundColorSchemeColor(m3RefreshBg)
-                setColorSchemeColors(m3RefreshPrimary, m3RefreshTertiary)
-                setSlingshotDistance((96f * d).toInt())
-                setProgressViewOffset(true, 0, (60f * d).toInt())
                 addView(host)
             }
         },
         update = { swipe ->
-            swipe.setProgressBackgroundColorSchemeColor(m3RefreshBg)
-            swipe.setColorSchemeColors(m3RefreshPrimary, m3RefreshTertiary)
             val host = swipe.findViewWithTag<FrameLayout>("webview_host") ?: return@AndroidView
             val activeWv = SpaceManager.getOrCreateWebView(activeSpace.id, activeTab)
 
-            swipe.setOnChildScrollUpCallback { _, _ ->
+            swipe.canChildScrollUp = {
                 activeWv.scrollY > 0 ||
                     activeWv.canScrollVertically(-1) ||
                     com.egolite.mobile.browser.EgoWebViewFactory.isInnerScrolled(activeTab.id)
             }
-            swipe.setOnRefreshListener {
+            swipe.onPullProgress = { p -> pullProgress = p }
+            swipe.onRefreshTrigger = {
+                isExpressiveRefreshing = true
                 activeWv.reload()
-                swipe.isRefreshing = false
             }
 
             val bgAiWebViews = spaces
@@ -2409,5 +2835,13 @@ private fun WebViewHostContainer(
             }
         }
     )
+    M3ExpressiveLoadingIndicator(
+        pullProgress = pullProgress,
+        isRefreshing = isExpressiveRefreshing,
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .zIndex(20f)
+    )
+    }
 }
 
