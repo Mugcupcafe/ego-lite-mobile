@@ -31,6 +31,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.egolite.mobile.browser.BrowserActivityBridge
+import com.egolite.mobile.browser.DownloadCenter
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.model.ThemeMode
@@ -172,6 +173,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         SpaceManager.init(applicationContext)
         GoogleAccountManager.init(applicationContext)
+        DownloadCenter.init(applicationContext)
         requestNotificationPermissionIfNeeded()
 
         BrowserActivityBridge.launchFilePicker = { mimeTypes -> filePickerLauncher.launch(mimeTypes) }
