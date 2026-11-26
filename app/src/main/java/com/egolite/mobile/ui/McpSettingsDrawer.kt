@@ -1,5 +1,16 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.border
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.heightIn
 import android.content.ClipData
@@ -74,7 +85,10 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
     val isRunning = runtimeState.connectionState == McpConnectionState.CONNECTED ||
         runtimeState.connectionState == McpConnectionState.STARTING
 
-    // 전체 반투명 검정 배경 제거 + MCP 버튼을 그대로 덮는 컴팩트 M3 모프 팝업 카드
+    var cardVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { cardVisible = true }
+
+    // 전체 반투명 검정 배경 제거 + 카드 자체만 버튼 우상단 기준 깔끔하게 모프 (그림자 왜곡 방지)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -83,20 +97,37 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
                 interactionSource = remember { MutableInteractionSource() }
             ) { onDismiss() }
     ) {
-        Surface(
+        Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 50.dp, end = 96.dp)
-                .width(368.dp)
-                .heightIn(max = 540.dp)
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() }
-                ) {},
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            shadowElevation = 22.dp
         ) {
+            AnimatedVisibility(
+                visible = cardVisible,
+                enter = fadeIn(tween(130)) + scaleIn(
+                    initialScale = 0.72f,
+                    transformOrigin = TransformOrigin(1f, 0f),
+                    animationSpec = EgoMotion.smoothSpring()
+                ),
+                exit = fadeOut(tween(100)) + scaleOut(
+                    targetScale = 0.78f,
+                    transformOrigin = TransformOrigin(1f, 0f),
+                    animationSpec = tween(130)
+                )
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .width(368.dp)
+                        .heightIn(max = 540.dp)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(24.dp))
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {},
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    shadowElevation = 14.dp
+                ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -253,6 +284,8 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
                 }
             }
         }
