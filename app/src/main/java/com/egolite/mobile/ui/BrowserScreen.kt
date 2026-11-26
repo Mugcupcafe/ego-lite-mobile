@@ -55,6 +55,8 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import com.egolite.mobile.model.CardVanishStyle
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -291,6 +293,9 @@ fun BrowserScreen() {
     var showFindBar by remember { mutableStateOf(false) }
     var showAdBlockDialog by remember { mutableStateOf(false) }
     var showTranslateSettingsDialog by remember { mutableStateOf(false) }
+    var globalDustBursts by remember { mutableStateOf<List<DustVanishRequest>>(emptyList()) }
+    var vanishingTopTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var nextDustBurstId by remember { mutableStateOf(1000L) }
     var showOmniboxOverlay by remember { mutableStateOf(false) }
     var showBookmarkManager by remember { mutableStateOf(false) }
     var editingBookmark by remember { mutableStateOf<BookmarkItem?>(null) }
@@ -301,6 +306,38 @@ fun BrowserScreen() {
     var hoveredMenuIndex by remember { mutableStateOf(-1) }
     var rootBoxLeftPx by remember { mutableStateOf(0f) }
     var rootBoxTopPx by remember { mutableStateOf(0f) }
+
+    fun emitDustBurst(
+        rootRect: Rect?,
+        accent: Color,
+        densityFactor: Float = 0.85f,
+        touchRoot: Offset? = null,
+        capturedBitmap: android.graphics.Bitmap? = null
+    ) {
+        if (prefs.cardVanishStyle == CardVanishStyle.OFF || rootRect == null) return
+        if (rootRect.width <= 8f || rootRect.height <= 8f) return
+        val localRect = rootRect.translate(-rootBoxLeftPx, -rootBoxTopPx)
+        val localOriginX = touchRoot?.let { it.x - rootBoxLeftPx } ?: -1f
+        val localOriginY = touchRoot?.let { it.y - rootBoxTopPx } ?: -1f
+        val id = nextDustBurstId++
+        val count = (prefs.vanishParticleCount * densityFactor).toInt().coerceIn(360, 3600)
+        globalDustBursts = globalDustBursts + DustVanishRequest(
+            id = id,
+            rect = localRect,
+            accentColor = accent,
+            thumbnail = capturedBitmap,
+            style = prefs.cardVanishStyle,
+            particleCount = count,
+            durationMs = prefs.vanishDurationMs.coerceIn(520, 1600),
+            originX = localOriginX,
+            originY = localOriginY,
+            maxFps = prefs.vanishMaxFps
+        )
+    }
+
+    fun emitDustSnapshot(snap: VanishSnapshot, accent: Color, densityFactor: Float = 0.85f) {
+        emitDustBurst(snap.rect, accent, densityFactor, snap.touchRoot, snap.bitmap)
+    }
     var addressBarLeftPx by remember { mutableStateOf(0f) }
     var addressBarTopPx by remember { mutableStateOf(0f) }
     var addressBarWidthPx by remember { mutableStateOf(0f) }
@@ -900,16 +937,17 @@ fun BrowserScreen() {
                                     animationSpec = EgoMotion.smoothSpring(),
                                     label = "tabActiveMargin"
                                 )
+                                val chromeColorsTab = LocalEgoChromeColors.current
                                 val tabBg by animateColorAsState(
                                     targetValue = if (isSelected) {
-                                        MaterialTheme.colorScheme.primaryContainer
+                                        chromeColorsTab.selectedTabBg
                                     } else {
-                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                        chromeColorsTab.unselectedTabBg
                                     },
                                     animationSpec = tween(180),
                                     label = "tabBgAnim"
                                 )
-                                val tabFg = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else activeIconColor
+                                val tabFg = if (isSelected) MaterialTheme.colorScheme.onSurface else activeIconColor.copy(alpha = 0.76f)
                                 val safeStartR = startRadius.coerceAtLeast(0.dp)
                                 val safeEndR = endRadius.coerceAtLeast(0.dp)
                                 val tabShape = RoundedCornerShape(
@@ -957,7 +995,7 @@ fun BrowserScreen() {
                                             scaleX = tabScale
                                             scaleY = tabScale
                                             translationX = neighborNudge.toPx() + animatedDragShiftPx
-                                            alpha = if (isBeingDragged) 0.36f else 1f
+                                            alpha = when { tab.id in vanishingTopTabIds -> 0f; isBeingDragged -> 0.36f; else -> 1f }
                                         }
                                         .height(36.dp)
                                         .then(
@@ -1201,9 +1239,28 @@ fun BrowserScreen() {
                                         contentDescription = "탭 닫기",
                                         modifier = Modifier
                                             .size(16.dp)
-                                            .clickable { SpaceManager.closeTab(activeSpace.id, tab.id) },
-                                        tint = if (isSelected) tabFg.copy(alpha = 0.78f) else mutedIconColor
-                                    , symbolSize = 16.dp)
+                                            .clickable {
+                                                if (prefs.cardVanishStyle == CardVanishStyle.OFF || tab.id in vanishingTopTabIds) {
+                                                    SpaceManager.closeTab(activeSpace.id, tab.id)
+                                                } else {
+                                                    vanishingTopTabIds = vanishingTopTabIds + tab.id
+                                                    val tbRect = tabBoundsMap[tab.id]; emitDustBurst(tbRect, tabBg, densityFactor = 0.42f, touchRoot = tbRect?.let { Offset(it.right - 20f, it.center.y) })
+                                                    val waitMs = when (prefs.cardVanishStyle) {
+                                                        CardVanishStyle.HARMONY_DUST, CardVanishStyle.HARMONY_GPU_SHADER -> (prefs.vanishDurationMs * 0.45f).toLong().coerceIn(260L, 620L)
+                                                        CardVanishStyle.LIGHT_PARTICLES -> 300L
+                                                        CardVanishStyle.SCALE_FADE -> 180L
+                                                        CardVanishStyle.OFF -> 0L
+                                                    }
+                                                    scope.launch {
+                                                        kotlinx.coroutines.delay(waitMs)
+                                                        SpaceManager.closeTab(activeSpace.id, tab.id)
+                                                        vanishingTopTabIds = vanishingTopTabIds - tab.id
+                                                    }
+                                                }
+                                            },
+                                        tint = if (isSelected) tabFg.copy(alpha = 0.78f) else mutedIconColor,
+                                        symbolSize = 16.dp
+                                    )
                                 }
                                 }
                             }
@@ -1225,61 +1282,89 @@ fun BrowserScreen() {
                 }
             }
 
-            // 2행: 홈 · 뒤로 · 앞으로 · 새로고침 + 주소창 + 조건부 붉은 MCP 끊김 배지 + 광고차단 · 번역 · 다크모드 · 모든탭보기[N] · 메뉴(⋮)
+            // 2행: Material 3 Expressive Connected 3-그룹 툴바 (바깥 22dp · 인접 6dp, 3dp 간격, 선택 탭과 동일 색상)
+            val toolbarChrome = LocalEgoChromeColors.current
+            val m3GroupBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.20f)
+            val m3LeftGroupShape = RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp, topEnd = 6.dp, bottomEnd = 6.dp)
+            val m3CenterGroupShape = RoundedCornerShape(6.dp)
+            val m3RightGroupShape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 22.dp, bottomEnd = 22.dp)
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .height(52.dp)
+                    .background(toolbarChrome.backdropBg)
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                IconButton(
-                    onClick = { SpaceManager.goHome(activeSpace.id) },
-                    modifier = Modifier.size(40.dp)
+                // 그룹 1: (홈 · 뒤로 · 앞으로 · 새로고침)
+                Row(
+                    modifier = Modifier
+                        .height(42.dp)
+                        .clip(m3LeftGroupShape)
+                        .background(toolbarChrome.groupSurface)
+                        .border(1.dp, m3GroupBorder, m3LeftGroupShape)
+                        .padding(horizontal = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    EgoIcon(
-                        Icons.Default.Home,
-                        contentDescription = "홈",
-                        tint = activeIconColor
-                    )
-                }
-                val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1 || activeTab.url != NEW_TAB_URL
-                IconButton(
-                    onClick = { SpaceManager.handleBackOrCloseTab(activeSpace.id) },
-                    enabled = canBackOrClose,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    EgoIcon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "뒤로",
-                        tint = if (canBackOrClose) activeIconColor else mutedIconColor.copy(alpha = 0.45f)
-                    )
-                }
-                IconButton(
-                    onClick = { SpaceManager.goForward(activeSpace.id) },
-                    enabled = activeTab.canGoForward,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    EgoIcon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "앞으로",
-                        tint = if (activeTab.canGoForward) activeIconColor else mutedIconColor.copy(alpha = 0.45f)
-                    )
-                }
-                IconButton(
-                    onClick = { SpaceManager.reload(activeSpace.id) },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    EgoIcon(Icons.Default.Refresh, contentDescription = "새로고침", tint = activeIconColor)
+                    if (prefs.showHomeButton) {
+                        IconButton(
+                            onClick = { SpaceManager.goHome(activeSpace.id) },
+                            modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                        ) {
+                            EgoIcon(
+                                Icons.Default.Home,
+                                contentDescription = "홈",
+                                tint = activeIconColor,
+                                symbolSize = 20.dp
+                            )
+                        }
+                    }
+                    val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1 || activeTab.url != NEW_TAB_URL
+                    IconButton(
+                        onClick = { SpaceManager.handleBackOrCloseTab(activeSpace.id) },
+                        enabled = canBackOrClose,
+                        modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                    ) {
+                        EgoIcon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "뒤로",
+                            tint = if (canBackOrClose) activeIconColor else mutedIconColor.copy(alpha = 0.45f),
+                            symbolSize = 20.dp
+                        )
+                    }
+                    IconButton(
+                        onClick = { SpaceManager.goForward(activeSpace.id) },
+                        enabled = activeTab.canGoForward,
+                        modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                    ) {
+                        EgoIcon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "앞으로",
+                            tint = if (activeTab.canGoForward) activeIconColor else mutedIconColor.copy(alpha = 0.45f),
+                            symbolSize = 20.dp
+                        )
+                    }
+                    IconButton(
+                        onClick = { SpaceManager.reload(activeSpace.id) },
+                        modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                    ) {
+                        EgoIcon(
+                            Icons.Default.Refresh,
+                            contentDescription = "새로고침",
+                            tint = activeIconColor,
+                            symbolSize = 20.dp
+                        )
+                    }
                 }
 
-                // 주소창 (터치 시 실제 주소창과 정확히 같은 위치·길이로 Omnibox 오버레이 표시)
+                // 그룹 2: (주소창) — 인접 도형과 맞물리는 6dp 모서리 + 선택 탭과 동일 서피스
                 val existingBookmark = bookmarks.firstOrNull { it.url == activeTab.url }
                 Row(
                     modifier = Modifier
                         .weight(1f)
-                        .height(38.dp)
+                        .height(42.dp)
                         .graphicsLayer { alpha = if (showOmniboxOverlay) 0f else 1f }
                         .onGloballyPositioned { coords ->
                             val pos = coords.positionInRoot()
@@ -1287,9 +1372,9 @@ fun BrowserScreen() {
                             addressBarTopPx = (pos.y - rootBoxTopPx).coerceAtLeast(0f)
                             addressBarWidthPx = coords.size.width.toFloat()
                         }
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.background)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        .clip(m3CenterGroupShape)
+                        .background(toolbarChrome.groupSurface)
+                        .border(1.dp, m3GroupBorder, m3CenterGroupShape)
                         .pointerInput(activeSpace.id) {
                             var dragSum = 0f
                             detectHorizontalDragGestures(
@@ -1309,8 +1394,9 @@ fun BrowserScreen() {
                         imageVector = if (activeTab.isIncognito) Icons.Default.VisibilityOff else Icons.Default.Lock,
                         contentDescription = if (activeTab.isIncognito) "시크릿 모드" else null,
                         modifier = Modifier.size(15.dp),
-                        tint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor
-                    , symbolSize = 15.dp)
+                        tint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor,
+                        symbolSize = 15.dp
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     val isNewTab = activeTab.url == NEW_TAB_URL
                     Text(
@@ -1321,22 +1407,40 @@ fun BrowserScreen() {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    EgoIcon(
-                        imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
-                        contentDescription = "북마크 추가/수정",
-                        tint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor,
+                    Box(
                         modifier = Modifier
-                            .size(20.dp)
+                            .size(32.dp)
+                            .pressBounceScale(0.86f)
+                            .clip(CircleShape)
                             .clickable {
                                 if (existingBookmark != null) {
                                     editingBookmark = existingBookmark
                                 } else {
                                     showAddBookmarkDialog = true
                                 }
-                            }
-                    , symbolSize = 20.dp)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        EgoIcon(
+                            imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
+                            contentDescription = "북마크 추가/수정",
+                            tint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor,
+                            modifier = Modifier.size(19.dp),
+                            symbolSize = 19.dp
+                        )
+                    }
                 }
 
+                // 그룹 3: (MCP · AI · 광고차단 · 번역 · 다크모드 · 프로필 · 전체탭 · 메뉴)
+                Row(
+                    modifier = Modifier
+                        .height(42.dp)
+                        .clip(m3RightGroupShape)
+                        .background(toolbarChrome.groupSurface)
+                        .border(1.dp, m3GroupBorder, m3RightGroupShape)
+                        .padding(horizontal = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                 // 사용자 커스텀 순서(prefs.toolbarButtonOrder)에 따라 주소창 우측 버튼 동적 배치
                 val defaultTbOrder = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
                 val effectiveTbOrder = remember(prefs.toolbarButtonOrder) {
@@ -1346,31 +1450,20 @@ fun BrowserScreen() {
                 effectiveTbOrder.forEach { tbKey ->
                     when (tbKey) {
                         "MCP" -> {
-                            if (prefs.showMcpBadgeButton && isMcpDisconnected) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Row(
+                            if (prefs.showMcpBadgeButton) {
+                                Box(
                                     modifier = Modifier
-                                        .height(32.dp)
+                                        .size(42.dp)
                                         .clip(CircleShape)
-                                        .background(EgoDangerRed.copy(alpha = 0.12f))
-                                        .border(1.dp, EgoDangerRed.copy(alpha = 0.45f), CircleShape)
-                                        .clickable { showMcpDrawer = true }
-                                        .padding(horizontal = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .clickable { showMcpDrawer = true },
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    EgoIcon(
-                                        imageVector = Icons.Default.LinkOff,
-                                        contentDescription = "MCP 연결 끊김",
-                                        modifier = Modifier.size(15.dp),
-                                        tint = EgoDangerRed,
-                                        symbolSize = 15.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "MCP 끊김",
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = EgoDangerRed
+                                    McpHubStatusIcon(
+                                        disconnected = isMcpDisconnected,
+                                        contentDescription = if (isMcpDisconnected) "MCP 연결 끊김 (탭하여 설정)" else "MCP 연결됨 (탭하여 설정)",
+                                        tint = if (isMcpDisconnected) mutedIconColor else MaterialTheme.colorScheme.primary,
+                                        cutoutColor = toolbarChrome.groupSurface,
+                                        symbolSize = 20.dp
                                     )
                                 }
                             }
@@ -1734,6 +1827,7 @@ fun BrowserScreen() {
                         contentDescription = "브라우저 메뉴",
                         tint = activeIconColor
                     )
+                }
                 }
             }
 
@@ -2163,6 +2257,8 @@ fun BrowserScreen() {
             )
         }
 
+        val popupDustColor = MaterialTheme.colorScheme.surfaceContainerHigh
+
         // 주소창 아래 크롬 스타일 슬림 알약 번역 팝업
         Box(
             modifier = Modifier
@@ -2193,7 +2289,7 @@ fun BrowserScreen() {
                         translateState = translateState.copy(isTranslated = false, visible = false)
                     }
                 },
-                onDismiss = { translateState = translateState.copy(visible = false) }
+                onDismiss = { snap -> emitDustSnapshot(snap, popupDustColor, 0.55f); translateState = translateState.copy(visible = false) }
             )
         }
 
@@ -2250,11 +2346,11 @@ fun BrowserScreen() {
             )
         }
 
-        // 번역 버튼 길게 누르기: 카드 자체에서 우상단 모프 구동
+        // 번역 버튼 길게 누르기: 카드 자체에서 우상단 모프 구동 (닫기 시 먼지 소멸)
         AnimatedVisibility(
             visible = showTranslateSettingsDialog,
             enter = fadeIn(tween(90)),
-            exit = fadeOut(tween(110))
+            exit = if (prefs.cardVanishStyle != CardVanishStyle.OFF) ExitTransition.None else fadeOut(tween(110))
         ) {
             TranslateSettingsPopupDialog(
                 engine = prefs.translationEngine,
@@ -2279,21 +2375,21 @@ fun BrowserScreen() {
                         ).show()
                     }
                 },
-                onDismiss = { showTranslateSettingsDialog = false }
+                onDismiss = { snap -> emitDustSnapshot(snap, popupDustColor, 0.90f); showTranslateSettingsDialog = false }
             )
         }
 
-        // 방패 길게 누르기: 카드 자체에서 우상단 모프 구동
+        // 방패 길게 누르기: 카드 자체에서 우상단 모프 구동 (닫기 시 먼지 소멸)
         AnimatedVisibility(
             visible = showAdBlockDialog,
             enter = fadeIn(tween(90)),
-            exit = fadeOut(tween(110))
+            exit = if (prefs.cardVanishStyle != CardVanishStyle.OFF) ExitTransition.None else fadeOut(tween(110))
         ) {
             AdBlockControlDialog(
                 currentHost = currentHost,
                 activeTabId = activeTab.id,
                 onReloadPage = { SpaceManager.reload(activeSpace.id) },
-                onDismiss = { showAdBlockDialog = false }
+                onDismiss = { snap -> emitDustSnapshot(snap, popupDustColor, 0.90f); showAdBlockDialog = false }
             )
         }
 
@@ -2389,14 +2485,17 @@ fun BrowserScreen() {
             }
         )
 
-        // MCP 버튼을 덮으며 카드 자체에서 우상단 모프 구동
+        // MCP 버튼을 덮으며 카드 자체에서 우상단 모프 구동 (닫기 시 먼지 소멸)
         AnimatedVisibility(
             visible = showMcpDrawer,
             enter = fadeIn(tween(90)),
-            exit = fadeOut(tween(110))
+            exit = if (prefs.cardVanishStyle != CardVanishStyle.OFF) ExitTransition.None else fadeOut(tween(110))
         ) {
             McpSettingsDrawer(
-                onDismiss = { showMcpDrawer = false }
+                onDismiss = { snap ->
+                    emitDustSnapshot(snap, popupDustColor, 0.90f)
+                    showMcpDrawer = false
+                }
             )
         }
 
@@ -2416,11 +2515,28 @@ fun BrowserScreen() {
             onOpenDetails = { SpaceManager.openDownloadsTab(activeSpace.id) },
             onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
             onDismiss = { DownloadCenter.dismissBanner() },
+            onDustDismiss = { snap ->
+                emitDustSnapshot(snap, popupDustColor, 0.72f)
+                DownloadCenter.dismissBanner()
+            },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 98.dp)
                 .zIndex(46f)
         )
+
+        // 상단 탭 · MCP · 광고차단 · 번역 설정 · 번역 캡슐 · 다운로드 알림 통합 먼지 소멸 오버레이
+        if (globalDustBursts.isNotEmpty()) {
+            ParticleDisintegrationOverlay(
+                bursts = globalDustBursts,
+                onBurstFinished = { id ->
+                    globalDustBursts = globalDustBursts.filterNot { it.id == id }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(120f)
+            )
+        }
 
         // 동일 파일 중복 다운로드 확인 팝업 (Chrome 1:1)
         duplicateDownloadPrompt?.let { prompt ->
