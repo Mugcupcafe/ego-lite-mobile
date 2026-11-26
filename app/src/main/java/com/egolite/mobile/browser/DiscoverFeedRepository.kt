@@ -126,7 +126,6 @@ object DiscoverFeedRepository {
             }.getOrNull()
 
             if (bmp != null) {
-                if (imageCache.size > 40) imageCache.clear()
                 imageCache.put(imageUrl, bmp)
                 failedImages.remove(imageUrl)
             } else {
