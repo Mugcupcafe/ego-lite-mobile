@@ -1,6 +1,15 @@
 package com.egolite.mobile
 
 import android.Manifest
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import android.content.res.Configuration
+import android.graphics.drawable.Icon
+import android.util.Rational
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -29,6 +38,54 @@ import com.egolite.mobile.ui.EgoLiteTheme
 import java.io.File
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        private const val ACTION_PIP_CONTROL = "com.egolite.mobile.ACTION_PIP_CONTROL"
+        private const val EXTRA_PIP_CMD = "cmd"
+    }
+
+    private val pipControlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_PIP_CONTROL) return
+            val cmd = intent.getStringExtra(EXTRA_PIP_CMD) ?: return
+            val js = when (cmd) {
+                "toggle" -> "(function(){var v=document.querySelector('video');if(v){if(v.paused)v.play();else v.pause();}})();"
+                "rew" -> "(function(){var v=document.querySelector('video');if(v){v.currentTime=Math.max(0,v.currentTime-10);}})();"
+                "fwd" -> "(function(){var v=document.querySelector('video');if(v){v.currentTime=v.currentTime+10;}})();"
+                else -> return
+            }
+            val activeSpace = SpaceManager.getActiveSpace()
+            val wv = SpaceManager.getExistingWebView(activeSpace.activeTab.id)
+            wv?.post { wv.evaluateJavascript(js, null) }
+        }
+    }
+
+    private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+        val actions = listOf(
+            createPipAction(101, "rew", android.R.drawable.ic_media_rew, "10초 뒤로"),
+            createPipAction(102, "toggle", android.R.drawable.ic_media_play, "재생/일시정지"),
+            createPipAction(103, "fwd", android.R.drawable.ic_media_ff, "10초 앞으로")
+        )
+        builder.setActions(actions)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(autoEnter)
+            builder.setSeamlessResizeEnabled(true)
+        }
+        return builder.build()
+    }
+
+    private fun createPipAction(reqCode: Int, cmd: String, iconRes: Int, title: String): RemoteAction {
+        val intent = Intent(ACTION_PIP_CONTROL).setPackage(packageName).putExtra(EXTRA_PIP_CMD, cmd)
+        val pi = PendingIntent.getBroadcast(
+            this,
+            reqCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return RemoteAction(Icon.createWithResource(this, iconRes), title, title, pi)
+    }
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -104,6 +161,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashLogger.install(applicationContext)
+        ContextCompat.registerReceiver(
+            this,
+            pipControlReceiver,
+            IntentFilter(ACTION_PIP_CONTROL),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         WindowCompat.setDecorFitsSystemWindows(window, true)
         SpaceManager.init(applicationContext)
         requestNotificationPermissionIfNeeded()
@@ -138,7 +201,13 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val prefs by SpaceManager.preferences.collectAsState()
+            val fullscreenVideo by BrowserActivityBridge.fullscreenVideo.collectAsState()
             val systemDark = isSystemInDarkTheme()
+            LaunchedEffect(fullscreenVideo.view != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    runCatching { setPictureInPictureParams(buildPipParams(autoEnter = fullscreenVideo.view != null)) }
+                }
+            }
             val isDark = when (prefs.themeMode) {
                 ThemeMode.SYSTEM -> systemDark
                 ThemeMode.DARK -> true
@@ -160,6 +229,18 @@ class MainActivity : ComponentActivity() {
                 BrowserScreen()
             }
         }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (BrowserActivityBridge.fullscreenVideo.value.view != null && !isInPictureInPictureMode) {
+            runCatching { enterPictureInPictureMode(buildPipParams(autoEnter = true)) }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        BrowserActivityBridge.setInPictureInPictureMode(isInPictureInPictureMode)
     }
 
     override fun onResume() {
@@ -190,6 +271,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(pipControlReceiver) }
         BrowserActivityBridge.launchFilePicker = null
         BrowserActivityBridge.launchBookmarkImport = null
         BrowserActivityBridge.launchBookmarkExport = null
