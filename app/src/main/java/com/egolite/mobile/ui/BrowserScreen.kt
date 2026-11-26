@@ -1,5 +1,8 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.toArgb
+import com.egolite.mobile.model.TabWidthMode
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.mutableFloatStateOf
@@ -246,6 +249,7 @@ fun BrowserScreen() {
     var newSpaceDropBounds by remember { mutableStateOf<Rect?>(null) }
     var personalCapsuleBounds by remember { mutableStateOf<Rect?>(null) }
     var rootBoxBounds by remember { mutableStateOf<Rect?>(null) }
+    var contentAspectRatio by remember { mutableFloatStateOf(1.35f) }
     // statusBarTopPx는 아래 density 선언 이후 초기화 (rootBoxTopPx 우선 사용)
     var returningSpaceId by remember { mutableStateOf<String?>(null) }
     var showMcpDrawer by remember { mutableStateOf(false) }
@@ -595,21 +599,50 @@ fun BrowserScreen() {
             label = "tabStripLeftSlide"
         )
 
-        // 메인 뷰포트 양방향 블러 모프 전환 상태 (스페이스 전환 시 부드러운 블러+스케일 진입)
+        // 메인 뷰포트 양방향 컨테이너 모프 전환 (모니터 방향으로 축소·모핑 후 새 공간이 모니터에서 펼쳐짐)
         val mainSwapScale = remember { Animatable(1f) }
         val mainSwapBlur = remember { Animatable(0f) }
         val mainSwapAlpha = remember { Animatable(1f) }
+        val mainSwapOffsetX = remember { Animatable(0f) }
+        val mainSwapOffsetY = remember { Animatable(0f) }
+        val mainSwapCorner = remember { Animatable(16f) }
         fun triggerSpaceSwap(targetId: String) {
             if (targetId == activeSpaceId) return
+            val fromLeft = activeMonitorPos == MonitorPosition.LEFT
+            val shiftPx = with(density) { 54.dp.toPx() }
             returningSpaceId = activeSpaceId
-            SpaceManager.selectSpace(targetId)
             scope.launch {
-                mainSwapScale.snapTo(0.93f)
-                mainSwapBlur.snapTo(11f)
-                mainSwapAlpha.snapTo(0.32f)
-                launch { mainSwapScale.animateTo(1f, animationSpec = EgoMotion.bouncySpring()) }
-                launch { mainSwapBlur.animateTo(0f, animationSpec = tween(340)) }
-                launch { mainSwapAlpha.animateTo(1f, animationSpec = tween(260)) }
+                // Phase 1: 현재 페이지가 모니터 쪽으로 모프 축소
+                val p1 = launch {
+                    launch { mainSwapScale.animateTo(0.84f, animationSpec = tween(110)) }
+                    launch { mainSwapBlur.animateTo(10f, animationSpec = tween(110)) }
+                    launch { mainSwapAlpha.animateTo(0.28f, animationSpec = tween(110)) }
+                    launch { mainSwapCorner.animateTo(32f, animationSpec = tween(110)) }
+                    if (fromLeft) {
+                        launch { mainSwapOffsetX.animateTo(-shiftPx, animationSpec = tween(110)) }
+                    } else {
+                        launch { mainSwapOffsetY.animateTo(-shiftPx, animationSpec = tween(110)) }
+                    }
+                }
+                p1.join()
+
+                // 공간 교체 후 모니터 측에서 탄성 있게 모프 확장
+                SpaceManager.selectSpace(targetId)
+                mainSwapScale.snapTo(0.78f)
+                mainSwapCorner.snapTo(34f)
+                if (fromLeft) {
+                    mainSwapOffsetX.snapTo(-shiftPx * 1.15f)
+                    mainSwapOffsetY.snapTo(0f)
+                } else {
+                    mainSwapOffsetY.snapTo(-shiftPx * 1.15f)
+                    mainSwapOffsetX.snapTo(0f)
+                }
+                launch { mainSwapScale.animateTo(1f, animationSpec = EgoMotion.smoothSpring()) }
+                launch { mainSwapOffsetX.animateTo(0f, animationSpec = EgoMotion.smoothSpring()) }
+                launch { mainSwapOffsetY.animateTo(0f, animationSpec = EgoMotion.smoothSpring()) }
+                launch { mainSwapCorner.animateTo(16f, animationSpec = EgoMotion.smoothSpring()) }
+                launch { mainSwapBlur.animateTo(0f, animationSpec = tween(320)) }
+                launch { mainSwapAlpha.animateTo(1f, animationSpec = tween(220)) }
                 kotlinx.coroutines.delay(520L)
                 returningSpaceId = null
             }
@@ -681,6 +714,7 @@ fun BrowserScreen() {
                         returningSpaceId = returningSpaceId,
                         connectedAiName = connectedAiName,
                         canAddAiSpace = canAddAiSpace,
+                        contentAspectRatio = contentAspectRatio,
                         isTabDragging = draggingTabId != null,
                         hoveredDropSpaceId = hoveredDropSpaceId,
                         isHoveredNewSpaceDrop = hoveredNewSpaceDrop,
@@ -738,6 +772,7 @@ fun BrowserScreen() {
                             returningSpaceId = returningSpaceId,
                             connectedAiName = connectedAiName,
                             canAddAiSpace = canAddAiSpace,
+                            contentAspectRatio = contentAspectRatio,
                             isTabDragging = draggingTabId != null,
                             hoveredDropSpaceId = hoveredDropSpaceId,
                             isHoveredNewSpaceDrop = hoveredNewSpaceDrop,
@@ -848,7 +883,13 @@ fun BrowserScreen() {
                                             alpha = if (isBeingDragged) 0.28f else 1f
                                         }
                                         .height(36.dp)
-                                        .widthIn(min = 112.dp, max = 212.dp)
+                                        .then(
+                                            if (prefs.tabWidthMode == TabWidthMode.MANUAL) {
+                                                Modifier.width(prefs.manualTabWidthDp.coerceIn(110, 240).dp)
+                                            } else {
+                                                Modifier.widthIn(min = 68.dp, max = 212.dp)
+                                            }
+                                        )
                                         .clip(tabShape)
                                         .background(tabBg)
                                         .pointerInput(tab.id, idx) {
@@ -1020,15 +1061,38 @@ fun BrowserScreen() {
                                         )
                                         Spacer(modifier = Modifier.width(5.dp))
                                     }
-                                    Text(
-                                        text = tab.title.ifBlank { tab.url },
-                                        fontSize = 13.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = tabFg,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
+                                    val displayTabTitle = tab.title.ifBlank { tab.url }
+                                    val isDynamic = prefs.tabWidthMode == TabWidthMode.DYNAMIC
+                                    Box(
+                                        modifier = Modifier
+                                            .then(if (isDynamic) Modifier.weight(1f, fill = false) else Modifier.weight(1f))
+                                            .clipToBounds(),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        Text(
+                                            text = displayTabTitle,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = tabFg,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Clip
+                                        )
+                                        if (displayTabTitle.length > 10) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.CenterEnd)
+                                                    .width(22.dp)
+                                                    .height(22.dp)
+                                                    .background(
+                                                        Brush.horizontalGradient(
+                                                            0.0f to Color.Transparent,
+                                                            1.0f to tabBg
+                                                        )
+                                                    )
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Icon(
                                         imageVector = Icons.Default.Close,
@@ -1543,9 +1607,13 @@ fun BrowserScreen() {
             }
 
             val activeSpaceAccent = parseSpaceColor(activeSpace.accentColorHex)
-            // 웹 캔버스 (AI Space일 때 2dp 커스텀 공간 색상 테두리 + 안정적 풀스크린 WebView 호스트)
+            val canvasCornerDp = mainSwapCorner.value.coerceAtLeast(12f).dp
+            val canvasShape = RoundedCornerShape(canvasCornerDp)
+            // 웹 캔버스 (AI Space일 때 상·하단 4모서리 모두 둥근 2dp 공간 색상 테두리 + 모프 전환)
             val canvasBorder = if (activeSpace.type == SpaceType.AI) {
-                Modifier.border(2.dp, activeSpaceAccent, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                Modifier
+                    .padding(start = 3.dp, end = 3.dp, bottom = 4.dp)
+                    .border(2.dp, activeSpaceAccent, canvasShape)
             } else Modifier
 
             val mainBlurMod = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && mainSwapBlur.value > 0.3f) {
@@ -1555,14 +1623,24 @@ fun BrowserScreen() {
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .onSizeChanged { sz ->
+                        if (sz.width > 0 && sz.height > 0) {
+                            val r = (sz.width.toFloat() / sz.height.toFloat()).coerceIn(0.48f, 2.0f)
+                            if (kotlin.math.abs(contentAspectRatio - r) > 0.02f) {
+                                contentAspectRatio = r
+                            }
+                        }
+                    }
                     .graphicsLayer {
                         scaleX = mainSwapScale.value
                         scaleY = mainSwapScale.value
+                        translationX = mainSwapOffsetX.value
+                        translationY = mainSwapOffsetY.value
                         alpha = mainSwapAlpha.value
                     }
                     .then(mainBlurMod)
-                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
                     .then(canvasBorder)
+                    .clip(canvasShape)
             ) {
                 WebViewHostContainer(
                     spaces = spaces,
@@ -1841,14 +1919,8 @@ fun BrowserScreen() {
         // 모바일 크롬 스타일 주소창(Omnibox) 오버레이 (주소창에서 펼쳐지는 스프링 모프)
         AnimatedVisibility(
             visible = showOmniboxOverlay,
-            enter = fadeIn(tween(90)) + expandVertically(
-                animationSpec = EgoMotion.intSizeSpring,
-                expandFrom = Alignment.Top
-            ),
-            exit = fadeOut(tween(130)) + shrinkVertically(
-                animationSpec = tween(210),
-                shrinkTowards = Alignment.Top
-            )
+            enter = fadeIn(tween(70)),
+            exit = fadeOut(tween(130))
         ) {
             ChromeOmniboxOverlay(
                 currentTitle = activeTab.title,
@@ -1897,19 +1969,11 @@ fun BrowserScreen() {
             )
         }
 
-        // 번역 버튼 길게 누르기: 버튼을 덮으며 확장되는 번역 설정 모프 팝업
+        // 번역 버튼 길게 누르기: 카드 자체에서 우상단 모프 구동
         AnimatedVisibility(
             visible = showTranslateSettingsDialog,
-            enter = fadeIn(tween(140)) + scaleIn(
-                animationSpec = EgoMotion.smoothSpring(),
-                initialScale = 0.25f,
-                transformOrigin = TransformOrigin(0.92f, 0.05f)
-            ),
-            exit = fadeOut(tween(120)) + scaleOut(
-                animationSpec = tween(160),
-                targetScale = 0.25f,
-                transformOrigin = TransformOrigin(0.92f, 0.05f)
-            )
+            enter = fadeIn(tween(90)),
+            exit = fadeOut(tween(110))
         ) {
             TranslateSettingsPopupDialog(
                 engine = prefs.translationEngine,
@@ -1938,19 +2002,11 @@ fun BrowserScreen() {
             )
         }
 
-        // 방패 길게 누르기: 방패 버튼을 덮으며 확장되는 광고차단 모프 팝업
+        // 방패 길게 누르기: 카드 자체에서 우상단 모프 구동
         AnimatedVisibility(
             visible = showAdBlockDialog,
-            enter = fadeIn(tween(140)) + scaleIn(
-                animationSpec = EgoMotion.smoothSpring(),
-                initialScale = 0.25f,
-                transformOrigin = TransformOrigin(0.88f, 0.05f)
-            ),
-            exit = fadeOut(tween(120)) + scaleOut(
-                animationSpec = tween(160),
-                targetScale = 0.25f,
-                transformOrigin = TransformOrigin(0.88f, 0.05f)
-            )
+            enter = fadeIn(tween(90)),
+            exit = fadeOut(tween(110))
         ) {
             AdBlockControlDialog(
                 currentHost = currentHost,
@@ -2052,19 +2108,11 @@ fun BrowserScreen() {
             }
         )
 
-        // MCP 버튼을 덮으며 확장되는 컴팩트 모프 팝업 (우측 대형 서랍 대체)
+        // MCP 버튼을 덮으며 카드 자체에서 우상단 모프 구동
         AnimatedVisibility(
             visible = showMcpDrawer,
-            enter = fadeIn(tween(140)) + scaleIn(
-                animationSpec = EgoMotion.smoothSpring(),
-                initialScale = 0.26f,
-                transformOrigin = TransformOrigin(0.82f, 0.05f)
-            ),
-            exit = fadeOut(tween(120)) + scaleOut(
-                animationSpec = tween(160),
-                targetScale = 0.26f,
-                transformOrigin = TransformOrigin(0.82f, 0.05f)
-            )
+            enter = fadeIn(tween(90)),
+            exit = fadeOut(tween(110))
         ) {
             McpSettingsDrawer(
                 onDismiss = { showMcpDrawer = false }
@@ -2229,6 +2277,9 @@ private fun WebViewHostContainer(
     activeSpace: BrowserSpace
 ) {
     val activeTab = activeSpace.activeTab
+    val m3RefreshBg = MaterialTheme.colorScheme.surfaceContainerHigh.toArgb()
+    val m3RefreshPrimary = MaterialTheme.colorScheme.primary.toArgb()
+    val m3RefreshTertiary = MaterialTheme.colorScheme.tertiary.toArgb()
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { ctx ->
@@ -2244,10 +2295,17 @@ private fun WebViewHostContainer(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
+                val d = ctx.resources.displayMetrics.density
+                setProgressBackgroundColorSchemeColor(m3RefreshBg)
+                setColorSchemeColors(m3RefreshPrimary, m3RefreshTertiary)
+                setSlingshotDistance((96f * d).toInt())
+                setProgressViewOffset(true, 0, (60f * d).toInt())
                 addView(host)
             }
         },
         update = { swipe ->
+            swipe.setProgressBackgroundColorSchemeColor(m3RefreshBg)
+            swipe.setColorSchemeColors(m3RefreshPrimary, m3RefreshTertiary)
             val host = swipe.findViewWithTag<FrameLayout>("webview_host") ?: return@AndroidView
             val activeWv = SpaceManager.getOrCreateWebView(activeSpace.id, activeTab)
 
