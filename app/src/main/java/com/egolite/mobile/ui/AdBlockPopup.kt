@@ -1,5 +1,6 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -87,7 +88,10 @@ fun AdBlockControlDialog(
             ) { onDismiss() }
     )
 
-    // 방패 버튼을 그대로 덮으며 확장되는 우상단 모프 팝업
+    var cardVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { cardVisible = true }
+
+    // 방패 버튼을 그대로 덮으며 카드 자체만 깔끔하게 모프
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -95,21 +99,21 @@ fun AdBlockControlDialog(
         contentAlignment = Alignment.TopEnd
     ) {
         AnimatedVisibility(
-            visible = true,
-            enter = fadeIn(tween(110)) + scaleIn(
-                animationSpec = tween(140),
-                initialScale = 0.88f,
-                transformOrigin = TransformOrigin(0.85f, 0f)
+            visible = cardVisible,
+            enter = fadeIn(tween(130)) + scaleIn(
+                animationSpec = EgoMotion.smoothSpring(),
+                initialScale = 0.72f,
+                transformOrigin = TransformOrigin(1f, 0f)
             ),
-            exit = fadeOut(tween(90)) + scaleOut(
-                animationSpec = tween(110),
-                targetScale = 0.92f,
-                transformOrigin = TransformOrigin(0.85f, 0f)
+            exit = fadeOut(tween(100)) + scaleOut(
+                animationSpec = tween(130),
+                targetScale = 0.78f,
+                transformOrigin = TransformOrigin(1f, 0f)
             )
         ) {
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface,
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
                 shadowElevation = 14.dp,
                 tonalElevation = 4.dp,
                 modifier = Modifier
