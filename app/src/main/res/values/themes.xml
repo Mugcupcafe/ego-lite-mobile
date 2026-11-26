@@ -2,5 +2,14 @@
     <style name="Theme.EgoLiteMobile" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:isLightTheme">true</item>
+    </style>
+
+    <style name="Theme.EgoLiteMobile.WebDark" parent="android:Theme.Material.NoActionBar">
+        <item name="android:isLightTheme">false</item>
+    </style>
+
+    <style name="Theme.EgoLiteMobile.WebLight" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:isLightTheme">true</item>
     </style>
 </resources>
