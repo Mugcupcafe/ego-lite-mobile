@@ -141,6 +141,9 @@ import com.egolite.mobile.model.MonitorPosition
 import com.egolite.mobile.model.SearchEngine
 import com.egolite.mobile.model.CardVanishStyle
 import com.egolite.mobile.model.ThemeMode
+import com.egolite.mobile.model.ThemeColorPreset
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.text.style.TextOverflow
 import com.egolite.mobile.model.TranslationEngine
 import com.egolite.mobile.model.WebFontMode
 import com.egolite.mobile.tunnel.EgoForegroundService
@@ -201,9 +204,10 @@ fun ChromeSettingsScreen(
     }
 
     val isDarkCanvas = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val settingsCanvasColor = if (isDarkCanvas) Color(0xFF131314) else Color(0xFFECEEF5)
-    val settingsCardColor = if (isDarkCanvas) Color(0xFF1F2024) else Color(0xFFFFFFFF)
-    val selectedNavColor = if (isDarkCanvas) Color(0xFF28354E) else Color(0xFFDCE5F9)
+    val egoChromeColors = LocalEgoChromeColors.current
+    val settingsCanvasColor = egoChromeColors.settingsCanvasBg
+    val settingsCardColor = egoChromeColors.settingsCardBg
+    val selectedNavColor = egoChromeColors.selectedNavBg
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -1057,6 +1061,25 @@ fun ChromeSettingsScreen(
                                     }
 
                                     Text(
+                                        text = "테마 색상 팔레트",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                                    )
+                                    M3SettingsGroup(settingsCardColor) {
+                                        item {
+                                            ThemeColorPalettePickerCard(
+                                                selectedPreset = prefs.themeColorPreset,
+                                                isDarkPreview = isDarkCanvas,
+                                                onSelectPreset = { preset ->
+                                                    SpaceManager.updatePreferences { it.copy(themeColorPreset = preset) }
+                                                }
+                                            )
+                                        }
+                                    }
+
+                                    Text(
                                         text = "주소창 툴바 버튼 커스텀",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Medium,
@@ -1075,7 +1098,7 @@ fun ChromeSettingsScreen(
                                         item {
                                             ChromeSwitchItem(
                                                 title = "MCP 상태 배지",
-                                                subtitle = "MCP 연결 끊김 경고 배지 표시",
+                                                subtitle = "주소창에 MCP 노드 허브 연결 상태 아이콘 표시",
                                                 checked = prefs.showMcpBadgeButton,
                                                 onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showMcpBadgeButton = c) } }
                                             )
@@ -1201,7 +1224,7 @@ fun ChromeSettingsScreen(
                                             }
                                         }
                                     }
-                                    if (prefs.cardVanishStyle == CardVanishStyle.HARMONY_DUST) {
+                                    if (prefs.cardVanishStyle == CardVanishStyle.HARMONY_DUST || prefs.cardVanishStyle == CardVanishStyle.HARMONY_GPU_SHADER) {
                                         item {
                                             Column(
                                                 modifier = Modifier
@@ -1262,6 +1285,43 @@ fun ChromeSettingsScreen(
                                                     },
                                                     valueRange = 600f..1800f
                                                 )
+                                            }
+                                        }
+                                        item {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Text("먼지 애니메이션 프레임 상한", fontSize = 15.sp, fontWeight = FontWeight.Normal)
+                                                Row(
+                                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    listOf(
+                                                        60 to "60fps (절전 추천)",
+                                                        90 to "90fps (부드러움)",
+                                                        0 to "기기 최대 (120Hz+)"
+                                                    ).forEach { (fps, label) ->
+                                                        val sel = prefs.vanishMaxFps == fps
+                                                        Surface(
+                                                            shape = CircleShape,
+                                                            color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                            modifier = Modifier.clickable {
+                                                                SpaceManager.updatePreferences { it.copy(vanishMaxFps = fps) }
+                                                            }
+                                                        ) {
+                                                            Text(
+                                                                text = label,
+                                                                fontSize = 13.sp,
+                                                                fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
+                                                                color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -2107,7 +2167,7 @@ private fun ToolbarCustomPreviewCard(
         ) {
             Text("실시간 툴바 미리보기", fontSize = 15.sp, fontWeight = FontWeight.Medium)
             Text(
-                text = "길게 눌러 좌우로 순서 이동",
+                text = "아래 칩을 길게 눌러 좌우로 순서 이동",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.primary
             )
@@ -2248,14 +2308,24 @@ private fun ToolbarCustomPreviewCard(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                EgoIcon(
-                                    imageVector = iconVec,
-                                    contentDescription = key,
-                                    modifier = Modifier.size(18.dp),
-                                    tint = tintCol,
-                                    filled = key == "ADBLOCK" || key == "PROFILE",
-                                    symbolSize = 18.dp
-                                )
+                                if (key == "MCP") {
+                                    McpHubStatusIcon(
+                                        disconnected = true,
+                                        contentDescription = "MCP",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        cutoutColor = if (isDragging) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                        symbolSize = 18.dp
+                                    )
+                                } else {
+                                    EgoIcon(
+                                        imageVector = iconVec,
+                                        contentDescription = key,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = tintCol,
+                                        filled = key == "ADBLOCK" || key == "PROFILE",
+                                        symbolSize = 18.dp
+                                    )
+                                }
                             }
                         }
                     }
@@ -2263,6 +2333,127 @@ private fun ToolbarCustomPreviewCard(
 
                 Spacer(modifier = Modifier.width(6.dp))
                 EgoIcon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 18.dp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeColorPalettePickerCard(
+    selectedPreset: ThemeColorPreset,
+    isDarkPreview: Boolean,
+    onSelectPreset: (ThemeColorPreset) -> Unit
+) {
+    val allPresets = remember { ThemeColorPreset.entries.toList() }
+    val rows = remember(allPresets) { allPresets.chunked(5) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = selectedPreset.label,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = selectedPreset.subtitle,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (selectedPreset.isSystem) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Text(
+                        text = "Material You",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            rows.forEach { rowPresets ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    rowPresets.forEach { preset ->
+                        val isSelected = preset == selectedPreset
+                        val swatch = previewSwatchForPreset(preset, isDarkPreview)
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable { onSelectPreset(preset) }
+                                .padding(vertical = 6.dp, horizontal = 2.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(swatch.backdrop)
+                                    .border(
+                                        width = if (isSelected) 2.5.dp else 1.dp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                // 하단 절반: 선택 탭 & 3-그룹 툴바 색상 프리뷰
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                        .height(22.dp)
+                                        .background(swatch.group)
+                                )
+                                // 중앙 포인트 액센트 또는 선택 체크 배지
+                                Box(
+                                    modifier = Modifier
+                                        .size(if (isSelected) 20.dp else 12.dp)
+                                        .clip(CircleShape)
+                                        .background(swatch.accent),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelected) {
+                                        EgoIcon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "선택됨",
+                                            modifier = Modifier.size(13.dp),
+                                            tint = Color(0xFF0B192C),
+                                            symbolSize = 13.dp
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = preset.label.replace("크롬 ", "").replace("시스템 색상 따르기", "시스템"),
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
         }
     }
