@@ -87,6 +87,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -194,43 +195,69 @@ fun AiLiveMonitorTray(
     val prefs by SpaceManager.preferences.collectAsState()
     val activeVanishBursts = remember { mutableStateListOf<DustVanishRequest>() }
     val vanishingSpaceIds = remember { mutableStateListOf<String>() }
-    val pendingCloseByBurstId = remember { mutableMapOf<Long, String>() }
     val cardLocalRects = remember { mutableMapOf<String, Rect>() }
+    val vanishScope = rememberCoroutineScope()
 
-    fun triggerDustVanishClose(space: BrowserSpace) {
+    fun triggerDustVanishClose(space: BrowserSpace, dropOffset: Offset = Offset.Zero) {
         if (space.id in vanishingSpaceIds) return
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         val style = prefs.cardVanishStyle
-        val rect = cardLocalRects[space.id]
-        if (style == CardVanishStyle.OFF || rect == null || rect.width <= 10f || rect.height <= 10f) {
+        val baseRect = cardLocalRects[space.id]
+        if (style == CardVanishStyle.OFF || baseRect == null || baseRect.width <= 10f || baseRect.height <= 10f) {
             onCloseSpace(space.id)
             return
         }
-        // 2단계 시퀀스: 애니메이션이 끝날 때까지 카드의 빈 자리를 유지(투명 처리)하고, 종료 후 실제 삭제하여 주변 카드가 자연스럽게 채움
+        // 드래그 삭제 시 원위치가 아닌 '실제로 놓은 삭제 영역 좌표'에서 즉시 분해!
+        val isDraggedDrop = dropOffset != Offset.Zero
+        val finalRect = if (isDraggedDrop) baseRect.translate(dropOffset.x, dropOffset.y) else baseRect
+        val originX = if (isDraggedDrop) finalRect.center.x else (finalRect.right - 24f)
+        val originY = if (isDraggedDrop) finalRect.center.y else (finalRect.top + 24f)
+
         vanishingSpaceIds.add(space.id)
         val burstId = System.nanoTime()
-        pendingCloseByBurstId[burstId] = space.id
         activeVanishBursts.add(
             DustVanishRequest(
                 id = burstId,
-                rect = rect,
+                rect = finalRect,
                 accentColor = parseSpaceColor(space.accentColorHex),
                 thumbnail = thumbnails[space.id],
                 style = style,
                 particleCount = prefs.vanishParticleCount,
                 durationMs = prefs.vanishDurationMs,
-                maxFps = prefs.vanishMaxFps
+                originX = originX,
+                originY = originY,
+                maxFps = prefs.vanishMaxFps,
+                direction = prefs.vanishDirection,
+                edgeGlow = prefs.vanishEdgeGlow,
+                curlStrength = prefs.vanishCurlStrength,
+                shockwaveStrength = prefs.vanishShockwaveStrength,
+                airDrag = prefs.vanishAirDrag,
+                additiveGlow = prefs.vanishAdditiveGlow,
+                zPerspective = prefs.vanishZPerspective,
+                sizeAdaptiveDuration = prefs.vanishSizeAdaptiveDuration,
+            sandRibbonDensity = prefs.sandRibbonDensity,
+            sandSilverRatio = prefs.sandSilverRatio,
+            sandWindStrength = prefs.sandWindStrength,
+            sandSwirlStrength = prefs.sandSwirlStrength
             )
         )
+        // 하모니OS 2단계 리플로우: 드래그 삭제는 즉시, × 버튼 삭제는 40% 침식 시점에 슬롯 제거 -> 주변 카드 과감쇠 스프링 이동
+        val holdMs = if (isDraggedDrop) 50L else when (style) {
+            CardVanishStyle.HARMONY_DUST, CardVanishStyle.HARMONY_GPU_SHADER, CardVanishStyle.HARMONY_7_SAND_WAVE ->
+                (prefs.vanishDurationMs * 0.42f).toLong().coerceIn(220L, 560L)
+            CardVanishStyle.LIGHT_PARTICLES -> 240L
+            CardVanishStyle.SCALE_FADE -> 160L
+            CardVanishStyle.OFF -> 0L
+        }
+        vanishScope.launch {
+            delay(holdMs)
+            onCloseSpace(space.id)
+            vanishingSpaceIds.remove(space.id)
+        }
     }
 
     fun finishVanishBurst(burstId: Long) {
         activeVanishBursts.removeAll { it.id == burstId }
-        val spaceId = pendingCloseByBurstId.remove(burstId)
-        if (spaceId != null) {
-            vanishingSpaceIds.remove(spaceId)
-            onCloseSpace(spaceId)
-        }
     }
 
     if (position == MonitorPosition.LEFT) {
@@ -327,7 +354,7 @@ fun AiLiveMonitorTray(
                                     val curList = latestSpaces
                                     val draggedSpace = curList.firstOrNull { it.id == curId }
                                     if (delNow && draggedSpace != null && draggedSpace.type == SpaceType.AI) {
-                                        triggerDustVanishClose(draggedSpace)
+                                        triggerDustVanishClose(draggedSpace, Offset(dragOffsetX * 0.45f, dragOffsetY))
                                     } else if (curId != null && fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
                                         val targetSpace = curList.getOrNull(toIdx)
                                         if (targetSpace != null && targetSpace.id != curId) {
@@ -385,7 +412,7 @@ fun AiLiveMonitorTray(
                             connectedAiName = connectedAiName,
                             thumbnail = thumbnails[space.id],
                             modifier = Modifier
-                                .then(if (draggingId == null) Modifier.animateItem() else Modifier)
+                                .then(if (draggingId == null) Modifier.animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f)) else Modifier)
                                 .graphicsLayer { alpha = if (space.id in vanishingSpaceIds) 0f else 1f }
                                 .onGloballyPositioned { coords ->
                                     onRegisterSpaceBounds(space.id, coords.boundsInRoot())
@@ -405,7 +432,7 @@ fun AiLiveMonitorTray(
                                 isFullPane = fullPane,
                                 modifier = Modifier
                                     .then(if (fullPane) Modifier.fillParentMaxHeight(0.88f) else Modifier)
-                                    .animateItem()
+                                    .animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f))
                                     .onGloballyPositioned { coords ->
                                         onRegisterNewSpaceBounds(coords.boundsInRoot())
                                     }
@@ -628,7 +655,7 @@ fun AiLiveMonitorTray(
                                     val curList = latestSpaces
                                     val draggedSpace = curList.firstOrNull { it.id == curId }
                                     if (delNow && draggedSpace != null && draggedSpace.type == SpaceType.AI) {
-                                        triggerDustVanishClose(draggedSpace)
+                                        triggerDustVanishClose(draggedSpace, Offset(dragOffsetX, dragOffsetY * 0.55f))
                                     } else if (curId != null && fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
                                         val targetSpace = curList.getOrNull(toIdx)
                                         if (targetSpace != null && targetSpace.id != curId) {
@@ -686,7 +713,7 @@ fun AiLiveMonitorTray(
                             connectedAiName = connectedAiName,
                             thumbnail = thumbnails[space.id],
                             modifier = Modifier
-                                .then(if (draggingId == null) Modifier.animateItem() else Modifier)
+                                .then(if (draggingId == null) Modifier.animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f)) else Modifier)
                                 .graphicsLayer { alpha = if (space.id in vanishingSpaceIds) 0f else 1f }
                                 .onGloballyPositioned { coords ->
                                     onRegisterSpaceBounds(space.id, coords.boundsInRoot())
@@ -706,7 +733,7 @@ fun AiLiveMonitorTray(
                                 isFullPane = fullPane,
                                 modifier = Modifier
                                     .then(if (fullPane) Modifier.fillParentMaxWidth(0.92f) else Modifier)
-                                    .animateItem()
+                                    .animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f))
                                     .onGloballyPositioned { coords ->
                                         onRegisterNewSpaceBounds(coords.boundsInRoot())
                                     }
