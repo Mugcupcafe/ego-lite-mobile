@@ -241,7 +241,7 @@ fun ChromeOmniboxOverlay(
                 }
 
                 AnimatedVisibility(
-                    visible = morphExpanded,
+                    visible = !isClosingMorph && mp > 0.08f,
                     enter = expandVertically(animationSpec = EgoMotion.morphIntSizeSpring, expandFrom = Alignment.Top) + fadeIn(tween(150)),
                     exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) + fadeOut(tween(120))
                 ) {
