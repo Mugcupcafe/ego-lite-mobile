@@ -2617,7 +2617,7 @@ fun BrowserScreen() {
         ChromeDownloadStatusBanner(
             banner = downloadBanner,
             onOpenDetails = { SpaceManager.openDownloadsTab(activeSpace.id) },
-            onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
+            onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true) },
             onDismiss = { DownloadCenter.dismissBanner() },
             onDustDismiss = { snap ->
                 emitDustSnapshot(snap, popupDustColor, 0.72f)
