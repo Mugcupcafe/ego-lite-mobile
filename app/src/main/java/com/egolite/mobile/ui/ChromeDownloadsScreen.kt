@@ -72,6 +72,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -85,6 +89,7 @@ import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -166,25 +171,38 @@ fun ChromeDownloadStatusBanner(
                     alpha = (1f - (abs(swipeX.value) / (dismissThresholdPx * 2.2f))).coerceIn(0.15f, 1f)
                 }
                 .pointerInput(rec.id, banner.isCompleted) {
+                    val vt = VelocityTracker()
                     detectHorizontalDragGestures(
+                        onDragStart = { vt.resetTracking() },
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
+                            vt.addPosition(change.uptimeMillis, change.position)
                             scope.launch { swipeX.snapTo(swipeX.value + dragAmount) }
                         },
                         onDragEnd = {
+                            val vx = vt.calculateVelocity().x
                             scope.launch {
-                                if (abs(swipeX.value) >= dismissThresholdPx) {
-                                    val target = if (swipeX.value >= 0f) dismissThresholdPx * 4.5f else -dismissThresholdPx * 4.5f
-                                    swipeX.animateTo(target, animationSpec = tween(160))
+                                if (abs(swipeX.value) >= dismissThresholdPx || abs(vx) >= 950f) {
+                                    val dir = if (abs(vx) >= 950f) (if (vx >= 0f) 1f else -1f) else (if (swipeX.value >= 0f) 1f else -1f)
+                                    val target = dir * dismissThresholdPx * 4.5f
+                                    swipeX.animateTo(
+                                        targetValue = target,
+                                        animationSpec = EgoMotion.responsiveSpring(),
+                                        initialVelocity = vx
+                                    )
                                     onDismiss()
                                 } else {
-                                    swipeX.animateTo(0f, animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f))
+                                    swipeX.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = EgoMotion.responsiveSpring(),
+                                        initialVelocity = vx
+                                    )
                                 }
                             }
                         },
                         onDragCancel = {
                             scope.launch {
-                                swipeX.animateTo(0f, animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f))
+                                swipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring())
                             }
                         }
                     )
@@ -443,6 +461,9 @@ fun ChromeDownloadsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(DownloadFilter.ALL) }
     var vanishingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var previewMedia by remember { mutableStateOf<Triple<DownloadRecord, Bitmap?, Rect>?>(null) }
+    var containerRootRect by remember { mutableStateOf<Rect?>(null) }
+    val lightboxAnim = remember { Animatable(0f) }
 
     val storageSummary = remember(records) { queryDeviceStorageSummary(records) }
 
@@ -470,7 +491,7 @@ fun ChromeDownloadsScreen(
 
     fun triggerDeleteWithDust(rec: DownloadRecord, snap: VanishSnapshot) {
         if (prefs.cardVanishStyle == CardVanishStyle.OFF || rec.id in vanishingIds) {
-            DownloadCenter.deleteRecord(context, rec.id)
+            DownloadCenter.deleteRecord(rec.id)
             return
         }
         vanishingIds = vanishingIds + rec.id
@@ -484,7 +505,7 @@ fun ChromeDownloadsScreen(
         }
         scope.launch {
             delay(waitMs)
-            DownloadCenter.deleteRecord(context, rec.id)
+            DownloadCenter.deleteRecord(rec.id)
             vanishingIds = vanishingIds - rec.id
         }
     }
@@ -494,15 +515,19 @@ fun ChromeDownloadsScreen(
         color = canvasBg
     ) {
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { coords -> containerRootRect = coords.boundsInRoot() },
             contentAlignment = Alignment.TopCenter
         ) {
+            val dlElastic = rememberElasticOverscroll(isVertical = true, maxPullPx = 88f)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 640.dp),
+                    .widthIn(max = 640.dp)
+                    .then(dlElastic.containerModifier),
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp + dlElastic.extraSpacingDp)
             ) {
                 // 1) 제목("다운로드") + 우측 설정 톱니바퀴 (크롬 1:1)
                 item(key = "dl_header") {
@@ -719,8 +744,19 @@ fun ChromeDownloadsScreen(
                                     ChromeMediaDownloadTile(
                                         record = rec,
                                         isVanishing = rec.id in vanishingIds,
+                                        onOpenPreview = { bmp, rect ->
+                                            if (isImageRecord(rec) && rect != null) {
+                                                previewMedia = Triple(rec, bmp, rect)
+                                                scope.launch {
+                                                    lightboxAnim.snapTo(0f)
+                                                    lightboxAnim.animateTo(1f, animationSpec = EgoMotion.morphSpring())
+                                                }
+                                            } else {
+                                                DownloadCenter.openFile(context, rec.contentUri, rec.mimeType)
+                                            }
+                                        },
                                         onOpen = { DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
-                                        onShare = { DownloadCenter.shareFile(context, rec.contentUri, rec.mimeType) },
+                                        onShare = { DownloadCenter.shareFile(context, rec) },
                                         onDeleteWithSnapshot = { snap -> triggerDeleteWithDust(rec, snap) },
                                         modifier = Modifier.weight(1f)
                                     )
@@ -738,9 +774,105 @@ fun ChromeDownloadsScreen(
                                 isVanishing = rec.id in vanishingIds,
                                 modifier = Modifier.animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f)),
                                 onOpen = { DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
-                                onShare = { DownloadCenter.shareFile(context, rec.contentUri, rec.mimeType) },
+                                onShare = { DownloadCenter.shareFile(context, rec) },
                                 onDeleteWithSnapshot = { snap -> triggerDeleteWithDust(rec, snap) }
                             )
+                        }
+                    }
+                }
+            }
+
+            // 일경도저 이미지 타일 -> 확대 라이트박스 연속 모핑 미리보기
+            previewMedia?.let { (rec, bmp, fromRect) ->
+                val cRect = containerRootRect
+                if (cRect != null) {
+                    val p = lightboxAnim.value.coerceIn(0f, 1f)
+                    val densityLocal = LocalDensity.current
+                    val targetW = (cRect.width * 0.86f).coerceAtMost(with(densityLocal) { 680.dp.toPx() })
+                    val targetH = (cRect.height * 0.78f).coerceAtMost(with(densityLocal) { 560.dp.toPx() })
+                    val targetLeft = (cRect.width - targetW) / 2f
+                    val targetTop = (cRect.height - targetH) / 2f
+
+                    val startLeft = fromRect.left - cRect.left
+                    val startTop = fromRect.top - cRect.top
+                    val curLeft = startLeft + (targetLeft - startLeft) * p
+                    val curTop = startTop + (targetTop - startTop) * p
+                    val curW = fromRect.width + (targetW - fromRect.width) * p
+                    val curH = fromRect.height + (targetH - fromRect.height) * p
+                    val curCorner = (4f + 20f * p).dp
+
+                    fun closeLightbox() {
+                        scope.launch {
+                            lightboxAnim.animateTo(0f, animationSpec = EgoMotion.responsiveSpring())
+                            previewMedia = null
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.68f * p))
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { closeLightbox() }
+                            .zIndex(80f)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(curCorner),
+                            color = Color(0xFF1A1D24),
+                            shadowElevation = (18f * p).dp,
+                            modifier = Modifier
+                                .offset { IntOffset(curLeft.toInt(), curTop.toInt()) }
+                                .width(with(densityLocal) { curW.toDp() })
+                                .height(with(densityLocal) { curH.toDp() })
+                                .clickable(
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() }
+                                ) {}
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                if (bmp != null && !bmp.isRecycled) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = rec.fileName,
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier.fillMaxSize().padding(bottom = 52.dp)
+                                    )
+                                }
+                                if (p > 0.35f) {
+                                    Row(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .background(Color.Black.copy(alpha = 0.55f))
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = rec.fileName,
+                                            fontSize = 13.sp,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = {
+                                            DownloadCenter.openFile(context, rec.contentUri, rec.mimeType)
+                                        }) {
+                                            Text("열기", color = Color(0xFFA8C7FA), fontSize = 13.sp)
+                                        }
+                                        TextButton(onClick = {
+                                            DownloadCenter.shareFile(context, rec)
+                                        }) {
+                                            Text("공유", color = Color.White, fontSize = 13.sp)
+                                        }
+                                        TextButton(onClick = { closeLightbox() }) {
+                                            Text("닫기", color = Color(0xFFD1D5DB), fontSize = 13.sp)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -753,6 +885,7 @@ fun ChromeDownloadsScreen(
 private fun ChromeMediaDownloadTile(
     record: DownloadRecord,
     isVanishing: Boolean,
+    onOpenPreview: (Bitmap?, Rect?) -> Unit,
     onOpen: () -> Unit,
     onShare: () -> Unit,
     onDeleteWithSnapshot: (VanishSnapshot) -> Unit,
@@ -781,7 +914,7 @@ private fun ChromeMediaDownloadTile(
             }
             .clip(RoundedCornerShape(4.dp))
             .background(Color(0xFF9EA2AA))
-            .clickable(enabled = !isVanishing, onClick = onOpen),
+            .clickable(enabled = !isVanishing) { onOpenPreview(thumb, tileRect) },
         contentAlignment = Alignment.Center
     ) {
         val bmp = thumb
