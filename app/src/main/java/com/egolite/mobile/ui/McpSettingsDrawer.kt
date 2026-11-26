@@ -142,7 +142,7 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
                 ) {
                     Text("MCP · 터널 · 브라우저 설정", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "닫기")
+                        EgoIcon(Icons.Default.Close, contentDescription = "닫기")
                     }
                 }
 
@@ -186,7 +186,7 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
                             val newTok = OAuth21Manager.rotateBearerToken()
                             EgoForegroundService.updateTunnelSettings { it.copy(bearerToken = newTok) }
                         }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "토큰 재발급")
+                            EgoIcon(Icons.Default.Refresh, contentDescription = "토큰 재발급")
                         }
                     }
                 )
@@ -334,7 +334,7 @@ private fun CopyableField(
                 )
                 trailingExtra?.invoke()
                 IconButton(onClick = onCopy) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "복사")
+                    EgoIcon(Icons.Default.ContentCopy, contentDescription = "복사")
                 }
             }
         }
