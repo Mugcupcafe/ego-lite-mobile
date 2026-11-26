@@ -96,16 +96,21 @@ fun PillSpaceCapsule(
     val dragThresholdY = with(density) { 26.dp.toPx() }
     val totalSlots = spaceCount + if (canAddAiSpace) 1 else 0
 
-    val infiniteTransition = rememberInfiniteTransition(label = "aiGlow")
-    val angle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "glowAngle"
-    )
+    // 발열 최적화: AI가 실제 작업 중일 때만 120Hz 회전 광채 애니메이션 구동
+    val angle = if (isAnyAiWorking) {
+        val infiniteTransition = rememberInfiniteTransition(label = "aiGlow")
+        infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "glowAngle"
+        ).value
+    } else {
+        0f
+    }
 
     val borderModifier = if (isAnyAiWorking) {
         Modifier.drawWithContent {
