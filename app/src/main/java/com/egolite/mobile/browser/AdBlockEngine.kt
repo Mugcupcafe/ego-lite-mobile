@@ -1,5 +1,7 @@
 package com.egolite.mobile.browser
 
+import com.egolite.mobile.nativebridge.EgoRustBridge
+
 import android.content.Context
 import android.net.Uri
 import android.webkit.WebResourceResponse
@@ -39,6 +41,13 @@ object AdBlockEngine {
 
     private val _state = MutableStateFlow(AdBlockUiState())
     val state: StateFlow<AdBlockUiState> = _state.asStateFlow()
+
+    private fun syncToRust() {
+        EgoRustBridge.syncAdBlockRules(
+            domains = defaultBlockedHosts + _state.value.customBlockedHosts,
+            keywords = blockedPathKeywords
+        )
+    }
 
     fun init(context: Context) {
         if (!::appContext.isInitialized) {
@@ -148,11 +157,13 @@ object AdBlockEngine {
         if (clean.isBlank()) return
         _state.update { it.copy(customBlockedHosts = it.customBlockedHosts + clean) }
         saveConfig()
+        syncToRust()
     }
 
     fun removeCustomBlockedHost(host: String) {
         _state.update { it.copy(customBlockedHosts = it.customBlockedHosts - host) }
         saveConfig()
+        syncToRust()
     }
 
     fun addCustomCssSelector(selector: String) {
@@ -205,11 +216,15 @@ object AdBlockEngine {
         if (requestUrl.contains("/cdn-cgi/", ignoreCase = true)) return false
 
         val st = _state.value
-        val hostMatch = matchesBlockedDomain(host, st.customBlockedHosts)
         val path = uri.path?.lowercase().orEmpty()
-        val pathMatch = !hostMatch && blockedPathKeywords.any { path.contains(it) }
+        val blocked = if (EgoRustBridge.isLoaded) {
+            EgoRustBridge.shouldBlockNative(host, path)
+        } else {
+            val hostMatch = matchesBlockedDomain(host, st.customBlockedHosts)
+            hostMatch || blockedPathKeywords.any { path.contains(it) }
+        }
 
-        if (hostMatch || pathMatch) {
+        if (blocked) {
             _state.update { cur ->
                 val tabCnt = (cur.perTabCounts[tabId] ?: 0) + 1
                 val recent = (listOf(host) + cur.recentBlockedHosts.filterNot { it == host }).take(20)
