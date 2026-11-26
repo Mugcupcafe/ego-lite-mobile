@@ -218,12 +218,12 @@ fun ChromeNewTabPage(
                         .padding(horizontal = 20.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Search,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
-                    )
+                    , symbolSize = 22.dp)
                     Spacer(modifier = Modifier.width(14.dp))
                     Text(
                         text = "Google 검색 또는 URL 입력",
@@ -299,7 +299,7 @@ fun ChromeNewTabPage(
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = "새로 추가",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
@@ -352,12 +352,12 @@ fun ChromeNewTabPage(
                         if (isLoadingFeed) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         } else {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = "피드 새로고침",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
-                            )
+                            , symbolSize = 20.dp)
                         }
                     }
                 }
@@ -637,23 +637,23 @@ private fun ChromeDiscoverNewsCard(
                     onClick = onShare,
                     modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Share,
                         contentDescription = "공유",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(17.dp)
-                    )
+                    , symbolSize = 17.dp)
                 }
                 IconButton(
                     onClick = onOpenMenu,
                     modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.MoreVert,
                         contentDescription = "뉴스 메뉴",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
-                    )
+                    , symbolSize = 18.dp)
                 }
             }
         }
@@ -722,19 +722,19 @@ private fun ChromeDiscoverTrendCard(
                     color = badgeColor
                 )
                 Spacer(modifier = Modifier.width(10.dp))
-                Icon(Icons.Default.ThumbUpOffAlt, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp))
+                EgoIcon(Icons.Default.ThumbUpOffAlt, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp), symbolSize = 13.dp)
                 Spacer(modifier = Modifier.width(2.dp))
                 Text("${trend.score}", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.width(8.dp))
-                Icon(Icons.Default.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp))
+                EgoIcon(Icons.Default.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp), symbolSize = 13.dp)
                 Spacer(modifier = Modifier.width(2.dp))
                 Text("${trend.comments}", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = onShare, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Default.Share, contentDescription = "공유", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                    EgoIcon(Icons.Default.Share, contentDescription = "공유", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                 }
                 IconButton(onClick = onOpenMenu, modifier = Modifier.size(30.dp)) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "메뉴", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp))
+                    EgoIcon(Icons.Default.MoreVert, contentDescription = "메뉴", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp), symbolSize = 17.dp)
                 }
             }
         }
@@ -824,12 +824,12 @@ private fun SheetActionRow(
             .padding(horizontal = 20.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
+        EgoIcon(
             imageVector = icon,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(21.dp)
-        )
+        , symbolSize = 21.dp)
         Spacer(modifier = Modifier.width(16.dp))
         Text(
             text = label,
@@ -862,12 +862,12 @@ private fun DiscoverTabChip(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(
+            EgoIcon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(16.dp)
-            )
+            , symbolSize = 16.dp)
             Text(
                 text = label,
                 fontSize = 13.sp,
