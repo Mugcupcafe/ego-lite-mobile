@@ -1,5 +1,6 @@
 package com.egolite.mobile.browser
 
+import android.util.LruCache
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
@@ -56,7 +57,8 @@ object DiscoverFeedRepository {
 
     private val newsCache = ConcurrentHashMap<NewsCategory, Pair<Long, List<NewsArticleItem>>>()
     private var trendsCache: Pair<Long, List<TrendIdeaItem>>? = null
-    private val imageCache = ConcurrentHashMap<String, Bitmap>()
+    // 메모리 최적화: Discover 피드 썸네일 최대 40장만 RAM에 유지 (LRU 자동 정리)
+    private val imageCache = LruCache<String, Bitmap>(40)
     private val failedImages = ConcurrentHashMap<String, Long>()
 
     private fun httpGet(endpoint: String, timeoutMs: Int = 7_500, maxBytes: Int = 512_000): String? {
@@ -91,7 +93,7 @@ object DiscoverFeedRepository {
 
     suspend fun loadArticleImage(imageUrl: String?): Bitmap? {
         if (imageUrl.isNullOrBlank() || !imageUrl.startsWith("http")) return null
-        imageCache[imageUrl]?.let { return it }
+        imageCache.get(imageUrl)?.let { return it }
         val lastFail = failedImages[imageUrl]
         if (lastFail != null && System.currentTimeMillis() - lastFail < 180_000L) return null
 
@@ -125,7 +127,7 @@ object DiscoverFeedRepository {
 
             if (bmp != null) {
                 if (imageCache.size > 40) imageCache.clear()
-                imageCache[imageUrl] = bmp
+                imageCache.put(imageUrl, bmp)
                 failedImages.remove(imageUrl)
             } else {
                 failedImages[imageUrl] = System.currentTimeMillis()
