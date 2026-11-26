@@ -138,7 +138,8 @@ data class BookmarkItem(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
     val url: String,
-    val folder: String = "모바일 북마크"
+    val folder: String = "모바일 북마크",
+    val visitedAtMs: Long = System.currentTimeMillis()
 )
 
 enum class WebFontMode(val label: String) {
@@ -172,9 +173,17 @@ enum class ThemeColorPreset(val label: String, val subtitle: String, val isSyste
 }
 
 @Serializable
+enum class VanishDirection(val label: String) {
+    TOUCH_RADIAL("터치 기준 사방"),
+    RIGHT_TO_LEFT("우측 → 좌측"),
+    BOTTOM_TO_TOP("하단 → 상단")
+}
+
+@Serializable
 enum class CardVanishStyle(val label: String, val description: String) {
     HARMONY_DUST("초미세 먼지 (기본값)", "카드 경계가 침식되며 초미세 먼지로 흩어지는 무손실 소멸"),
-    HARMONY_GPU_SHADER("하모니OS GPU 실픽셀 셰이더", "실제 UI 픽셀 캡처 · 터치 기준 사방 노이즈 침식 · 충격파 · 빛 가산 입자"),
+    HARMONY_7_SAND_WAVE("하모니OS 7 은빛 모래 파도", "크기별 1~3중 원형 구멍 침식 · 경계선 밀집 1px 은빛 모래 띠 · 일체형 바람 기류"),
+    HARMONY_GPU_SHADER("GPU 실픽셀 방사형 셰이더", "실제 UI 픽셀 캡처 · 터치 기준 사방 노이즈 침식 · 충격파 · 빛 가산 입자"),
     LIGHT_PARTICLES("가벼운 입자 분산", "약 250개 입자로 빠르게 흩어지는 저부하 소멸 (560ms)"),
     SCALE_FADE("기본 축소 페이드", "먼지 효과 없이 깔끔하게 축소되며 사라짐"),
     OFF("즉시 삭제 (애니메이션 없음)", "지연 없이 즉시 닫기")
@@ -212,6 +221,18 @@ data class BrowserPreferences(
     val vanishParticleCount: Int = 1800,
     val vanishDurationMs: Int = 1300,
     val vanishMaxFps: Int = 60,
+    val vanishDirection: VanishDirection = VanishDirection.TOUCH_RADIAL,
+    val vanishEdgeGlow: Float = 1.0f,
+    val vanishCurlStrength: Float = 1.0f,
+    val vanishShockwaveStrength: Float = 1.0f,
+    val vanishAirDrag: Float = 4.2f,
+    val vanishAdditiveGlow: Boolean = true,
+    val vanishZPerspective: Float = 1.0f,
+    val vanishSizeAdaptiveDuration: Boolean = true,
+    val sandRibbonDensity: Float = 1.0f,
+    val sandSilverRatio: Float = 0.75f,
+    val sandWindStrength: Float = 1.0f,
+    val sandSwirlStrength: Float = 1.0f,
     val tabWidthMode: TabWidthMode = TabWidthMode.DYNAMIC,
     val manualTabWidthDp: Int = 180,
     val aiSpaceRetentionDays: Int = 7,
