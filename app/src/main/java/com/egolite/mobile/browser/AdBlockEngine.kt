@@ -94,10 +94,10 @@ object AdBlockEngine {
         "popcash.net", "propellerads.com", "exoclick.com", "adsterra.com",
         "smartadserver.com", "yieldmo.com", "sharethrough.com", "33across.com",
         "media.net", "bidswitch.net", "indexww.com", "lijit.com",
-        // Korea (List-KR core) ad & tracker networks
-        "ad.daum.net", "t1.daumcdn.net", "display.ad.daum.net", "track.tiara.kakao.com",
+        // Korea (List-KR core) ad & tracker networks (ssl.pstatic.net, t1.daumcdn.net은 핵심 CSS/JS CDN이므로 도메인 차단 제외)
+        "ad.daum.net", "display.ad.daum.net", "track.tiara.kakao.com",
         "ads.kakao.com", "adcr.naver.com", "siape.veta.naver.com", "gfp.veta.naver.com",
-        "wcs.naver.net", "ntm.pstatic.net", "ssl.pstatic.net",
+        "wcs.naver.net", "ntm.pstatic.net",
         "ads-partners.coupang.com", "link.coupang.com", "coupa.ng",
         "adpopcorn.com", "igaworks.com", "adbrix.io", "buzzvil.com",
         "mobon.net", "mediacategory.com", "realclick.co.kr", "widerplanet.com",
@@ -108,7 +108,7 @@ object AdBlockEngine {
 
     private val blockedPathKeywords = listOf(
         "/pagead/", "/ads/js", "/adserver", "/banner_ad", "/popunder",
-        "/advert/", "/adclick", "/adsense/", "/doubleclick/"
+        "/advert/", "/adclick", "/adsense/", "/doubleclick/", "/tveta/"
     )
 
     fun extractHost(url: String?): String {
