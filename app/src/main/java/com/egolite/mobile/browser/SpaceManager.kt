@@ -88,6 +88,25 @@ object SpaceManager {
     private val _activeSpaceId = MutableStateFlow("personal")
     val activeSpaceId: StateFlow<String> = _activeSpaceId.asStateFlow()
 
+    private val _connectedAiClientName = MutableStateFlow("Gemini")
+    val connectedAiClientName: StateFlow<String> = _connectedAiClientName.asStateFlow()
+
+    fun updateConnectedAiClient(rawClientName: String?) {
+        val low = rawClientName?.trim()?.lowercase().orEmpty()
+        if (low.isBlank()) return
+        val normalized = when {
+            "gemini" in low -> "Gemini"
+            "claude" in low || "anthropic" in low -> "Claude"
+            "muse" in low -> "Muse"
+            "openai" in low || "chatgpt" in low || "codex" in low -> "OpenAI"
+            "grok" in low || "xai" in low -> "Grok"
+            "deepseek" in low -> "DeepSeek"
+            "cursor" in low -> "Cursor"
+            else -> rawClientName.trim().take(16)
+        }
+        _connectedAiClientName.value = normalized
+    }
+
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val aiIdleJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
@@ -175,16 +194,80 @@ object SpaceManager {
         return _spaces.value.firstOrNull { it.id == _activeSpaceId.value } ?: _spaces.value.first()
     }
 
+    fun setTabAudioPlaying(tabId: String, playing: Boolean) {
+        _spaces.update { list ->
+            list.map { sp ->
+                if (sp.tabs.any { it.id == tabId && it.isPlayingAudio != playing }) {
+                    sp.copy(tabs = sp.tabs.map { t -> if (t.id == tabId) t.copy(isPlayingAudio = playing) else t })
+                } else sp
+            }
+        }
+    }
+
+    fun toggleTabMute(spaceId: String, tabId: String) {
+        var nextMuted = false
+        _spaces.update { list ->
+            list.map { sp ->
+                if (sp.id == spaceId) {
+                    sp.copy(tabs = sp.tabs.map { t ->
+                        if (t.id == tabId) {
+                            nextMuted = !t.isMuted
+                            t.copy(isMuted = nextMuted)
+                        } else t
+                    })
+                } else sp
+            }
+        }
+        val wv = webViews[tabId]
+        wv?.post {
+            val js = "(function(){window.__egoTabMuted=$nextMuted;document.querySelectorAll('video,audio').forEach(function(m){try{m.muted=$nextMuted;}catch(e){}});})();"
+            wv.evaluateJavascript(js, null)
+        }
+    }
+
+    fun moveSpaceById(fromSpaceId: String, toSpaceId: String) {
+        if (fromSpaceId == toSpaceId) return
+        _spaces.update { list ->
+            val fromIdx = list.indexOfFirst { it.id == fromSpaceId }
+            val toIdx = list.indexOfFirst { it.id == toSpaceId }
+            if (fromIdx != -1 && toIdx != -1 && fromIdx != toIdx) {
+                val mutable = list.toMutableList()
+                val moved = mutable.removeAt(fromIdx)
+                mutable.add(toIdx, moved)
+                mutable
+            } else list
+        }
+    }
+
     fun selectSpace(spaceId: String) {
         if (_spaces.value.any { it.id == spaceId }) {
             _activeSpaceId.value = spaceId
         }
     }
 
+    private fun nextGenericAiSpaceNumber(): Int {
+        val existingNames = _spaces.value.map { it.name }.toSet()
+        var n = 1
+        while ("AI Space $n" in existingNames) n++
+        return n
+    }
+
+    private fun resolveUniqueAiClientName(baseName: String, excludeSpaceId: String): String {
+        val cleanBase = baseName.trim().ifBlank { "AI" }
+        val existingNames = _spaces.value
+            .filter { it.id != excludeSpaceId }
+            .map { it.name }
+            .toSet()
+        if (cleanBase !in existingNames) return cleanBase
+        var n = 2
+        while ("$cleanBase $n" in existingNames) n++
+        return "$cleanBase $n"
+    }
+
     fun createAiSpace(): BrowserSpace? {
         val currentAiCount = _spaces.value.count { it.type == SpaceType.AI }
         if (currentAiCount >= _preferences.value.maxAiSpaces) return null
-        val nextIndex = currentAiCount + 1
+        val nextIndex = nextGenericAiSpaceNumber()
         val newTab = BrowserTab(title = "AI Space $nextIndex", url = "https://www.google.com")
         val colorHex = AI_SPACE_COLOR_PRESETS[(nextIndex - 1) % AI_SPACE_COLOR_PRESETS.size]
         val newSpace = BrowserSpace(
@@ -193,6 +276,59 @@ object SpaceManager {
             type = SpaceType.AI,
             tabs = listOf(newTab),
             activeTabId = newTab.id,
+            accentColorHex = colorHex
+        )
+        _spaces.update { it + newSpace }
+        return newSpace
+    }
+
+    /**
+     * 드래그 드롭으로 기존 AI 스페이스에 탭 복제 생성
+     * - 대기 중(IDLE / DONE): 새 탭을 즉시 활성 탭으로 전환
+     * - 작업 중(WORKING / THINKING / TAKEOVER_PAUSED): 백그라운드 탭으로 조용히 추가
+     */
+    fun cloneTabToSpace(sourceUrl: String, sourceTitle: String, targetSpaceId: String): Pair<BrowserTab, Boolean>? {
+        val targetSpace = _spaces.value.firstOrNull { it.id == targetSpaceId } ?: return null
+        val activateNow = targetSpace.aiStatus == AiSpaceStatus.IDLE || targetSpace.aiStatus == AiSpaceStatus.DONE
+        val safeUrl = sourceUrl.ifBlank { "ego://newtab" }
+        val newTab = BrowserTab(
+            title = sourceTitle.ifBlank { safeUrl },
+            url = safeUrl,
+            parentTabId = targetSpace.activeTabId
+        )
+        _spaces.update { list ->
+            list.map { sp ->
+                if (sp.id == targetSpaceId) {
+                    sp.copy(
+                        tabs = sp.tabs + newTab,
+                        activeTabId = if (activateNow) newTab.id else sp.activeTabId
+                    )
+                } else sp
+            }
+        }
+        if (targetSpaceId == "personal") savePersonalTabs()
+        return Pair(newTab, activateNow)
+    }
+
+    /**
+     * 드래그 드롭으로 맨 끝 빈 공간에 새 AI 스페이스 생성 + 드롭한 페이지를 첫 페이지로 열기
+     */
+    fun createAiSpaceWithClonedTab(sourceUrl: String, sourceTitle: String): BrowserSpace? {
+        val currentAiCount = _spaces.value.count { it.type == SpaceType.AI }
+        if (currentAiCount >= _preferences.value.maxAiSpaces) return null
+        val nextIndex = nextGenericAiSpaceNumber()
+        val safeUrl = sourceUrl.ifBlank { "https://www.google.com" }
+        val firstTab = BrowserTab(
+            title = sourceTitle.ifBlank { safeUrl },
+            url = safeUrl
+        )
+        val colorHex = AI_SPACE_COLOR_PRESETS[(nextIndex - 1) % AI_SPACE_COLOR_PRESETS.size]
+        val newSpace = BrowserSpace(
+            id = "ai-$nextIndex-${System.currentTimeMillis() % 1000}",
+            name = "AI Space $nextIndex",
+            type = SpaceType.AI,
+            tabs = listOf(firstTab),
+            activeTabId = firstTab.id,
             accentColorHex = colorHex
         )
         _spaces.update { it + newSpace }
@@ -227,6 +363,25 @@ object SpaceManager {
         _recentlyClosedTabs.update { it.drop(1) }
         createTab(spaceId, initialUrl = last.url)
         return true
+    }
+
+    fun moveTabById(spaceId: String, fromTabId: String, toTabId: String) {
+        if (fromTabId == toTabId) return
+        _spaces.update { list ->
+            list.map { space ->
+                if (space.id == spaceId) {
+                    val fromIdx = space.tabs.indexOfFirst { it.id == fromTabId }
+                    val toIdx = space.tabs.indexOfFirst { it.id == toTabId }
+                    if (fromIdx != -1 && toIdx != -1 && fromIdx != toIdx) {
+                        val mutable = space.tabs.toMutableList()
+                        val moved = mutable.removeAt(fromIdx)
+                        mutable.add(toIdx, moved)
+                        space.copy(tabs = mutable)
+                    } else space
+                } else space
+            }
+        }
+        if (spaceId == "personal") savePersonalTabs()
     }
 
     fun switchTabByOffset(spaceId: String, delta: Int) {
@@ -304,7 +459,7 @@ object SpaceManager {
                 context = appContext,
                 tabId = tab.id,
                 adBlockProvider = { _preferences.value.adBlockEnabled },
-                darkModeProvider = { isEffectiveDarkMode() },
+                darkModeProvider = { shouldDarkenWebsites() },
                 desktopModeProvider = { _preferences.value.desktopModeEnabled },
                 textZoomProvider = { _preferences.value.textZoom },
                 webFontProvider = { _preferences.value.webFontMode },
@@ -465,7 +620,7 @@ object SpaceManager {
         savePreferences()
         mainHandler.post {
             webViews.values.forEach { wv ->
-                EgoWebViewFactory.applyDarkMode(wv, isEffectiveDarkMode(updated))
+                EgoWebViewFactory.applyDarkMode(wv, shouldDarkenWebsites(updated))
                 EgoWebViewFactory.applyDesktopMode(wv, updated.desktopModeEnabled)
                 EgoWebViewFactory.applyTextZoom(wv, updated.textZoom)
                 EgoWebViewFactory.applyWebFont(wv, updated.webFontMode, updated.customFontPath)
@@ -562,9 +717,18 @@ object SpaceManager {
         if (status == AiSpaceStatus.WORKING || status == AiSpaceStatus.TAKEOVER_PAUSED || status == AiSpaceStatus.IDLE) {
             aiIdleJobs.remove(spaceId)?.cancel()
         }
+        val genericPattern = Regex("^AI Space \\d+$")
         _spaces.update { list ->
-            list.map {
-                if (it.id == spaceId) it.copy(aiStatus = status, lastActionSummary = summary) else it
+            list.map { sp ->
+                if (sp.id == spaceId) {
+                    val shouldAutoRename = sp.type == SpaceType.AI &&
+                        (status == AiSpaceStatus.WORKING || status == AiSpaceStatus.THINKING) &&
+                        genericPattern.matches(sp.name)
+                    val resolvedName = if (shouldAutoRename) {
+                        resolveUniqueAiClientName(_connectedAiClientName.value, sp.id)
+                    } else sp.name
+                    sp.copy(name = resolvedName, aiStatus = status, lastActionSummary = summary)
+                } else sp
             }
         }
     }
@@ -775,10 +939,15 @@ object SpaceManager {
         }
     }
 
+    fun shouldDarkenWebsites(prefs: BrowserPreferences = _preferences.value): Boolean {
+        return isEffectiveDarkMode(prefs) && prefs.darkenWebsitesWhenPossible
+    }
+
     fun syncWebViewsDarkMode(isDark: Boolean) {
+        val shouldDarken = isDark && _preferences.value.darkenWebsitesWhenPossible
         mainHandler.post {
             webViews.values.forEach { wv ->
-                EgoWebViewFactory.applyDarkMode(wv, isDark)
+                EgoWebViewFactory.applyDarkMode(wv, shouldDarken)
             }
         }
     }
