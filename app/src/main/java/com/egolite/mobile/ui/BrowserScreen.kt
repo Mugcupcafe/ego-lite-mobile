@@ -27,12 +27,32 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.zIndex
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -88,6 +108,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -115,7 +136,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import android.content.res.Configuration
+import android.os.Build
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import com.egolite.mobile.model.MonitorPosition
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -127,6 +154,13 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Home
@@ -134,6 +168,11 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -147,6 +186,7 @@ import com.egolite.mobile.browser.BrowserScripts
 import org.json.JSONObject
 import com.egolite.mobile.browser.TranslationManager
 import com.egolite.mobile.browser.SpaceManager
+import com.egolite.mobile.mcp.McpCommandBridge
 import com.egolite.mobile.model.AiSpaceStatus
 import com.egolite.mobile.model.BookmarkItem
 import com.egolite.mobile.model.BrowserSpace
@@ -162,6 +202,7 @@ fun BrowserScreen() {
     val context = LocalContext.current
     val spaces by SpaceManager.spaces.collectAsState()
     val activeSpaceId by SpaceManager.activeSpaceId.collectAsState()
+    val connectedAiName by SpaceManager.connectedAiClientName.collectAsState()
     val prefs by SpaceManager.preferences.collectAsState()
     val bookmarks by SpaceManager.bookmarks.collectAsState()
     val bookmarkFolders by SpaceManager.bookmarkFolders.collectAsState()
@@ -170,6 +211,7 @@ fun BrowserScreen() {
     val runtimeState by EgoForegroundService.runtimeState.collectAsState()
     val adBlockState by AdBlockEngine.state.collectAsState()
     val fullscreenVideo by BrowserActivityBridge.fullscreenVideo.collectAsState()
+    val isInPip by BrowserActivityBridge.isInPip.collectAsState()
     val longPressTarget by BrowserActivityBridge.longPressTarget.collectAsState()
     val externalOpenSeq by BrowserActivityBridge.externalOpenSeq.collectAsState()
     val recentlyClosed by SpaceManager.recentlyClosedTabs.collectAsState()
@@ -182,6 +224,28 @@ fun BrowserScreen() {
     var addressInput by remember(activeTab.id, activeTab.url) { mutableStateOf(activeTab.url) }
     var spaceBarExpanded by remember { mutableStateOf(false) }
     var showAiMonitorTray by remember { mutableStateOf(false) }
+    var showAiCommandPopup by remember { mutableStateOf(false) }
+    var aiPopupSpaceId by remember { mutableStateOf<String?>(null) }
+    var aiPopupTabId by remember { mutableStateOf<String?>(null) }
+    var recentDropPromptChip by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    val mcpConnectedClients by McpCommandBridge.connectedClients.collectAsState()
+    val mcpRecentCommands by McpCommandBridge.recentCommands.collectAsState()
+    val mcpPendingCount by McpCommandBridge.pendingCount.collectAsState()
+    var monitorAutoOpenedByDrag by remember { mutableStateOf(false) }
+    var draggingTabId by remember { mutableStateOf<String?>(null) }
+    var dragPointerRoot by remember { mutableStateOf(Offset.Zero) }
+    var hoveredDropSpaceId by remember { mutableStateOf<String?>(null) }
+    var hoveredNewSpaceDrop by remember { mutableStateOf(false) }
+    var dwellProgress by remember { mutableFloatStateOf(0f) }
+    val tabBoundsMap = remember { mutableStateMapOf<String, Rect>() }
+    val spaceBoundsMap = remember { mutableStateMapOf<String, Rect>() }
+    var newSpaceDropBounds by remember { mutableStateOf<Rect?>(null) }
+    var personalCapsuleBounds by remember { mutableStateOf<Rect?>(null) }
+    var rootBoxBounds by remember { mutableStateOf<Rect?>(null) }
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val statusBarTopPx = WindowInsets.statusBars.getTop(density).toFloat().coerceAtLeast(with(density) { 28.dp.toPx() })
+    var returningSpaceId by remember { mutableStateOf<String?>(null) }
     var showMcpDrawer by remember { mutableStateOf(false) }
     var showChromeSettings by remember { mutableStateOf(false) }
     var showAllTabsDialog by remember { mutableStateOf(false) }
@@ -189,6 +253,7 @@ fun BrowserScreen() {
     var showHistoryDialog by remember { mutableStateOf(false) }
     var showFindBar by remember { mutableStateOf(false) }
     var showAdBlockDialog by remember { mutableStateOf(false) }
+    var showTranslateSettingsDialog by remember { mutableStateOf(false) }
     var showOmniboxOverlay by remember { mutableStateOf(false) }
     var showBookmarkManager by remember { mutableStateOf(false) }
     var editingBookmark by remember { mutableStateOf<BookmarkItem?>(null) }
@@ -403,6 +468,7 @@ fun BrowserScreen() {
             spaceBarExpanded = false
             showHistoryDialog = false
             showAdBlockDialog = false
+            showTranslateSettingsDialog = false
             readerMarkdown = null
             previewPageUrl = null
         }
@@ -426,6 +492,34 @@ fun BrowserScreen() {
         }
     }
 
+    if (isInPip && fullscreenVideo.view != null) {
+        val pipVideoView = fullscreenVideo.view
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black)
+        ) {
+            if (pipVideoView != null) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        FrameLayout(ctx).apply {
+                            (pipVideoView.parent as? ViewGroup)?.removeView(pipVideoView)
+                            addView(
+                                pipVideoView,
+                                FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                            )
+                        }
+                    }
+                )
+            }
+        }
+        return
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -434,99 +528,511 @@ fun BrowserScreen() {
             .navigationBarsPadding()
             .imePadding()
             .onGloballyPositioned { coords ->
-                val p = coords.positionInRoot()
-                rootBoxLeftPx = p.x
-                rootBoxTopPx = p.y
+                val b = coords.boundsInRoot()
+                rootBoxBounds = b
+                rootBoxLeftPx = b.left
+                rootBoxTopPx = b.top
             }
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // 1행: 최상단 — 알약 캡슐(Personal/AI · Drag-to-Open) + 현재 공간의 크롬형 탭 목록만 배치
-            Row(
+        val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val activeMonitorPos = if (isLandscape) prefs.monitorPosLandscape else prefs.monitorPosPortrait
+
+        // B 방식 드래그 자동 열기: 세로(TOP)=상태바 60% 이상 0.5초 유지 / 가로(LEFT)=좌측·Personal 캡슐 0.45초 유지
+        LaunchedEffect(draggingTabId, showAiMonitorTray, activeMonitorPos) {
+            if (draggingTabId == null || showAiMonitorTray) {
+                dwellProgress = 0f
+                return@LaunchedEffect
+            }
+            val pillHeightPx = with(density) { 38.dp.toPx() }
+            val leftEdgePx = with(density) { 42.dp.toPx() }
+            val capsulePadPx = with(density) { 14.dp.toPx() }
+            val targetMs = if (activeMonitorPos == MonitorPosition.TOP) 500L else 450L
+            var elapsedMs = 0L
+            while (draggingTabId != null && !showAiMonitorTray) {
+                val ptr = dragPointerRoot
+                val rootTop = rootBoxBounds?.top ?: 0f
+                val rootLeft = rootBoxBounds?.left ?: 0f
+                val inTrigger = if (activeMonitorPos == MonitorPosition.TOP) {
+                    val pillTop = ptr.y - pillHeightPx / 2f
+                    val statusBarBottom = if (rootTop > 1f) rootTop else statusBarTopPx
+                    val overlapRatio = ((statusBarBottom - pillTop) / pillHeightPx).coerceIn(0f, 1f)
+                    overlapRatio >= 0.60f
+                } else {
+                    val inCap = personalCapsuleBounds?.inflate(capsulePadPx)?.contains(ptr) == true
+                    val inEdge = ptr.x <= rootLeft + leftEdgePx
+                    inCap || inEdge
+                }
+                if (inTrigger) {
+                    elapsedMs += 16L
+                    dwellProgress = (elapsedMs.toFloat() / targetMs.toFloat()).coerceIn(0f, 1f)
+                    if (elapsedMs >= targetMs) {
+                        monitorAutoOpenedByDrag = true
+                        showAiMonitorTray = true
+                        dwellProgress = 0f
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        break
+                    }
+                } else {
+                    elapsedMs = 0L
+                    dwellProgress = 0f
+                }
+                delay(16L)
+            }
+        }
+        val monitorTopOffset = if (showAiMonitorTray && activeMonitorPos == MonitorPosition.TOP) 322.dp else 0.dp
+        val workingSpace = spaces.firstOrNull {
+            it.type == SpaceType.AI && (it.aiStatus == AiSpaceStatus.WORKING || it.aiStatus == AiSpaceStatus.THINKING)
+        }
+        val workingAccent = parseSpaceColor(workingSpace?.accentColorHex ?: activeSpace.accentColorHex)
+        val tabStartPadding by animateDpAsState(
+            targetValue = if (showAiMonitorTray) 0.dp else 72.dp,
+            animationSpec = EgoMotion.smoothSpring(),
+            label = "tabStripLeftSlide"
+        )
+
+        // 메인 뷰포트 양방향 블러 모프 전환 상태 (스페이스 전환 시 부드러운 블러+스케일 진입)
+        val mainSwapScale = remember { Animatable(1f) }
+        val mainSwapBlur = remember { Animatable(0f) }
+        val mainSwapAlpha = remember { Animatable(1f) }
+        fun triggerSpaceSwap(targetId: String) {
+            if (targetId == activeSpaceId) return
+            returningSpaceId = activeSpaceId
+            SpaceManager.selectSpace(targetId)
+            scope.launch {
+                mainSwapScale.snapTo(0.93f)
+                mainSwapBlur.snapTo(11f)
+                mainSwapAlpha.snapTo(0.32f)
+                launch { mainSwapScale.animateTo(1f, animationSpec = EgoMotion.bouncySpring()) }
+                launch { mainSwapBlur.animateTo(0f, animationSpec = tween(340)) }
+                launch { mainSwapAlpha.animateTo(1f, animationSpec = tween(260)) }
+                kotlinx.coroutines.delay(520L)
+                returningSpaceId = null
+            }
+        }
+
+        // 좌측 상단 캡슐 중심에서 시야 밖까지 느리게(2.38s) 퍼져 나가는 원형 링 광효과 상태
+        val ringProgress = remember { Animatable(0f) }
+        val ringAlpha = remember { Animatable(0f) }
+        val ringColor = MaterialTheme.colorScheme.primary
+        LaunchedEffect(showAiMonitorTray, activeMonitorPos) {
+            if (showAiMonitorTray) {
+                ringProgress.snapTo(0.05f)
+                ringAlpha.snapTo(0.92f)
+                launch {
+                    ringProgress.animateTo(
+                        targetValue = 2.45f,
+                        animationSpec = tween(durationMillis = 2380, easing = CubicBezierEasing(0.18f, 0.65f, 0.35f, 1f))
+                    )
+                }
+                launch {
+                    ringAlpha.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(durationMillis = 2380, easing = CubicBezierEasing(0.18f, 0.65f, 0.35f, 1f))
+                    )
+                }
+            } else {
+                ringAlpha.snapTo(0f)
+                ringProgress.snapTo(0f)
+            }
+        }
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            // LEFT 모드(가로 기본): 좌측 사이드바 AI 라이브 모니터 (상단 페이드 그라데이션 + 링 광효과)
+            if (activeMonitorPos == MonitorPosition.LEFT) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.background)
+                        .clipToBounds()
+                ) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        val a = ringAlpha.value
+                        val p = ringProgress.value
+                        if (a > 0.01f && p > 0f) {
+                            val origin = Offset(44.dp.toPx(), 24.dp.toPx())
+                            val maxR = (size.height * p).coerceAtLeast(1f)
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    0.00f to Color.Transparent,
+                                    0.24f to Color.Transparent,
+                                    0.38f to ringColor.copy(alpha = a * 0.30f),
+                                    0.48f to workingAccent.copy(alpha = a * 0.56f),
+                                    0.58f to ringColor.copy(alpha = a * 0.24f),
+                                    0.72f to Color.Transparent,
+                                    1.00f to Color.Transparent,
+                                    center = origin,
+                                    radius = maxR
+                                ),
+                                radius = maxR,
+                                center = origin
+                            )
+                        }
+                    }
+                    AiLiveMonitorTray(
+                        visible = showAiMonitorTray,
+                        position = MonitorPosition.LEFT,
+                        spaces = spaces,
+                        activeSpaceId = activeSpaceId,
+                        returningSpaceId = returningSpaceId,
+                        connectedAiName = connectedAiName,
+                        canAddAiSpace = canAddAiSpace,
+                        isTabDragging = draggingTabId != null,
+                        hoveredDropSpaceId = hoveredDropSpaceId,
+                        isHoveredNewSpaceDrop = hoveredNewSpaceDrop,
+                        onRegisterSpaceBounds = { id, rect -> spaceBoundsMap[id] = rect },
+                        onRegisterNewSpaceBounds = { rect -> newSpaceDropBounds = rect },
+                        onSelectSpace = { id -> triggerSpaceSwap(id) },
+                        onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
+                        onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
+                        onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            // 상단 통합 크롬 영역 (TOP 모드: 라이브 모니터 + 탭 바 배경색 통일, 구분선 제거, 광효과는 주소창 위 경계에서 엄격 클리핑)
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .background(MaterialTheme.colorScheme.background)
+                    .clipToBounds()
             ) {
-                val workingSpace = spaces.firstOrNull {
-                    it.type == SpaceType.AI && (it.aiStatus == AiSpaceStatus.WORKING || it.aiStatus == AiSpaceStatus.THINKING)
-                }
-                val workingAccent = parseSpaceColor(workingSpace?.accentColorHex ?: activeSpace.accentColorHex)
-                PillSpaceCapsule(
-                    activeSpace = activeSpace,
-                    isAnyAiWorking = workingSpace != null,
-                    workingAccentColor = workingAccent,
-                    spaceCount = spaces.size,
-                    canAddAiSpace = canAddAiSpace,
-                    isExpanded = spaceBarExpanded,
-                    onSetExpanded = { spaceBarExpanded = it },
-                    onToggleAiMonitor = { showAiMonitorTray = !showAiMonitorTray },
-                    onHoverIndexChanged = { hoveredSpaceIndex = it },
-                    onCommitIndex = { idx ->
-                        if (idx in spaces.indices) {
-                            SpaceManager.selectSpace(spaces[idx].id)
-                        } else if (canAddAiSpace && idx == spaces.size) {
-                            SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+                if (activeMonitorPos == MonitorPosition.TOP) {
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        val a = ringAlpha.value
+                        val p = ringProgress.value
+                        if (a > 0.01f && p > 0f) {
+                            val origin = Offset(44.dp.toPx(), 24.dp.toPx())
+                            val maxR = (size.width * p).coerceAtLeast(1f)
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    0.00f to Color.Transparent,
+                                    0.24f to Color.Transparent,
+                                    0.38f to ringColor.copy(alpha = a * 0.30f),
+                                    0.48f to workingAccent.copy(alpha = a * 0.56f),
+                                    0.58f to ringColor.copy(alpha = a * 0.24f),
+                                    0.72f to Color.Transparent,
+                                    1.00f to Color.Transparent,
+                                    center = origin,
+                                    radius = maxR
+                                ),
+                                radius = maxR,
+                                center = origin
+                            )
                         }
                     }
-                )
+                }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    if (activeMonitorPos == MonitorPosition.TOP) {
+                        AiLiveMonitorTray(
+                            visible = showAiMonitorTray,
+                            position = MonitorPosition.TOP,
+                            spaces = spaces,
+                            activeSpaceId = activeSpaceId,
+                            returningSpaceId = returningSpaceId,
+                            connectedAiName = connectedAiName,
+                            canAddAiSpace = canAddAiSpace,
+                            isTabDragging = draggingTabId != null,
+                            hoveredDropSpaceId = hoveredDropSpaceId,
+                            isHoveredNewSpaceDrop = hoveredNewSpaceDrop,
+                            onRegisterSpaceBounds = { id, rect -> spaceBoundsMap[id] = rect },
+                            onRegisterNewSpaceBounds = { rect -> newSpaceDropBounds = rect },
+                            onSelectSpace = { id -> triggerSpaceSwap(id) },
+                            onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
+                            onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
+                            onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
+                        )
+                    }
 
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    activeSpace.tabs.forEach { tab ->
-                        val isSelected = tab.id == activeSpace.activeTabId
+                    // 1행: 현재 공간의 크롬형 탭 목록 (탭 버튼만 빛 위 앞 레이어에 표시)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .padding(start = 10.dp + tabStartPadding, end = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        var pressedTabIndex by remember(activeSpace.id) { mutableIntStateOf(-1) }
                         Row(
                             modifier = Modifier
-                                .height(36.dp)
-                                .widthIn(min = 110.dp, max = 210.dp)
-                                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp, bottomStart = 6.dp, bottomEnd = 6.dp))
-                                .background(
-                                    if (isEffectiveDark) {
-                                        if (isSelected) DarkTabSelected else DarkTabUnselected
-                                    } else {
-                                        if (isSelected) LightTabSelected else LightTabUnselected
-                                    }
-                                )
-                                .clickable { SpaceManager.selectTab(activeSpace.id, tab.id) }
-                                .padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .weight(1f)
+                                .horizontalScroll(rememberScrollState())
+                                .animateContentSize(animationSpec = EgoMotion.intSizeSpring),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
-                            if (tab.isIncognito) {
-                                Icon(
-                                    imageVector = Icons.Default.VisibilityOff,
-                                    contentDescription = "시크릿 탭",
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.primary
+                            val totalTabs = activeSpace.tabs.size
+                            activeSpace.tabs.forEachIndexed { idx, tab ->
+                                val isSelected = tab.id == activeSpace.activeTabId
+                                val isPressed = pressedTabIndex == idx
+                                val isFirst = idx == 0
+                                val isLast = idx == totalTabs - 1
+
+                                // M3 Expressive Style 1 (Connected Pill Morph):
+                                // 비활성 8dp(양 끝 18dp) <-> 눌림 5dp <-> 활성 완전 알약(18dp)
+                                val startRadius by animateDpAsState(
+                                    targetValue = when {
+                                        isPressed -> 5.dp
+                                        isSelected -> 18.dp
+                                        isFirst -> 18.dp
+                                        else -> 8.dp
+                                    },
+                                    animationSpec = EgoMotion.bouncySpring(),
+                                    label = "tabStartRadius"
                                 )
-                                Spacer(modifier = Modifier.width(5.dp))
+                                val endRadius by animateDpAsState(
+                                    targetValue = when {
+                                        isPressed -> 5.dp
+                                        isSelected -> 18.dp
+                                        isLast -> 18.dp
+                                        else -> 8.dp
+                                    },
+                                    animationSpec = EgoMotion.bouncySpring(),
+                                    label = "tabEndRadius"
+                                )
+                                val tabScale by animateFloatAsState(
+                                    targetValue = if (isPressed) 0.95f else 1f,
+                                    animationSpec = EgoMotion.bouncySpring(),
+                                    label = "tabPressScale"
+                                )
+                                val neighborNudge by animateDpAsState(
+                                    targetValue = when {
+                                        pressedTabIndex != -1 && idx == pressedTabIndex - 1 -> (-3).dp
+                                        pressedTabIndex != -1 && idx == pressedTabIndex + 1 -> 3.dp
+                                        else -> 0.dp
+                                    },
+                                    animationSpec = EgoMotion.bouncySpring(),
+                                    label = "tabNeighborNudge"
+                                )
+                                val extraMargin by animateDpAsState(
+                                    targetValue = if (isSelected) 3.dp else 0.dp,
+                                    animationSpec = EgoMotion.smoothSpring(),
+                                    label = "tabActiveMargin"
+                                )
+                                val tabBg by animateColorAsState(
+                                    targetValue = if (isSelected) {
+                                        MaterialTheme.colorScheme.primaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                    },
+                                    animationSpec = tween(180),
+                                    label = "tabBgAnim"
+                                )
+                                val tabFg = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else activeIconColor
+                                val tabShape = RoundedCornerShape(
+                                    topStart = startRadius,
+                                    bottomStart = startRadius,
+                                    topEnd = endRadius,
+                                    bottomEnd = endRadius
+                                )
+
+                                val isBeingDragged = draggingTabId == tab.id
+                                Row(
+                                    modifier = Modifier
+                                        .padding(horizontal = extraMargin)
+                                        .onGloballyPositioned { coords ->
+                                            tabBoundsMap[tab.id] = coords.boundsInRoot()
+                                        }
+                                        .graphicsLayer {
+                                            scaleX = tabScale
+                                            scaleY = tabScale
+                                            translationX = neighborNudge.toPx()
+                                            alpha = if (isBeingDragged) 0.28f else 1f
+                                        }
+                                        .height(36.dp)
+                                        .widthIn(min = 112.dp, max = 212.dp)
+                                        .clip(tabShape)
+                                        .background(tabBg)
+                                        .pointerInput(tab.id, idx) {
+                                            awaitPointerEventScope {
+                                                while (true) {
+                                                    awaitFirstDown(requireUnconsumed = false)
+                                                    pressedTabIndex = idx
+                                                    waitForUpOrCancellation()
+                                                    if (pressedTabIndex == idx) pressedTabIndex = -1
+                                                }
+                                            }
+                                        }
+                                        .pointerInput(tab.id, activeSpace.id) {
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = { startOffset ->
+                                                    val origin = tabBoundsMap[tab.id]?.topLeft ?: Offset.Zero
+                                                    draggingTabId = tab.id
+                                                    dragPointerRoot = origin + startOffset
+                                                    hoveredDropSpaceId = null
+                                                    hoveredNewSpaceDrop = false
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    val curId = draggingTabId ?: return@detectDragGesturesAfterLongPress
+                                                    val ptr = dragPointerRoot + dragAmount
+                                                    dragPointerRoot = ptr
+
+                                                    if (showAiMonitorTray) {
+                                                        val hitSpace = spaceBoundsMap.entries.firstOrNull { (sid, rect) ->
+                                                            sid != activeSpaceId && rect.contains(ptr)
+                                                        }?.key
+                                                        val hitNew = hitSpace == null &&
+                                                            canAddAiSpace &&
+                                                            newSpaceDropBounds?.inflate(14f)?.contains(ptr) == true
+                                                        if (hitSpace != hoveredDropSpaceId || hitNew != hoveredNewSpaceDrop) {
+                                                            hoveredDropSpaceId = hitSpace
+                                                            hoveredNewSpaceDrop = hitNew
+                                                            if (hitSpace != null || hitNew) {
+                                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            }
+                                                        }
+                                                    } else {
+                                                        hoveredDropSpaceId = null
+                                                        hoveredNewSpaceDrop = false
+                                                    }
+
+                                                    // 모니터 드롭 중이 아닐 때 탭바 좌우 순서 이동
+                                                    if (hoveredDropSpaceId == null && !hoveredNewSpaceDrop) {
+                                                        val targetTabId = tabBoundsMap.entries.firstOrNull { (tid, rect) ->
+                                                            tid != curId &&
+                                                                ptr.y >= rect.top - 48f &&
+                                                                ptr.y <= rect.bottom + 48f &&
+                                                                ptr.x >= rect.left &&
+                                                                ptr.x <= rect.right
+                                                        }?.key
+                                                        if (targetTabId != null) {
+                                                            SpaceManager.moveTabById(activeSpace.id, curId, targetTabId)
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        }
+                                                    }
+                                                },
+                                                onDragEnd = {
+                                                    val curId = draggingTabId
+                                                    val dropSpaceId = hoveredDropSpaceId
+                                                    val dropNew = hoveredNewSpaceDrop
+                                                    val wasAutoOpened = monitorAutoOpenedByDrag
+                                                    val draggedTab = activeSpace.tabs.firstOrNull { it.id == curId }
+                                                    var didDrop = false
+
+                                                    if (draggedTab != null && dropSpaceId != null) {
+                                                        val res = SpaceManager.cloneTabToSpace(
+                                                            sourceUrl = draggedTab.url,
+                                                            sourceTitle = draggedTab.title,
+                                                            targetSpaceId = dropSpaceId
+                                                        )
+                                                        if (res != null) {
+                                                            didDrop = true
+                                                            val spName = spaces.firstOrNull { it.id == dropSpaceId }?.name ?: "AI 스페이스"
+                                                            val msg = if (res.second) {
+                                                                "$spName(대기 중)에 활성 탭으로 복제됨"
+                                                            } else {
+                                                                "$spName(작업 중)에 백그라운드 탭으로 추가됨"
+                                                            }
+                                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                                            if (serverState.connectionState == McpConnectionState.CONNECTED) {
+                                                                val dropInfo = Triple(dropSpaceId, res.first.id, res.first.title)
+                                                                recentDropPromptChip = dropInfo
+                                                                scope.launch {
+                                                                    delay(3600L)
+                                                                    if (recentDropPromptChip == dropInfo) recentDropPromptChip = null
+                                                                }
+                                                            }
+                                                        }
+                                                    } else if (draggedTab != null && dropNew) {
+                                                        val created = SpaceManager.createAiSpaceWithClonedTab(
+                                                            sourceUrl = draggedTab.url,
+                                                            sourceTitle = draggedTab.title
+                                                        )
+                                                        if (created != null) {
+                                                            didDrop = true
+                                                            Toast.makeText(
+                                                                context,
+                                                                "${created.name}에 첫 페이지로 생성됨",
+                                                                Toast.LENGTH_SHORT
+                                                            ).show()
+                                                            if (serverState.connectionState == McpConnectionState.CONNECTED) {
+                                                                val firstTab = created.tabs.first()
+                                                                val dropInfo = Triple(created.id, firstTab.id, firstTab.title)
+                                                                recentDropPromptChip = dropInfo
+                                                                scope.launch {
+                                                                    delay(3600L)
+                                                                    if (recentDropPromptChip == dropInfo) recentDropPromptChip = null
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    draggingTabId = null
+                                                    hoveredDropSpaceId = null
+                                                    hoveredNewSpaceDrop = false
+                                                    dwellProgress = 0f
+
+                                                    if (wasAutoOpened) {
+                                                        monitorAutoOpenedByDrag = false
+                                                        scope.launch {
+                                                            delay(if (didDrop) 420L else 100L)
+                                                            if (draggingTabId == null) {
+                                                                showAiMonitorTray = false
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                onDragCancel = {
+                                                    val wasAutoOpened = monitorAutoOpenedByDrag
+                                                    draggingTabId = null
+                                                    hoveredDropSpaceId = null
+                                                    hoveredNewSpaceDrop = false
+                                                    dwellProgress = 0f
+                                                    if (wasAutoOpened) {
+                                                        monitorAutoOpenedByDrag = false
+                                                        showAiMonitorTray = false
+                                                    }
+                                                }
+                                            )
+                                        }
+                                        .clickable { SpaceManager.selectTab(activeSpace.id, tab.id) }
+                                        .padding(horizontal = if (isSelected) 14.dp else 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (tab.isIncognito) {
+                                        Icon(
+                                            imageVector = Icons.Default.VisibilityOff,
+                                            contentDescription = "시크릿 탭",
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                    }
+                                    if (tab.isPlayingAudio || tab.isMuted) {
+                                        TabEqualizerIcon(
+                                            isPlaying = tab.isPlayingAudio,
+                                            isMuted = tab.isMuted,
+                                            activeColor = MaterialTheme.colorScheme.primary,
+                                            mutedColor = if (isSelected) tabFg.copy(alpha = 0.65f) else mutedIconColor,
+                                            cutoutBgColor = tabBg,
+                                            morphStyle = prefs.equalizerMorphStyle,
+                                            onClick = { SpaceManager.toggleTabMute(activeSpace.id, tab.id) }
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                    }
+                                    Text(
+                                        text = tab.title.ifBlank { tab.url },
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = tabFg,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "탭 닫기",
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clickable { SpaceManager.closeTab(activeSpace.id, tab.id) },
+                                        tint = if (isSelected) tabFg.copy(alpha = 0.78f) else mutedIconColor
+                                    )
+                                }
                             }
-                            Text(
-                                text = tab.title.ifBlank { tab.url },
-                                fontSize = 13.sp,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                color = activeIconColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "탭 닫기",
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .clickable { SpaceManager.closeTab(activeSpace.id, tab.id) },
-                                tint = mutedIconColor
-                            )
-                        }
-                    }
 
                     IconButton(
                         onClick = { SpaceManager.createTab(activeSpace.id) },
@@ -538,6 +1044,8 @@ fun BrowserScreen() {
                             tint = activeIconColor
                         )
                     }
+                }
+            }
                 }
             }
 
@@ -681,6 +1189,55 @@ fun BrowserScreen() {
                     }
                 }
 
+                // MCP 연결 시에만 주소창과 광고차단 사이에 아이콘 전용 AI 명령 버튼 표시
+                AnimatedVisibility(
+                    visible = serverState.connectionState == McpConnectionState.CONNECTED,
+                    enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.78f, animationSpec = EgoMotion.bouncySpring()),
+                    exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.78f, animationSpec = tween(140))
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .pressBounceScale(0.88f)
+                                .clip(CircleShape)
+                                .background(
+                                    if (showAiCommandPopup) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
+                                    shape = CircleShape
+                                )
+                                .clickable {
+                                    aiPopupSpaceId = null
+                                    aiPopupTabId = null
+                                    showAiCommandPopup = !showAiCommandPopup
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "AI 명령 팝업 열기",
+                                tint = if (showAiCommandPopup) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                            if (mcpPendingCount > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(top = 5.dp, end = 5.dp)
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(EgoEmerald)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.width(4.dp))
 
                 // 광고 차단 (짧게: 현재 사이트 ON/OFF + 새로고침, 길게: 크롬 확장 스타일 팝업)
@@ -728,40 +1285,59 @@ fun BrowserScreen() {
                     }
                 }
 
-                // 크롬 스타일 번역 버튼 (클릭 시 알약 팝업 표시 + 즉시 번역)
-                IconButton(
-                    onClick = {
-                        if (translateState.visible) {
-                            translateState = translateState.copy(visible = false)
-                        } else {
-                            triggerTranslation(translateState.sourceLang, translateState.targetLang)
-                        }
-                    },
-                    modifier = Modifier.size(42.dp)
+                // 크롬 스타일 번역 버튼 (짧게: 즉시 번역/팝업 토글, 길게: 번역 설정 팝업)
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = {
+                                if (translateState.visible) {
+                                    translateState = translateState.copy(visible = false)
+                                } else {
+                                    triggerTranslation(translateState.sourceLang, translateState.targetLang)
+                                }
+                            },
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showTranslateSettingsDialog = true
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Translate,
-                        contentDescription = "페이지 번역",
+                        contentDescription = "페이지 번역 (길게 눌러 번역 설정)",
                         tint = if (translateState.isTranslated) MaterialTheme.colorScheme.primary else activeIconColor
                     )
                 }
 
-                // 주/야간 다크모드 토글
+                // 주/야간 다크모드 토글 (아이콘 모프 전환 + Micro-press)
                 IconButton(
                     onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(42.dp).pressBounceScale()
                 ) {
-                    Icon(
-                        imageVector = if (isEffectiveDark) Icons.Default.LightMode else Icons.Default.DarkMode,
-                        contentDescription = "다크모드 전환",
-                        tint = if (isEffectiveDark) MaterialTheme.colorScheme.primary else activeIconColor
-                    )
+                    AnimatedContent(
+                        targetState = isEffectiveDark,
+                        transitionSpec = {
+                            (scaleIn(EgoMotion.bouncySpring(), initialScale = 0.6f) + fadeIn(tween(150)))
+                                .togetherWith(scaleOut(tween(120), targetScale = 0.6f) + fadeOut(tween(110)))
+                        },
+                        label = "themeIconMorph"
+                    ) { darkNow ->
+                        Icon(
+                            imageVector = if (darkNow) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = "다크모드 전환",
+                            tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor
+                        )
+                    }
                 }
 
                 // 다크모드 우측: 크롬형 모든 탭 보기 버튼 ([N] 사각 카운터)
                 Box(
                     modifier = Modifier
                         .size(42.dp)
+                        .pressBounceScale()
                         .clip(CircleShape)
                         .clickable { showAllTabsDialog = true },
                     contentAlignment = Alignment.Center
@@ -856,8 +1432,12 @@ fun BrowserScreen() {
                 }
             }
 
-            // 페이지에서 찾기 바 (활성화 시)
-            if (showFindBar) {
+            // 페이지에서 찾기 바 (활성화 시 스프링 펼침)
+            AnimatedVisibility(
+                visible = showFindBar,
+                enter = fadeIn(tween(140)) + expandVertically(EgoMotion.intSizeSpring),
+                exit = fadeOut(tween(120)) + shrinkVertically(tween(160))
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -897,8 +1477,12 @@ fun BrowserScreen() {
                 }
             }
 
-            // 3행 (선택): 태블릿 크롬 1:1 북마크 바 (폴더 드롭다운 + 미니 아이콘 + 길게 눌러 편집·좌우 위치 변경)
-            if (prefs.showBookmarkBar) {
+            // 3행 (선택): 태블릿 크롬 1:1 북마크 바 (스프링 펼침/접힘)
+            AnimatedVisibility(
+                visible = prefs.showBookmarkBar,
+                enter = fadeIn(tween(150)) + expandVertically(EgoMotion.intSizeSpring),
+                exit = fadeOut(tween(120)) + shrinkVertically(tween(160))
+            ) {
                 ChromeBookmarkBar(
                     bookmarks = bookmarks,
                     folders = bookmarkFolders,
@@ -950,29 +1534,25 @@ fun BrowserScreen() {
                 }
             }
 
-            // 상단 고정형 AI 라이브 모니터 트레이 (짧게 탭 시 확장, 닫기 전까지 계속 표시되어 웹툰 등과 동시 시청 가능)
-            AiLiveMonitorTray(
-                visible = showAiMonitorTray,
-                spaces = spaces,
-                activeSpaceId = activeSpaceId,
-                canAddAiSpace = canAddAiSpace,
-                onSelectSpace = { id -> SpaceManager.selectSpace(id) },
-                onCreateAiSpace = { SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) } },
-                onCloseAiSpace = { id -> SpaceManager.closeAiSpace(id) },
-                onChangeSpaceColor = { id, hex -> SpaceManager.setSpaceAccentColor(id, hex) },
-                onCollapse = { showAiMonitorTray = false }
-            )
-
             val activeSpaceAccent = parseSpaceColor(activeSpace.accentColorHex)
             // 웹 캔버스 (AI Space일 때 2dp 커스텀 공간 색상 테두리 + 안정적 풀스크린 WebView 호스트)
             val canvasBorder = if (activeSpace.type == SpaceType.AI) {
                 Modifier.border(2.dp, activeSpaceAccent, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             } else Modifier
 
+            val mainBlurMod = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && mainSwapBlur.value > 0.3f) {
+                Modifier.blur(mainSwapBlur.value.dp)
+            } else Modifier
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .graphicsLayer {
+                        scaleX = mainSwapScale.value
+                        scaleY = mainSwapScale.value
+                        alpha = mainSwapAlpha.value
+                    }
+                    .then(mainBlurMod)
                     .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
                     .then(canvasBorder)
             ) {
@@ -980,7 +1560,11 @@ fun BrowserScreen() {
                     spaces = spaces,
                     activeSpace = activeSpace
                 )
-                if (activeTab.url == NEW_TAB_URL) {
+                AnimatedVisibility(
+                    visible = activeTab.url == NEW_TAB_URL,
+                    enter = fadeIn(tween(180)),
+                    exit = fadeOut(tween(140))
+                ) {
                     ChromeNewTabPage(
                         bookmarks = bookmarks,
                         onOpenOmnibox = { showOmniboxOverlay = true },
@@ -1003,13 +1587,195 @@ fun BrowserScreen() {
                     )
                 }
             }
+            }
         }
 
-        // 알약 캡슐 터치 시 바로 아래(주소창 줄 위)로 확장되는 슬라이드 Space 전환 바
+        // 최상단 좌측 고정 알약 캡슐 (AI 라이브 모니터가 열려도 좌측 상단에 그대로 유지)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 10.dp, top = 7.dp)
+                .zIndex(15f)
+                .onGloballyPositioned { coords ->
+                    personalCapsuleBounds = coords.boundsInRoot()
+                }
+        ) {
+            PillSpaceCapsule(
+                activeSpace = activeSpace,
+                isAnyAiWorking = workingSpace != null,
+                workingAccentColor = workingAccent,
+                spaceCount = spaces.size,
+                canAddAiSpace = canAddAiSpace,
+                isExpanded = spaceBarExpanded,
+                onSetExpanded = { spaceBarExpanded = it },
+                onToggleAiMonitor = {
+                    monitorAutoOpenedByDrag = false
+                    showAiMonitorTray = !showAiMonitorTray
+                },
+                onHoverIndexChanged = { hoveredSpaceIndex = it },
+                onCommitIndex = { idx ->
+                    if (idx in spaces.indices) {
+                        SpaceManager.selectSpace(spaces[idx].id)
+                    } else if (canAddAiSpace && idx == spaces.size) {
+                        SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+                    }
+                }
+            )
+        }
+
+        // 세로모드 상태바 60%+ 0.5초 / 가로모드 좌측 0.45초 자동 열기 진행 게이지
+        if (dwellProgress > 0.01f && !showAiMonitorTray) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth(dwellProgress)
+                    .height(3.dp)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .zIndex(42f)
+            )
+        }
+
+        // 길게 눌러 띄운 플로팅 탭 알약 캡슐 오버레이
+        val floatingTab = draggingTabId?.let { tid -> activeSpace.tabs.firstOrNull { it.id == tid } }
+        if (floatingTab != null) {
+            val rootOrigin = rootBoxBounds?.topLeft ?: Offset.Zero
+            val localX = (dragPointerRoot.x - rootOrigin.x).roundToInt()
+            val localY = (dragPointerRoot.y - rootOrigin.y).roundToInt()
+            val inDropMode = hoveredDropSpaceId != null || hoveredNewSpaceDrop
+            val badgeText = when {
+                hoveredNewSpaceDrop -> "새 스페이스"
+                hoveredDropSpaceId != null -> {
+                    val targetSp = spaces.firstOrNull { it.id == hoveredDropSpaceId }
+                    val isIdle = targetSp?.aiStatus == AiSpaceStatus.IDLE || targetSp?.aiStatus == AiSpaceStatus.DONE
+                    if (isIdle) "활성 복제" else "백그라운드"
+                }
+                else -> null
+            }
+            val pillHalfW = with(density) { 86.dp.roundToPx() }
+            val pillHalfH = with(density) { 19.dp.roundToPx() }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shadowElevation = 14.dp,
+                modifier = Modifier
+                    .offset { IntOffset(localX - pillHalfW, localY - pillHalfH) }
+                    .height(38.dp)
+                    .widthIn(min = 128.dp, max = 224.dp)
+                    .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    .graphicsLayer {
+                        val s = if (inDropMode) 0.96f else 1.06f
+                        scaleX = s
+                        scaleY = s
+                    }
+                    .zIndex(45f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    Text(
+                        text = floatingTab.title.ifBlank { floatingTab.url },
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (badgeText != null) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = badgeText,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 탭 드롭 직후 3.5초 미니 칩 (누르면 방금 넘긴 탭이 자동 고정된 AI 명령 팝업 오픈)
+        AnimatedVisibility(
+            visible = recentDropPromptChip != null && !showAiCommandPopup && serverState.connectionState == McpConnectionState.CONNECTED,
+            enter = fadeIn(tween(180)) + slideInVertically(initialOffsetY = { it / 2 }),
+            exit = fadeOut(tween(160)) + slideOutVertically(targetOffsetY = { it / 2 }),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 22.dp, start = 16.dp, end = 16.dp)
+                .zIndex(44f)
+        ) {
+            val info = recentDropPromptChip
+            if (info != null) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shadowElevation = 10.dp,
+                    modifier = Modifier
+                        .border(1.2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                        .clip(CircleShape)
+                        .clickable {
+                            aiPopupSpaceId = info.first
+                            aiPopupTabId = info.second
+                            recentDropPromptChip = null
+                            showAiCommandPopup = true
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "방금 넘긴 '${info.third.take(16)}' · 지시 보내기",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
+        // 주소창 팝업 형식의 전용 AI 명령 입력 팝업
+        Box(modifier = Modifier.fillMaxSize().zIndex(48f)) {
+            AiCommandOverlay(
+                visible = showAiCommandPopup,
+                spaces = spaces,
+                activeSpaceId = activeSpaceId,
+                preselectedSpaceId = aiPopupSpaceId,
+                preselectedTabId = aiPopupTabId,
+                connectedClients = mcpConnectedClients,
+                defaultAiName = connectedAiName,
+                recentCommands = mcpRecentCommands,
+                onDismiss = { showAiCommandPopup = false },
+                onSubmitCommand = { cmd ->
+                    val feedback = McpCommandBridge.enqueueCommand(cmd)
+                    Toast.makeText(context, feedback, Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        // 알약 캡슐 터치 시 바로 아래로 확장되는 슬라이드 Space 전환 바
         Box(
             modifier = Modifier
                 .padding(top = 46.dp)
                 .fillMaxWidth()
+                .zIndex(14f)
         ) {
             ExpandedSpaceSlideBar(
                 visible = spaceBarExpanded,
@@ -1033,7 +1799,7 @@ fun BrowserScreen() {
         Box(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 100.dp)
+                .padding(top = 100.dp + monitorTopOffset)
         ) {
             ChromeStyleTranslatePopup(
                 state = translateState,
@@ -1063,8 +1829,20 @@ fun BrowserScreen() {
             )
         }
 
-        // 모바일 크롬 스타일 주소창(Omnibox) 오버레이 (실제 주소창 위치·길이 1:1 동적 정렬)
-        if (showOmniboxOverlay) {
+        // 모바일 크롬 스타일 주소창(Omnibox) 오버레이 (주소창에서 펼쳐지는 스프링 모프)
+        AnimatedVisibility(
+            visible = showOmniboxOverlay,
+            enter = fadeIn(tween(130)) + scaleIn(
+                animationSpec = EgoMotion.smoothSpring(),
+                initialScale = 0.94f,
+                transformOrigin = TransformOrigin(0.5f, 0f)
+            ),
+            exit = fadeOut(tween(110)) + scaleOut(
+                animationSpec = tween(130),
+                targetScale = 0.96f,
+                transformOrigin = TransformOrigin(0.5f, 0f)
+            )
+        ) {
             ChromeOmniboxOverlay(
                 currentTitle = activeTab.title,
                 currentUrl = activeTab.url,
@@ -1109,6 +1887,35 @@ fun BrowserScreen() {
                 onDeleteBookmark = { id -> SpaceManager.removeBookmark(id) },
                 onAddFolder = { name -> SpaceManager.addBookmarkFolder(name) },
                 onDismiss = { showBookmarkManager = false }
+            )
+        }
+
+        // 번역 버튼 길게 누르기: 번역 설정 팝업
+        if (showTranslateSettingsDialog) {
+            TranslateSettingsPopupDialog(
+                engine = prefs.translationEngine,
+                defaultTargetLang = prefs.defaultTranslateTarget,
+                offerTranslate = prefs.offerTranslate,
+                currentHost = currentHost,
+                alwaysTranslateSite = currentHost.isNotBlank() && currentHost in prefs.autoTranslateHosts,
+                onChangeEngine = { eng -> SpaceManager.updatePreferences { it.copy(translationEngine = eng) } },
+                onChangeDefaultTarget = { lang ->
+                    SpaceManager.updatePreferences { it.copy(defaultTranslateTarget = lang) }
+                    translateState = translateState.copy(targetLang = lang)
+                },
+                onToggleOfferTranslate = { offer -> SpaceManager.updatePreferences { it.copy(offerTranslate = offer) } },
+                onToggleAlwaysTranslateSite = {
+                    if (currentHost.isNotBlank()) {
+                        val willEnable = currentHost !in prefs.autoTranslateHosts
+                        SpaceManager.toggleAutoTranslateHost(currentHost)
+                        Toast.makeText(
+                            context,
+                            if (willEnable) "$currentHost 항상 자동 번역 켜짐" else "$currentHost 자동 번역 해제됨",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                },
+                onDismiss = { showTranslateSettingsDialog = false }
             )
         }
 
@@ -1207,14 +2014,19 @@ fun BrowserScreen() {
             visible = showChromeMenu,
             items = chromeMenuItems,
             hoveredIndex = hoveredMenuIndex,
+            topPadding = 98.dp + monitorTopOffset,
             onDismiss = {
                 showChromeMenu = false
                 hoveredMenuIndex = -1
             }
         )
 
-        // 우측 MCP / 터널 전용 설정 드로어
-        if (showMcpDrawer) {
+        // 우측 MCP / 터널 전용 설정 드로어 (우측 스프링 슬라이드 인)
+        AnimatedVisibility(
+            visible = showMcpDrawer,
+            enter = slideInHorizontally(EgoMotion.intOffsetSpring) { it } + fadeIn(tween(180)),
+            exit = slideOutHorizontally(tween(190)) { it } + fadeOut(tween(150))
+        ) {
             McpSettingsDrawer(
                 onDismiss = { showMcpDrawer = false }
             )
@@ -1232,8 +2044,8 @@ fun BrowserScreen() {
 
         AnimatedVisibility(
             visible = showChromeSettings,
-            enter = slideInHorizontally(tween(240)) { it / 4 } + fadeIn(tween(200)),
-            exit = slideOutHorizontally(tween(200)) { it / 4 } + fadeOut(tween(170))
+            enter = slideInHorizontally(EgoMotion.intOffsetSpring) { it / 3 } + fadeIn(tween(200)),
+            exit = slideOutHorizontally(tween(190)) { it / 3 } + fadeOut(tween(160))
         ) {
             ChromeSettingsScreen(
                 onOpenMcpDrawer = { showMcpDrawer = true },
@@ -1241,8 +2053,12 @@ fun BrowserScreen() {
             )
         }
 
-        // 크롬형 전체 화면 썸네일 카드 그리드 모든 탭 보기
-        if (showAllTabsDialog) {
+        // 크롬형 전체 화면 썸네일 카드 그리드 모든 탭 보기 (스프링 줌 모프 전환)
+        AnimatedVisibility(
+            visible = showAllTabsDialog,
+            enter = scaleIn(animationSpec = EgoMotion.smoothSpring(), initialScale = 0.90f) + fadeIn(tween(180)),
+            exit = scaleOut(animationSpec = tween(150), targetScale = 0.92f) + fadeOut(tween(140))
+        ) {
             ChromeTabSwitcherOverlay(
                 spaces = spaces,
                 activeSpace = activeSpace,
@@ -1255,6 +2071,9 @@ fun BrowserScreen() {
                 },
                 onCloseTab = { targetSpaceId, tabId ->
                     SpaceManager.closeTab(targetSpaceId, tabId)
+                },
+                onMoveTab = { targetSpaceId, fromId, toId ->
+                    SpaceManager.moveTabById(targetSpaceId, fromId, toId)
                 },
                 onCreateTab = { targetSpaceId, incog ->
                     SpaceManager.selectSpace(targetSpaceId)
@@ -1393,14 +2212,18 @@ private fun WebViewHostContainer(
             val host = swipe.findViewWithTag<FrameLayout>("webview_host") ?: return@AndroidView
             val activeWv = SpaceManager.getOrCreateWebView(activeSpace.id, activeTab)
 
-            swipe.setOnChildScrollUpCallback { _, _ -> activeWv.scrollY > 0 }
+            swipe.setOnChildScrollUpCallback { _, _ ->
+                activeWv.scrollY > 0 ||
+                    activeWv.canScrollVertically(-1) ||
+                    com.egolite.mobile.browser.EgoWebViewFactory.isInnerScrolled(activeTab.id)
+            }
             swipe.setOnRefreshListener {
                 activeWv.reload()
                 swipe.isRefreshing = false
             }
 
             val bgAiWebViews = spaces
-                .filter { it.type == SpaceType.AI && it.id != activeSpace.id }
+                .filter { it.id != activeSpace.id }
                 .mapNotNull { bgSpace -> SpaceManager.getExistingWebView(bgSpace.activeTab.id) }
                 .toSet()
 
