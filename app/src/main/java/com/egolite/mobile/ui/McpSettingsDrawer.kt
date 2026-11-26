@@ -105,9 +105,9 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
             AnimatedVisibility(
                 visible = cardVisible,
                 enter = fadeIn(tween(130)) + scaleIn(
-                    initialScale = 0.72f,
+                    initialScale = 0.30f,
                     transformOrigin = TransformOrigin(1f, 0f),
-                    animationSpec = EgoMotion.smoothSpring()
+                    animationSpec = EgoMotion.morphSpring()
                 ),
                 exit = fadeOut(tween(100)) + scaleOut(
                     targetScale = 0.78f,
