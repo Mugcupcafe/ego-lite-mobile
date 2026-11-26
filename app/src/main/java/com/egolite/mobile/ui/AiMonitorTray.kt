@@ -268,7 +268,7 @@ fun AiLiveMonitorTray(
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(top = 56.dp, bottom = 72.dp, start = 13.dp, end = 13.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .fillMaxSize()
@@ -397,10 +397,13 @@ fun AiLiveMonitorTray(
                     }
                     if (isTabDragging && canAddAiSpace) {
                         item(key = "__new_ai_space_drop_left__") {
+                            val fullPane = monitoredSpaces.isEmpty()
                             NewAiSpaceDropZoneCard(
                                 isLeftSidebar = true,
                                 isHovered = isHoveredNewSpaceDrop,
+                                isFullPane = fullPane,
                                 modifier = Modifier
+                                    .then(if (fullPane) Modifier.fillParentMaxHeight(0.88f) else Modifier)
                                     .animateItem()
                                     .onGloballyPositioned { coords ->
                                         onRegisterNewSpaceBounds(coords.boundsInRoot())
@@ -567,7 +570,7 @@ fun AiLiveMonitorTray(
                 LazyRow(
                     state = rowState,
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxSize()
@@ -695,10 +698,13 @@ fun AiLiveMonitorTray(
                     }
                     if (isTabDragging && canAddAiSpace) {
                         item(key = "__new_ai_space_drop_top__") {
+                            val fullPane = monitoredSpaces.isEmpty()
                             NewAiSpaceDropZoneCard(
                                 isLeftSidebar = false,
                                 isHovered = isHoveredNewSpaceDrop,
+                                isFullPane = fullPane,
                                 modifier = Modifier
+                                    .then(if (fullPane) Modifier.fillParentMaxWidth(0.92f) else Modifier)
                                     .animateItem()
                                     .onGloballyPositioned { coords ->
                                         onRegisterNewSpaceBounds(coords.boundsInRoot())
@@ -1037,21 +1043,25 @@ private fun MonitorSpaceCard(
 private fun NewAiSpaceDropZoneCard(
     isLeftSidebar: Boolean,
     isHovered: Boolean,
+    isFullPane: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val accent = MaterialTheme.colorScheme.primary
     val scale by animateFloatAsState(
-        targetValue = if (isHovered) 1.045f else 1f,
+        targetValue = if (isHovered) 1.025f else 1f,
         animationSpec = EgoMotion.bouncySpring(),
         label = "newSpaceDropScale"
     )
-    val boxHeight = if (isLeftSidebar) 108.dp else 258.dp
-    val boxWidth = if (isLeftSidebar) 216.dp else 188.dp
+    val sizeMod = when {
+        isFullPane && isLeftSidebar -> Modifier.width(216.dp)
+        isFullPane && !isLeftSidebar -> Modifier.height(236.dp)
+        isLeftSidebar -> Modifier.width(216.dp).height(108.dp)
+        else -> Modifier.width(188.dp).height(258.dp)
+    }
 
     Box(
         modifier = modifier
-            .width(boxWidth)
-            .height(boxHeight)
+            .then(sizeMod)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
