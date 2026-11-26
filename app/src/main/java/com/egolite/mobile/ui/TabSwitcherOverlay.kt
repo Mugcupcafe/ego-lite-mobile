@@ -136,6 +136,14 @@ fun ChromeTabSwitcherOverlay(
     val tabCardRootRects = remember { mutableMapOf<String, Rect>() }
     var overlayOriginRoot by remember { mutableStateOf(Offset.Zero) }
 
+
+    val allTabsKey = remember(spaces) { spaces.flatMap { s -> s.tabs.map { "${s.id}:${it.id}" } } }
+    val thumbnails: Map<String, Bitmap?> = remember(allTabsKey) {
+        spaces.flatMap { it.tabs }.associate { tab ->
+            tab.id to if (tab.url == NEW_TAB_URL) null else SpaceManager.captureTabThumbnail(tab.id)
+        }
+    }
+
     fun triggerTabVanishClose(spaceId: String, tabId: String, accentColor: Color) {
         if (tabId in vanishingTabIds) return
         val style = prefs.cardVanishStyle
@@ -179,12 +187,6 @@ fun ChromeTabSwitcherOverlay(
     val haptic = LocalHapticFeedback.current
 
     // 전체 공간의 열린 탭 썸네일 캡처
-    val allTabsKey = remember(spaces) { spaces.flatMap { s -> s.tabs.map { "${s.id}:${it.id}" } } }
-    val thumbnails: Map<String, Bitmap?> = remember(allTabsKey) {
-        spaces.flatMap { it.tabs }.associate { tab ->
-            tab.id to if (tab.url == NEW_TAB_URL) null else SpaceManager.captureTabThumbnail(tab.id)
-        }
-    }
 
     // 탭 스위처 ⋮ 메뉴 항목 (Drag-to-Select 공용 오버레이)
     val switcherMenuItems = remember(personalSpace.id, activeSpace.id, selectedSection) {
@@ -255,7 +257,7 @@ fun ChromeTabSwitcherOverlay(
                                 selectionMode = false
                                 selectedTabIds = emptySet()
                             }) {
-                                Icon(Icons.Default.Close, contentDescription = "선택 취소")
+                                EgoIcon(Icons.Default.Close, contentDescription = "선택 취소")
                             }
                             Text(
                                 text = "${selectedTabIds.size}개 선택됨",
@@ -295,12 +297,12 @@ fun ChromeTabSwitcherOverlay(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = if (selectedSection == 0) "새 탭" else "새 AI Space",
                                 tint = addBtnTint,
                                 modifier = Modifier.size(22.dp)
-                            )
+                            , symbolSize = 22.dp)
                         }
 
                         // 중앙: Personal 탭 그룹 | AI Space 탭 그룹 세그먼트 캡슐
@@ -357,12 +359,12 @@ fun ChromeTabSwitcherOverlay(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.GridView,
                                     contentDescription = "AI Space 탭 그룹",
                                     tint = if (selectedSection == 1) EgoEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(17.dp)
-                                )
+                                , symbolSize = 17.dp)
                                 Text(
                                     text = "AI Space (${aiSpaces.size})",
                                     fontSize = 12.5.sp,
@@ -378,7 +380,7 @@ fun ChromeTabSwitcherOverlay(
                                 showSearchBar = !showSearchBar
                                 if (!showSearchBar) searchQuery = ""
                             }) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.Search,
                                     contentDescription = "탭 검색",
                                     tint = if (showSearchBar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
@@ -448,7 +450,7 @@ fun ChromeTabSwitcherOverlay(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.MoreVert,
                                     contentDescription = "더보기",
                                     tint = MaterialTheme.colorScheme.onSurface
@@ -456,7 +458,7 @@ fun ChromeTabSwitcherOverlay(
                             }
 
                             IconButton(onClick = onDismiss) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "닫기",
                                     tint = MaterialTheme.colorScheme.onSurface
@@ -471,11 +473,11 @@ fun ChromeTabSwitcherOverlay(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
                         placeholder = { Text("열린 탭 제목 또는 URL 검색...", fontSize = 13.sp) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        leadingIcon = { EgoIcon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp), symbolSize = 18.dp) },
                         trailingIcon = {
                             if (searchQuery.isNotBlank()) {
                                 IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "지우기", modifier = Modifier.size(16.dp))
+                                    EgoIcon(Icons.Default.Close, contentDescription = "지우기", modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                                 }
                             }
                         },
@@ -613,12 +615,12 @@ fun ChromeTabSwitcherOverlay(
                     if (aiSpaces.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.GridView,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                     modifier = Modifier.size(56.dp)
-                                )
+                                , symbolSize = 56.dp)
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Text(
                                     text = "여기에서 AI Space 탭 그룹을 확인할 수 있습니다",
@@ -712,7 +714,7 @@ fun ChromeTabSwitcherOverlay(
                                             TextButton(
                                                 onClick = { onCreateTab(aiSpace.id, false) }
                                             ) {
-                                                Icon(Icons.Default.Add, contentDescription = null, tint = spaceAccent, modifier = Modifier.size(16.dp))
+                                                EgoIcon(Icons.Default.Add, contentDescription = null, tint = spaceAccent, modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                                                 Spacer(modifier = Modifier.width(3.dp))
                                                 Text("새 탭", fontSize = 12.sp, color = spaceAccent, fontWeight = FontWeight.Bold)
                                             }
@@ -721,12 +723,12 @@ fun ChromeTabSwitcherOverlay(
                                                     onClick = { onCloseAiSpace(aiSpace.id) },
                                                     modifier = Modifier.size(30.dp)
                                                 ) {
-                                                    Icon(
+                                                    EgoIcon(
                                                         imageVector = Icons.Default.Close,
                                                         contentDescription = "AI Space 닫기",
                                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         modifier = Modifier.size(17.dp)
-                                                    )
+                                                    , symbolSize = 17.dp)
                                                 }
                                             }
                                         }
@@ -917,24 +919,24 @@ private fun ChromeTabThumbnailCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (tab.isIncognito) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.VisibilityOff,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp)
-                    )
+                    , symbolSize = 16.dp)
                 } else if (tab.url != NEW_TAB_URL) {
                     BookmarkMiniFavicon(
                         bm = BookmarkItem(title = tab.title, url = tab.url),
                         sizeDp = 16
                     )
                 } else {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Language,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp)
-                    )
+                    , symbolSize = 16.dp)
                 }
                 Spacer(modifier = Modifier.width(7.dp))
                 Text(
@@ -947,23 +949,23 @@ private fun ChromeTabThumbnailCard(
                     modifier = Modifier.weight(1f)
                 )
                 if (selectionMode) {
-                    Icon(
+                    EgoIcon(
                         imageVector = if (isSelectedForBatch) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
                         contentDescription = "선택",
                         tint = if (isSelectedForBatch) accentBorder else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(end = 6.dp).size(19.dp)
-                    )
+                    , symbolSize = 19.dp)
                 } else {
                     IconButton(
                         onClick = onClose,
                         modifier = Modifier.size(30.dp)
                     ) {
-                        Icon(
+                        EgoIcon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "탭 닫기",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
-                        )
+                        , symbolSize = 16.dp)
                     }
                 }
             }
@@ -990,12 +992,12 @@ private fun ChromeTabThumbnailCard(
                         verticalArrangement = Arrangement.Center,
                         modifier = Modifier.padding(12.dp)
                     ) {
-                        Icon(
+                        EgoIcon(
                             imageVector = if (tab.url == NEW_TAB_URL) Icons.Default.AutoAwesome else Icons.Default.Language,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
                             modifier = Modifier.size(28.dp)
-                        )
+                        , symbolSize = 28.dp)
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = if (tab.url == NEW_TAB_URL) "새 탭" else tab.url.removePrefix("https://").removePrefix("http://").take(26),
