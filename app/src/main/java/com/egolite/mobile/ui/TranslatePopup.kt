@@ -62,6 +62,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.ExitTransition
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,14 +97,24 @@ fun ChromeStyleTranslatePopup(
     onTogglePinLang: (String) -> Unit,
     onToggleAlwaysTranslate: () -> Unit,
     onUndoRestore: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: (VanishSnapshot) -> Unit
 ) {
     var pickingForSource by remember { mutableStateOf<Boolean?>(null) }
+    var capsuleRect by remember { mutableStateOf<Rect?>(null) }
+    val capsuleCaptureLayer = rememberGraphicsLayer()
+    val capsuleCaptureScope = rememberCoroutineScope()
+    fun dismissCapsuleWithCapture() {
+        capsuleCaptureScope.launch {
+            val bmp = runCatching { capsuleCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+            val origin = capsuleRect?.let { Offset(it.right - 22f, it.center.y) }
+            onDismiss(VanishSnapshot(rect = capsuleRect, touchRoot = origin, bitmap = bmp))
+        }
+    }
 
     AnimatedVisibility(
         visible = state.visible,
         enter = fadeIn(tween(140)) + slideInVertically(animationSpec = EgoMotion.intOffsetSpring) { -it } + scaleIn(animationSpec = EgoMotion.bouncySpring(), initialScale = 0.86f),
-        exit = fadeOut(tween(120)) + slideOutVertically(animationSpec = tween(160)) { -it / 2 } + scaleOut(animationSpec = tween(140), targetScale = 0.90f)
+        exit = ExitTransition.None
     ) {
         // 슬림 알약 캡슐형 번역 바
         Surface(
@@ -101,6 +124,11 @@ fun ChromeStyleTranslatePopup(
             color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
                 .padding(horizontal = 12.dp, vertical = 4.dp)
+                .onGloballyPositioned { coords -> capsuleRect = coords.boundsInRoot() }
+                .drawWithContent {
+                    capsuleCaptureLayer.record { this@drawWithContent.drawContent() }
+                    drawLayer(capsuleCaptureLayer)
+                }
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
         ) {
             Row(
@@ -210,7 +238,7 @@ fun ChromeStyleTranslatePopup(
                 }
 
                 IconButton(
-                    onClick = onDismiss,
+                    onClick = { dismissCapsuleWithCapture() },
                     modifier = Modifier.size(26.dp)
                 ) {
                     EgoIcon(
@@ -345,7 +373,7 @@ private fun LanguagePickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("닫기") }
+            TextButton(onClick = { dismissCapsuleWithCapture() }) { Text("닫기") }
         }
     )
 }
@@ -412,7 +440,7 @@ fun TranslateSettingsPopupDialog(
     onChangeDefaultTarget: (String) -> Unit,
     onToggleOfferTranslate: (Boolean) -> Unit,
     onToggleAlwaysTranslateSite: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: (VanishSnapshot) -> Unit
 ) {
     val quickLangs = listOf(
         "ko" to "한국어",
@@ -422,16 +450,24 @@ fun TranslateSettingsPopupDialog(
         "es" to "스페인어"
     )
     var cardVisible by remember { mutableStateOf(false) }
+    var cardRect by remember { mutableStateOf<Rect?>(null) }
+    val captureLayer = rememberGraphicsLayer()
+    val captureScope = rememberCoroutineScope()
+    fun dismissWithCapture(touchRoot: Offset?) {
+        captureScope.launch {
+            val bmp = runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+            onDismiss(VanishSnapshot(rect = cardRect, touchRoot = touchRoot, bitmap = bmp))
+        }
+    }
     LaunchedEffect(Unit) { cardVisible = true }
 
     // 전체 반투명 검정 배경 없이, 번역 버튼을 덮으며 우상단에서 모프 확장되는 M3 팝업 카드
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) { onDismiss() }
+            .pointerInput(Unit) {
+                detectTapGestures { offset -> dismissWithCapture(offset) }
+            }
     ) {
         Box(
             modifier = Modifier
@@ -457,6 +493,11 @@ fun TranslateSettingsPopupDialog(
                     shadowElevation = 14.dp,
                     modifier = Modifier
                         .width(336.dp)
+                        .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                        .drawWithContent {
+                            captureLayer.record { this@drawWithContent.drawContent() }
+                            drawLayer(captureLayer)
+                        }
                         .heightIn(max = 500.dp)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(24.dp))
                         .clickable(
@@ -488,7 +529,7 @@ fun TranslateSettingsPopupDialog(
                                 , symbolSize = 19.dp)
                                 Text("번역 설정", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             }
-                            IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                            IconButton(onClick = { dismissWithCapture(cardRect?.let { Offset(it.right - 24f, it.top + 24f) }) }, modifier = Modifier.size(28.dp)) {
                                 EgoIcon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(18.dp), symbolSize = 18.dp)
                             }
                         }
