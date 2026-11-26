@@ -95,6 +95,16 @@ data class PersistedTab(
     val url: String
 )
 
+@Serializable
+data class PersistedAiSpace(
+    val id: String,
+    val name: String,
+    val accentColorHex: String = "#10B981",
+    val tabs: List<PersistedTab> = emptyList(),
+    val activeTabIndex: Int = 0,
+    val lastUpdatedAtMs: Long = System.currentTimeMillis()
+)
+
 data class BrowserTab(
     val id: String = UUID.randomUUID().toString(),
     val title: String = "새 탭",
@@ -148,6 +158,14 @@ data class LongPressTarget(
 )
 
 @Serializable
+enum class CardVanishStyle(val label: String, val description: String) {
+    HARMONY_DUST("하모니OS 초미세 먼지 (기본값)", "카드 경계가 침식되며 초미세 먼지로 흩어지는 무손실 소멸"),
+    LIGHT_PARTICLES("가벼운 입자 분산", "약 250개 입자로 빠르게 흩어지는 저부하 소멸 (560ms)"),
+    SCALE_FADE("기본 축소 페이드", "먼지 효과 없이 깔끔하게 축소되며 사라짐"),
+    OFF("즉시 삭제 (애니메이션 없음)", "지연 없이 즉시 닫기")
+}
+
+@Serializable
 data class BrowserPreferences(
     val adBlockEnabled: Boolean = true,
     val darkModeEnabled: Boolean = false,
@@ -156,14 +174,29 @@ data class BrowserPreferences(
     val desktopModeEnabled: Boolean = true,
     val showBookmarkBar: Boolean = false,
     val showHomeButton: Boolean = true,
+    val showMcpBadgeButton: Boolean = true,
+    val showAiCommandButton: Boolean = true,
+    val showAdBlockButton: Boolean = true,
+    val showTranslateButton: Boolean = true,
+    val showDarkModeButton: Boolean = true,
+    val showProfileAvatarButton: Boolean = true,
+    val showNewTabToolbarButton: Boolean = false,
+    val showShareButton: Boolean = false,
+    val showFindInPageButton: Boolean = false,
+    val showDesktopSiteButton: Boolean = false,
+    val showReaderModeButton: Boolean = false,
     val homepageEnabled: Boolean = true,
     val homepageUrl: String = "ego://newtab",
     val maxAiSpaces: Int = 5,
     val monitorPosPortrait: MonitorPosition = MonitorPosition.TOP,
     val monitorPosLandscape: MonitorPosition = MonitorPosition.LEFT,
     val equalizerMorphStyle: EqualizerMorphStyle = EqualizerMorphStyle.DOTS_SLASH,
+    val cardVanishStyle: CardVanishStyle = CardVanishStyle.HARMONY_DUST,
+    val vanishParticleCount: Int = 1800,
+    val vanishDurationMs: Int = 1300,
     val tabWidthMode: TabWidthMode = TabWidthMode.DYNAMIC,
     val manualTabWidthDp: Int = 180,
+    val aiSpaceRetentionDays: Int = 7,
     val inactiveTabDays: Int = 21,
     val translationEngine: TranslationEngine = TranslationEngine.ONLINE_GOOGLE,
     val offerTranslate: Boolean = true,
