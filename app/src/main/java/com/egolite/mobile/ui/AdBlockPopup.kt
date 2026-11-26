@@ -90,15 +90,6 @@ fun AdBlockControlDialog(
     var customHostInput by remember { mutableStateOf("") }
     var customCssInput by remember { mutableStateOf("") }
 
-    // 바깥 터치 시 닫히는 투명 스크림
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures { offset -> dismissWithCapture(offset) }
-            }
-    )
-
     var cardVisible by remember { mutableStateOf(false) }
     var cardRect by remember { mutableStateOf<Rect?>(null) }
     val captureLayer = rememberGraphicsLayer()
@@ -110,6 +101,15 @@ fun AdBlockControlDialog(
         }
     }
     LaunchedEffect(Unit) { cardVisible = true }
+
+    // 바깥 터치 시 닫히는 투명 스크림
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures { offset -> dismissWithCapture(offset) }
+            }
+    )
 
     // 방패 버튼을 그대로 덮으며 카드 자체만 깔끔하게 모프
     Box(
