@@ -119,12 +119,12 @@ fun ChromeStyleTranslatePopup(
                         color = MaterialTheme.colorScheme.primary
                     )
                 } else {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Translate,
                         contentDescription = null,
                         tint = if (state.isTranslated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(17.dp)
-                    )
+                    , symbolSize = 17.dp)
                 }
 
                 // 출발어 칩
@@ -143,7 +143,7 @@ fun ChromeStyleTranslatePopup(
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1
                     )
-                    Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(15.dp))
+                    EgoIcon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(15.dp), symbolSize = 15.dp)
                 }
 
                 Text("→", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -164,12 +164,12 @@ fun ChromeStyleTranslatePopup(
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1
                     )
-                    Icon(
+                    EgoIcon(
                         Icons.Default.ArrowDropDown,
                         contentDescription = null,
                         modifier = Modifier.size(15.dp),
                         tint = MaterialTheme.colorScheme.primary
-                    )
+                    , symbolSize = 15.dp)
                 }
 
                 if (!state.isTranslating && !state.isTranslated && state.statusText.isNotBlank()) {
@@ -200,12 +200,12 @@ fun ChromeStyleTranslatePopup(
                         onClick = onToggleAlwaysTranslate,
                         modifier = Modifier.size(28.dp)
                     ) {
-                        Icon(
+                        EgoIcon(
                             imageVector = if (alwaysTranslateSite) Icons.Default.Star else Icons.Default.StarBorder,
                             contentDescription = "이 사이트 항상 번역",
                             tint = if (alwaysTranslateSite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(17.dp)
-                        )
+                        , symbolSize = 17.dp)
                     }
                 }
 
@@ -213,12 +213,12 @@ fun ChromeStyleTranslatePopup(
                     onClick = onDismiss,
                     modifier = Modifier.size(26.dp)
                 ) {
-                    Icon(
+                    EgoIcon(
                         Icons.Default.Close,
                         contentDescription = "닫기",
                         modifier = Modifier.size(16.dp),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    , symbolSize = 16.dp)
                 }
             }
         }
@@ -275,7 +275,7 @@ private fun LanguagePickerDialog(
                     value = query,
                     onValueChange = { query = it },
                     placeholder = { Text("언어 검색 (예: 영어, 일본어, en)...", fontSize = 13.sp) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    leadingIcon = { EgoIcon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp), symbolSize = 18.dp) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -386,12 +386,12 @@ private fun LanguageRow(
                 onClick = onTogglePin,
                 modifier = Modifier.size(28.dp)
             ) {
-                Icon(
+                EgoIcon(
                     imageVector = if (isPinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
                     contentDescription = if (isPinned) "고정 해제" else "상단 고정",
                     tint = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                     modifier = Modifier.size(16.dp)
-                )
+                , symbolSize = 16.dp)
             }
         }
     }
@@ -480,16 +480,16 @@ fun TranslateSettingsPopupDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.Translate,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(19.dp)
-                                )
+                                , symbolSize = 19.dp)
                                 Text("번역 설정", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                             }
                             IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(18.dp))
+                                EgoIcon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(18.dp), symbolSize = 18.dp)
                             }
                         }
 
