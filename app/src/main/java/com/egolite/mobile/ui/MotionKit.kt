@@ -70,6 +70,17 @@ object EgoMotion {
         dampingRatio = 0.82f,
         stiffness = 420f
     )
+
+    // 눈에 확실히 보이는 M3 Expressive 컨테이너 모프 스프링 (~340ms)
+    fun <T> morphSpring() = spring<T>(
+        dampingRatio = 0.80f,
+        stiffness = 200f
+    )
+
+    val morphIntSizeSpring = spring<IntSize>(
+        dampingRatio = 0.82f,
+        stiffness = 200f
+    )
 }
 
 /**
