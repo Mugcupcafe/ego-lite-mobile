@@ -283,6 +283,7 @@ fun AiLiveMonitorTray(
             val topPadPx = with(density) { 56.dp.toPx() }
             val deleteSwipeThresholdPx = with(density) { 68.dp.toPx() }
             val bgColor = MaterialTheme.colorScheme.background
+            val leftElastic = rememberElasticOverscroll(isVertical = true, maxPullPx = 88f)
             val draggingSpaceIsAi = draggingId != null && monitoredSpaces.firstOrNull { it.id == draggingId }?.type == SpaceType.AI
 
             Box(
@@ -296,10 +297,11 @@ fun AiLiveMonitorTray(
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(top = 56.dp, bottom = 56.dp, start = 13.dp, end = 13.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+                    verticalArrangement = Arrangement.spacedBy(14.dp + leftElastic.extraSpacingDp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .fillMaxSize()
+                        .then(leftElastic.containerModifier)
                         .pointerInput(Unit) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { startOffset ->
@@ -529,6 +531,7 @@ fun AiLiveMonitorTray(
             val startPadPx = with(density) { 14.dp.toPx() }
             val deletePullDownPx = with(density) { 64.dp.toPx() }
             val draggingSpaceIsAi = draggingId != null && monitoredSpaces.firstOrNull { it.id == draggingId }?.type == SpaceType.AI
+            val topElastic = rememberElasticOverscroll(isVertical = false, maxPullPx = 88f)
 
             Column(
                 modifier = Modifier
@@ -598,10 +601,11 @@ fun AiLiveMonitorTray(
                 LazyRow(
                     state = rowState,
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp + topElastic.extraSpacingDp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxSize()
+                        .then(topElastic.containerModifier)
                         .pointerInput(Unit) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { startOffset ->
