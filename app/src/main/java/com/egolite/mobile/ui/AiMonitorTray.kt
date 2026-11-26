@@ -1,38 +1,59 @@
 package com.egolite.mobile.ui
 
 import android.graphics.Bitmap
+import android.os.Build
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,52 +62,90 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.egolite.mobile.browser.SpaceManager
-import com.egolite.mobile.model.AI_SPACE_COLOR_PRESETS
 import com.egolite.mobile.model.AiSpaceStatus
 import com.egolite.mobile.model.BrowserSpace
+import com.egolite.mobile.model.MonitorPosition
 import com.egolite.mobile.model.SpaceType
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.sin
 
 /**
- * 상단 고정형 AI 라이브 모니터 트레이 (256dp)
- * - 좌측 상단 알약을 짧게 탭하면 펼쳐지고, 다시 눌러 닫기 전까지 유지됨 (웹툰·웹서핑과 동시 모니터링)
- * - 열려 있을 때만 1.3초 주기로 경량 RGB_565 썸네일을 갱신해 발열·배터리 부하를 최소화
+ * 반응형 AI 라이브 모니터 트레이 (세로=상단 TOP / 가로=좌측 LEFT, 설정에서 커스텀 가능)
+ * - 좌측(LEFT) 모드: 스크롤 카드가 상단 캡슐·접기 버튼 아래로 올라갈 때 딱딱하게 잘리지 않고
+ *   상단 페이드 그라데이션(배경색 → 투명) 속으로 부드럽게 사라지도록 처리
+ * - 고정 순서 유지 + 양방향 블러 모프 + 길게 눌러 카드(Personal/AI Space) 순서 이동 지원
  */
 @Composable
 fun AiLiveMonitorTray(
     visible: Boolean,
+    position: MonitorPosition,
     spaces: List<BrowserSpace>,
     activeSpaceId: String,
+    returningSpaceId: String?,
+    connectedAiName: String,
     canAddAiSpace: Boolean,
+    isTabDragging: Boolean = false,
+    hoveredDropSpaceId: String? = null,
+    isHoveredNewSpaceDrop: Boolean = false,
+    onRegisterSpaceBounds: (String, Rect) -> Unit = { _, _ -> },
+    onRegisterNewSpaceBounds: (Rect?) -> Unit = {},
     onSelectSpace: (String) -> Unit,
+    onMoveSpace: (fromId: String, toId: String) -> Unit,
     onCreateAiSpace: () -> Unit,
-    onCloseAiSpace: (String) -> Unit,
-    onChangeSpaceColor: (String, String) -> Unit,
     onCollapse: () -> Unit
 ) {
-    val aiSpaces = remember(spaces) { spaces.filter { it.type == SpaceType.AI } }
+    DisposableEffect(isTabDragging, visible) {
+        onDispose {
+            if (!isTabDragging || !visible) {
+                onRegisterNewSpaceBounds(null)
+            }
+        }
+    }
+    val monitoredSpaces = remember(spaces, activeSpaceId) {
+        spaces.filter { it.id != activeSpaceId }
+    }
     var thumbnails by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
+    val haptic = LocalHapticFeedback.current
 
-    // 트레이가 열려 있을 때만 1.3초 주기로 AI Space 경량 썸네일 갱신 (닫히면 0% 부하)
-    LaunchedEffect(visible, aiSpaces.map { "${it.id}:${it.activeTab.id}:${it.aiStatus}:${it.lastActionSummary}" }) {
+    // 트레이가 열려 있을 때만 1.3초 주기로 경량 RGB_565 썸네일 갱신
+    LaunchedEffect(visible, monitoredSpaces.map { "${it.id}:${it.activeTab.id}:${it.aiStatus}:${it.lastActionSummary}" }) {
         if (!visible) return@LaunchedEffect
         while (true) {
             val fresh = mutableMapOf<String, Bitmap>()
-            aiSpaces.forEach { sp ->
+            monitoredSpaces.forEach { sp ->
                 val bmp = SpaceManager.captureTabThumbnail(sp.activeTab.id)
                 if (bmp != null) {
                     fresh[sp.id] = bmp
@@ -99,288 +158,687 @@ fun AiLiveMonitorTray(
         }
     }
 
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(180)) + expandVertically(tween(240)),
-        exit = fadeOut(tween(150)) + shrinkVertically(tween(200))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(258.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+    if (position == MonitorPosition.LEFT) {
+        // ============================================================
+        // 좌측 사이드바 모드 (가로모드 기본): 상단 페이드 그라데이션 오버레이 적용
+        // ============================================================
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(220)) + expandHorizontally(animationSpec = EgoMotion.intSizeSpring),
+            exit = fadeOut(tween(180)) + shrinkHorizontally(animationSpec = tween(220))
         ) {
-            // 상단 컨트롤 헤더
-            Row(
+            val listState = rememberLazyListState()
+            var draggingId by remember { mutableStateOf<String?>(null) }
+            var dragOffsetY by remember { mutableFloatStateOf(0f) }
+            val latestCanDrag by rememberUpdatedState(monitoredSpaces.size > 1)
+            val bgColor = MaterialTheme.colorScheme.background
+
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(38.dp)
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .width(244.dp)
+                    .fillMaxHeight()
+                    .background(Color.Transparent)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                // 전체 높이 스크롤 리스트 (상단 54dp 여백 → 스크롤 시 그라데이션 아래로 자연스럽게 사라짐)
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(top = 56.dp, bottom = 24.dp, start = 13.dp, end = 13.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { startOffset ->
+                                    if (!latestCanDrag) return@detectDragGesturesAfterLongPress
+                                    val hit = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                        startOffset.y >= item.offset && startOffset.y <= item.offset + item.size
+                                    }
+                                    val key = hit?.key as? String
+                                    if (key != null) {
+                                        draggingId = key
+                                        dragOffsetY = 0f
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    val curId = draggingId ?: return@detectDragGesturesAfterLongPress
+                                    change.consume()
+                                    dragOffsetY += dragAmount.y
+                                    val items = listState.layoutInfo.visibleItemsInfo
+                                    val draggedInfo = items.firstOrNull { it.key == curId } ?: return@detectDragGesturesAfterLongPress
+                                    val centerY = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetY
+                                    val target = items.firstOrNull { item ->
+                                        item.key != curId && centerY >= item.offset && centerY <= item.offset + item.size
+                                    }
+                                    val targetKey = target?.key as? String
+                                    if (target != null && targetKey != null) {
+                                        val shift = (draggedInfo.offset - target.offset).toFloat()
+                                        onMoveSpace(curId, targetKey)
+                                        dragOffsetY += shift
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                },
+                                onDragEnd = { draggingId = null; dragOffsetY = 0f },
+                                onDragCancel = { draggingId = null; dragOffsetY = 0f }
+                            )
+                        }
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = EgoEmerald,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "AI 라이브 모니터 (${aiSpaces.size})",
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    // Personal 공간 복귀 버튼 (현재 AI Space를 보고 있을 때 편리하게 원클릭 복귀)
-                    val isPersonalActive = activeSpaceId == "personal"
-                    Surface(
-                        shape = CircleShape,
-                        color = if (isPersonalActive) EgoCobalt.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface,
-                        modifier = Modifier
-                            .border(
-                                width = 1.dp,
-                                color = if (isPersonalActive) EgoCobalt else MaterialTheme.colorScheme.outlineVariant,
-                                shape = CircleShape
-                            )
-                            .clip(CircleShape)
-                            .clickable { onSelectSpace("personal") }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = null,
-                                tint = if (isPersonalActive) EgoCobalt else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Text(
-                                text = "Personal",
-                                fontSize = 11.sp,
-                                fontWeight = if (isPersonalActive) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isPersonalActive) EgoCobalt else MaterialTheme.colorScheme.onSurfaceVariant
+                    itemsIndexed(monitoredSpaces, key = { _, sp -> sp.id }) { idx, space ->
+                        val isDragging = draggingId == space.id
+                        MonitorSpaceCard(
+                            space = space,
+                            index = idx,
+                            isLeftSidebar = true,
+                            trayVisible = visible,
+                            isReturning = space.id == returningSpaceId,
+                            isDragging = isDragging,
+                            isDropHovered = hoveredDropSpaceId == space.id,
+                            dragTranslationX = 0f,
+                            dragTranslationY = if (isDragging) dragOffsetY else 0f,
+                            connectedAiName = connectedAiName,
+                            thumbnail = thumbnails[space.id],
+                            modifier = Modifier
+                                .animateItem()
+                                .onGloballyPositioned { coords ->
+                                    onRegisterSpaceBounds(space.id, coords.boundsInRoot())
+                                },
+                            onSelect = { onSelectSpace(space.id) }
+                        )
+                    }
+                    if (isTabDragging && canAddAiSpace) {
+                        item(key = "__new_ai_space_drop_left__") {
+                            NewAiSpaceDropZoneCard(
+                                isLeftSidebar = true,
+                                isHovered = isHoveredNewSpaceDrop,
+                                modifier = Modifier
+                                    .animateItem()
+                                    .onGloballyPositioned { coords ->
+                                        onRegisterNewSpaceBounds(coords.boundsInRoot())
+                                    }
                             )
                         }
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (canAddAiSpace) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surface,
-                            modifier = Modifier
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                                .clip(CircleShape)
-                                .clickable { onCreateAiSpace() }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                // 상단 그라데이션 페이드 마스크 (캡슐 + 접기 버튼 뒤로 카드가 위로 올라갈수록 점점 투명하게 사라짐)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(78.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                0.00f to bgColor,
+                                0.56f to bgColor.copy(alpha = 0.90f),
+                                0.80f to bgColor.copy(alpha = 0.45f),
+                                1.00f to Color.Transparent
+                            )
+                        )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        if (canAddAiSpace) {
+                            IconButton(
+                                onClick = onCreateAiSpace,
+                                modifier = Modifier.size(32.dp).pressBounceScale()
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Add,
-                                    contentDescription = "AI Space 추가",
-                                    tint = EgoEmerald,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "새 AI 공간",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    contentDescription = "새 AI 공간",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = onCollapse,
+                            modifier = Modifier.size(32.dp).pressBounceScale()
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "AI 모니터 접기",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
-                    IconButton(
-                        onClick = onCollapse,
-                        modifier = Modifier.size(30.dp)
+                }
+            }
+        }
+    } else {
+        // ============================================================
+        // 상단 트레이 모드 (세로모드 기본): 구분선 없음, 탭 바와 배경 통일
+        // ============================================================
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(220)) + expandVertically(animationSpec = EgoMotion.intSizeSpring),
+            exit = fadeOut(tween(180)) + shrinkVertically(animationSpec = tween(220))
+        ) {
+            val rowState = rememberLazyListState()
+            var draggingId by remember { mutableStateOf<String?>(null) }
+            var dragOffsetX by remember { mutableFloatStateOf(0f) }
+            val latestCanDrag by rememberUpdatedState(monitoredSpaces.size > 1)
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(322.dp)
+                    .background(Color.Transparent)
+            ) {
+                // 상단 컨트롤 헤더
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Spacer(modifier = Modifier.width(72.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (canAddAiSpace) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier
+                                    .pressBounceScale()
+                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                                    .clip(CircleShape)
+                                    .clickable { onCreateAiSpace() }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "AI Space 추가",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "새 AI 공간",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                        IconButton(
+                            onClick = onCollapse,
+                            modifier = Modifier.size(32.dp).pressBounceScale()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = "AI 모니터 접기",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 가로 스크롤 카드 행 (길게 눌러 좌우 순서 변경 + animateItem 스프링 정렬)
+                LazyRow(
+                    state = rowState,
+                    contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .pointerInput(Unit) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { startOffset ->
+                                    if (!latestCanDrag) return@detectDragGesturesAfterLongPress
+                                    val hit = rowState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                                        startOffset.x >= item.offset && startOffset.x <= item.offset + item.size
+                                    }
+                                    val key = hit?.key as? String
+                                    if (key != null) {
+                                        draggingId = key
+                                        dragOffsetX = 0f
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    }
+                                },
+                                onDrag = { change, dragAmount ->
+                                    val curId = draggingId ?: return@detectDragGesturesAfterLongPress
+                                    change.consume()
+                                    dragOffsetX += dragAmount.x
+                                    val items = rowState.layoutInfo.visibleItemsInfo
+                                    val draggedInfo = items.firstOrNull { it.key == curId } ?: return@detectDragGesturesAfterLongPress
+                                    val centerX = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetX
+                                    val target = items.firstOrNull { item ->
+                                        item.key != curId && centerX >= item.offset && centerX <= item.offset + item.size
+                                    }
+                                    val targetKey = target?.key as? String
+                                    if (target != null && targetKey != null) {
+                                        val shift = (draggedInfo.offset - target.offset).toFloat()
+                                        onMoveSpace(curId, targetKey)
+                                        dragOffsetX += shift
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                },
+                                onDragEnd = { draggingId = null; dragOffsetX = 0f },
+                                onDragCancel = { draggingId = null; dragOffsetX = 0f }
+                            )
+                        }
+                ) {
+                    itemsIndexed(monitoredSpaces, key = { _, sp -> sp.id }) { idx, space ->
+                        val isDragging = draggingId == space.id
+                        MonitorSpaceCard(
+                            space = space,
+                            index = idx,
+                            isLeftSidebar = false,
+                            trayVisible = visible,
+                            isReturning = space.id == returningSpaceId,
+                            isDragging = isDragging,
+                            isDropHovered = hoveredDropSpaceId == space.id,
+                            dragTranslationX = if (isDragging) dragOffsetX else 0f,
+                            dragTranslationY = 0f,
+                            connectedAiName = connectedAiName,
+                            thumbnail = thumbnails[space.id],
+                            modifier = Modifier
+                                .animateItem()
+                                .onGloballyPositioned { coords ->
+                                    onRegisterSpaceBounds(space.id, coords.boundsInRoot())
+                                },
+                            onSelect = { onSelectSpace(space.id) }
+                        )
+                    }
+                    if (isTabDragging && canAddAiSpace) {
+                        item(key = "__new_ai_space_drop_top__") {
+                            NewAiSpaceDropZoneCard(
+                                isLeftSidebar = false,
+                                isHovered = isHoveredNewSpaceDrop,
+                                modifier = Modifier
+                                    .animateItem()
+                                    .onGloballyPositioned { coords ->
+                                        onRegisterNewSpaceBounds(coords.boundsInRoot())
+                                    }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonitorSpaceCard(
+    space: BrowserSpace,
+    index: Int,
+    isLeftSidebar: Boolean,
+    trayVisible: Boolean,
+    isReturning: Boolean,
+    isDragging: Boolean,
+    isDropHovered: Boolean = false,
+    dragTranslationX: Float,
+    dragTranslationY: Float,
+    connectedAiName: String,
+    thumbnail: Bitmap?,
+    modifier: Modifier = Modifier,
+    onSelect: () -> Unit
+) {
+    val isPersonal = space.type == SpaceType.PERSONAL
+    val spaceColor = if (isPersonal) EgoCobalt else parseSpaceColor(space.accentColorHex)
+    val inkColor = if (spaceColor.luminance() > 0.36f) Color(0xFF042419) else Color(0xFFFFFFFF)
+
+    val isWorking = !isPersonal && (space.aiStatus == AiSpaceStatus.WORKING || space.aiStatus == AiSpaceStatus.THINKING)
+    val isDone = !isPersonal && space.aiStatus == AiSpaceStatus.DONE
+
+    val activePhrase = when {
+        isPersonal -> ""
+        space.aiStatus == AiSpaceStatus.WORKING -> space.lastActionSummary.ifBlank { "작업 중..." }
+        space.aiStatus == AiSpaceStatus.THINKING -> "생각 중..."
+        space.aiStatus == AiSpaceStatus.TAKEOVER_PAUSED -> "직접 조작 중"
+        space.aiStatus == AiSpaceStatus.DONE -> "완료됨 ✓"
+        else -> ""
+    }
+
+    val displayName = if (isPersonal) "Personal" else connectedAiName.ifBlank { space.name }
+
+    // 트레이 동시 유기적 확장(0.32/16dp 블러 → 1.0/0dp) + 메인에서 복귀하는 카드 역방향 블러 모프 착지
+    val cardScale = remember(space.id) { Animatable(if (isReturning) 0.42f else 0.32f) }
+    val cardAlpha = remember(space.id) { Animatable(0f) }
+    val cardBlur = remember(space.id) { Animatable(if (isReturning) 14f else 16f) }
+    val returnOffset = remember(space.id) { Animatable(if (isReturning) 28f else 0f) }
+
+    LaunchedEffect(trayVisible, space.id, isReturning) {
+        if (trayVisible) {
+            if (!isReturning) delay(index * 28L)
+            launch { cardScale.animateTo(1f, animationSpec = EgoMotion.bouncySpring()) }
+            launch { cardAlpha.animateTo(1f, animationSpec = tween(260)) }
+            launch { cardBlur.animateTo(0f, animationSpec = tween(360)) }
+            launch { returnOffset.animateTo(0f, animationSpec = EgoMotion.bouncySpring()) }
+        } else {
+            delay(index * 15L)
+            launch { cardScale.animateTo(0.32f, animationSpec = tween(190)) }
+            launch { cardAlpha.animateTo(0f, animationSpec = tween(160)) }
+            launch { cardBlur.animateTo(14f, animationSpec = tween(180)) }
+        }
+    }
+
+    val dragScale by animateFloatAsState(
+        targetValue = when {
+            isDragging -> 1.06f
+            isDropHovered -> 1.045f
+            else -> 1f
+        },
+        animationSpec = EgoMotion.bouncySpring(),
+        label = "monitorCardDragScale"
+    )
+    val veilAlpha by animateFloatAsState(
+        targetValue = when {
+            isWorking -> 1f
+            isDone -> 0.48f
+            else -> 0f
+        },
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
+        label = "veilAlpha"
+    )
+    val statusSlotHeight by animateDpAsState(
+        targetValue = if (activePhrase.isNotBlank()) 28.dp else 0.dp,
+        animationSpec = EgoMotion.smoothSpring(),
+        label = "statusSlotHeight"
+    )
+
+    val blurMod = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && cardBlur.value > 0.3f) {
+        Modifier.blur(cardBlur.value.dp)
+    } else {
+        Modifier
+    }
+
+    val cardHeight = if (isLeftSidebar) 216.dp else 258.dp
+    val previewHeight = if (isLeftSidebar) 148.dp else 190.dp
+
+    Box(
+        modifier = modifier
+            .zIndex(if (isDragging || isDropHovered) 20f else 0f)
+            .width(216.dp)
+            .height(cardHeight)
+            .graphicsLayer {
+                translationX = dragTranslationX + if (isLeftSidebar) returnOffset.value else 0f
+                translationY = dragTranslationY + if (!isLeftSidebar) returnOffset.value else 0f
+                scaleX = cardScale.value * dragScale
+                scaleY = cardScale.value * dragScale
+                alpha = if (isDragging) 0.92f else cardAlpha.value
+            }
+            .then(blurMod)
+            .shadow(
+                elevation = if (isDragging) 18.dp else if (isWorking) 14.dp else 6.dp,
+                shape = RoundedCornerShape(26.dp),
+                ambientColor = spaceColor,
+                spotColor = spaceColor
+            )
+            .clip(RoundedCornerShape(26.dp))
+            .background(spaceColor)
+            .clickable { onSelect() }
+            .padding(3.5.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 고정 크기 웹 미리보기 영역 (활동/완료/대기 3단계 크기 불변)
+            val previewShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(previewHeight)
+                    .clip(previewShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                contentAlignment = Alignment.Center
+            ) {
+                if (thumbnail != null && space.activeTab.url != NEW_TAB_URL) {
+                    Image(
+                        bitmap = thumbnail.asImageBitmap(),
+                        contentDescription = "$displayName 미리보기",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(12.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.KeyboardArrowUp,
-                            contentDescription = "AI 모니터 접기",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
+                            imageVector = if (isPersonal) Icons.Default.Person else Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = spaceColor.copy(alpha = 0.72f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = if (isPersonal) "새 탭" else "대기 중",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
+
+                // 스페이스 색상 상향 그라데이션 (미리보기 영역 내부로만 엄격 제한)
+                if (veilAlpha > 0.01f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0.0f to Color.Transparent,
+                                    0.32f to Color.Transparent,
+                                    0.64f to spaceColor.copy(alpha = 0.28f * veilAlpha),
+                                    0.86f to spaceColor.copy(alpha = 0.76f * veilAlpha),
+                                    1.0f to spaceColor.copy(alpha = veilAlpha)
+                                )
+                            )
+                    )
+                }
             }
 
-            // 가로 스크롤 미니 화면 카드 영역
-            Row(
+            // 고정 하단 푸터: 한 글자 웨이브 활동 문구 + AI 이름
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                aiSpaces.forEach { space ->
-                    val isSelected = space.id == activeSpaceId
-                    val accent = parseSpaceColor(space.accentColorHex)
-                    val isActiveWork = space.aiStatus == AiSpaceStatus.WORKING || space.aiStatus == AiSpaceStatus.THINKING
-                    val statusLabel = when (space.aiStatus) {
-                        AiSpaceStatus.WORKING -> space.lastActionSummary.ifBlank { "작업 처리 중..." }
-                        AiSpaceStatus.THINKING -> "다음 행동을 생각하고 있어요..."
-                        AiSpaceStatus.TAKEOVER_PAUSED -> "직접 조작 중"
-                        AiSpaceStatus.DONE -> "작업 완료"
-                        AiSpaceStatus.IDLE -> "대기 중 · ${space.activeTab.title.ifBlank { "새 탭" }}"
-                    }
-                    val thumb = thumbnails[space.id]
-
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        shadowElevation = if (isSelected || isActiveWork) 5.dp else 2.dp,
-                        modifier = Modifier
-                            .width(244.dp)
-                            .height(202.dp)
-                            .border(
-                                width = if (isSelected || isActiveWork) 1.8.dp else 0.8.dp,
-                                color = if (isSelected || isActiveWork) accent else MaterialTheme.colorScheme.outlineVariant,
-                                shape = RoundedCornerShape(14.dp)
-                            )
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { onSelectSpace(space.id) }
-                    ) {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            // 카드 헤더 (색상 점 + 공간명 + 상태 배지 + 닫기)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(32.dp)
-                                    .background(accent.copy(alpha = if (isActiveWork) 0.16f else 0.08f))
-                                    .padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(9.dp)
-                                        .clip(CircleShape)
-                                        .background(accent)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(statusSlotHeight),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AnimatedContent(
+                        targetState = activePhrase,
+                        transitionSpec = {
+                            (fadeIn(tween(260)) + scaleIn(EgoMotion.smoothSpring(), initialScale = 0.90f))
+                                .togetherWith(fadeOut(tween(180)) + scaleOut(tween(160), targetScale = 0.92f))
+                        },
+                        label = "statusPhraseBlurMorph"
+                    ) { phrase ->
+                        if (phrase.isNotBlank()) {
+                            if (isWorking) {
+                                PerCharWaveText(text = phrase, color = inkColor)
+                            } else {
                                 Text(
-                                    text = space.name,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
+                                    text = phrase,
+                                    fontSize = 14.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = inkColor,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                if (isActiveWork) {
-                                    Text(
-                                        text = if (space.aiStatus == AiSpaceStatus.THINKING) "생각중" else "작업중",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = accent
-                                    )
-                                }
-                                if (aiSpaces.size > 1) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "AI 공간 닫기",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier
-                                            .size(15.dp)
-                                            .clickable { onCloseAiSpace(space.id) }
-                                    )
-                                }
-                            }
-
-                            // 미니 웹 화면 프리뷰 영역
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f)
-                                    .background(MaterialTheme.colorScheme.background),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (thumb != null && space.activeTab.url != NEW_TAB_URL) {
-                                    Image(
-                                        bitmap = thumb.asImageBitmap(),
-                                        contentDescription = "${space.name} 미니 화면",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center,
-                                        modifier = Modifier.padding(12.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = accent.copy(alpha = 0.65f),
-                                            modifier = Modifier.size(24.dp)
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = if (space.activeTab.url == NEW_TAB_URL) "AI 명령 대기 중" else "화면 불러오는 중...",
-                                            fontSize = 11.5.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-
-                            // 카드 하단: 현재 동작 문구 + 공간 색상 커스텀 점
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(32.dp)
-                                    .background(MaterialTheme.colorScheme.surface)
-                                    .padding(horizontal = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = statusLabel,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isActiveWork) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (isActiveWork) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    AI_SPACE_COLOR_PRESETS.forEach { hex ->
-                                        val c = parseSpaceColor(hex)
-                                        val picked = space.accentColorHex.equals(hex, ignoreCase = true)
-                                        Box(
-                                            modifier = Modifier
-                                                .size(if (picked) 13.dp else 10.dp)
-                                                .clip(CircleShape)
-                                                .background(c)
-                                                .then(
-                                                    if (picked) Modifier.border(1.2.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                                                    else Modifier
-                                                )
-                                                .clickable { onChangeSpaceColor(space.id, hex) }
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
                 }
-            }
 
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 0.8.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(inkColor.copy(alpha = 0.82f))
+                    )
+                    Text(
+                        text = displayName,
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = inkColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        if (isDropHovered) {
+            val isIdleTarget = space.aiStatus == AiSpaceStatus.IDLE || space.aiStatus == AiSpaceStatus.DONE
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.84f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = spaceColor
+                    ) {
+                        Text(
+                            text = if (isIdleTarget) "+ 활성 탭으로 복제" else "+ 백그라운드 복제",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0A0F18),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                    Text(
+                        text = if (isIdleTarget) "대기 중 · 바로 전환됨" else "작업 방해 없이 추가",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewAiSpaceDropZoneCard(
+    isLeftSidebar: Boolean,
+    isHovered: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    val scale by animateFloatAsState(
+        targetValue = if (isHovered) 1.045f else 1f,
+        animationSpec = EgoMotion.bouncySpring(),
+        label = "newSpaceDropScale"
+    )
+    val boxHeight = if (isLeftSidebar) 108.dp else 258.dp
+    val boxWidth = if (isLeftSidebar) 216.dp else 188.dp
+
+    Box(
+        modifier = modifier
+            .width(boxWidth)
+            .height(boxHeight)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(24.dp))
+            .background(accent.copy(alpha = if (isHovered) 0.22f else 0.11f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            drawRoundRect(
+                color = accent.copy(alpha = if (isHovered) 1f else 0.65f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(24.dp.toPx(), 24.dp.toPx()),
+                style = Stroke(
+                    width = (if (isHovered) 2.4.dp else 1.6.dp).toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f), 0f)
+                )
+            )
+        }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.padding(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "새 AI 스페이스에 생성",
+                tint = accent,
+                modifier = Modifier.size(22.dp)
+            )
+            Text(
+                text = "새 AI 스페이스에 생성",
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = accent
+            )
+            Text(
+                text = "놓으면 첫 페이지로 열림",
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun PerCharWaveText(
+    text: String,
+    color: Color
+) {
+    val clipped = remember(text) { if (text.length > 14) text.take(13) + "…" else text }
+    val infinite = rememberInfiniteTransition(label = "charWaveLoop")
+    val phase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = (2.0 * PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1350, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "charWavePhase"
+    )
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        clipped.forEachIndexed { idx, ch ->
+            val offsetY = sin(phase - idx * 0.42f) * -3.5f
+            Text(
+                text = ch.toString(),
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = color,
+                modifier = Modifier.graphicsLayer {
+                    translationY = offsetY
+                }
+            )
         }
     }
 }
