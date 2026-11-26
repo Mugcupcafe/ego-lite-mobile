@@ -117,6 +117,7 @@ fun AiLiveMonitorTray(
     returningSpaceId: String?,
     connectedAiName: String,
     canAddAiSpace: Boolean,
+    contentAspectRatio: Float = 1.35f,
     isTabDragging: Boolean = false,
     hoveredDropSpaceId: String? = null,
     isHoveredNewSpaceDrop: Boolean = false,
@@ -248,6 +249,7 @@ fun AiLiveMonitorTray(
                             space = space,
                             index = idx,
                             isLeftSidebar = true,
+                            contentAspectRatio = contentAspectRatio,
                             trayVisible = visible,
                             isReturning = space.id == returningSpaceId,
                             isDragging = isDragging,
@@ -459,6 +461,7 @@ fun AiLiveMonitorTray(
                             space = space,
                             index = idx,
                             isLeftSidebar = false,
+                            contentAspectRatio = contentAspectRatio,
                             trayVisible = visible,
                             isReturning = space.id == returningSpaceId,
                             isDragging = isDragging,
@@ -499,6 +502,7 @@ private fun MonitorSpaceCard(
     space: BrowserSpace,
     index: Int,
     isLeftSidebar: Boolean,
+    contentAspectRatio: Float = 1.35f,
     trayVisible: Boolean,
     isReturning: Boolean,
     isDragging: Boolean,
@@ -579,13 +583,24 @@ private fun MonitorSpaceCard(
         Modifier
     }
 
-    val cardHeight = if (isLeftSidebar) 216.dp else 258.dp
-    val previewHeight = if (isLeftSidebar) 148.dp else 190.dp
+    // 실제 웹 콘텐츠 뷰포트 비율(가로/세로/분할화면 모두 대응)에 맞춰 미리보기 프레임 크기 동적 조절
+    val safeRatio = contentAspectRatio.coerceIn(0.48f, 2.0f)
+    val cardWidth = if (isLeftSidebar) {
+        216.dp
+    } else {
+        (186f * safeRatio + 7f).coerceIn(134f, 304f).dp
+    }
+    val previewHeight = if (isLeftSidebar) {
+        (209f / safeRatio).coerceIn(116f, 286f).dp
+    } else {
+        186.dp
+    }
+    val cardHeight = previewHeight + 68.dp
 
     Box(
         modifier = modifier
             .zIndex(if (isDragging || isDropHovered) 20f else 0f)
-            .width(216.dp)
+            .width(cardWidth)
             .height(cardHeight)
             .graphicsLayer {
                 translationX = dragTranslationX + if (isLeftSidebar) returnOffset.value else 0f
