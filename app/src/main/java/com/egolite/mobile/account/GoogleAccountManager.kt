@@ -232,7 +232,7 @@ object GoogleAccountManager {
                     onResult(false, "Google 페이지에 로그인된 계정을 찾지 못했습니다.")
                     return@evaluateJavascript
                 }
-                val unescaped = JSONObject("{"v":$raw}").getString("v")
+                val unescaped = JSONObject("{\"v\":$raw}").getString("v")
                 val obj = JSONObject(unescaped)
                 val email = obj.optString("email", "")
                 val name = obj.optString("name", "")
