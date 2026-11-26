@@ -1,6 +1,32 @@
 package com.egolite.mobile.ui
 
 import com.egolite.mobile.model.TabWidthMode
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.FindInPage
+import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.horizontalScroll
@@ -102,6 +128,7 @@ import androidx.compose.ui.layout.ContentScale
 import com.egolite.mobile.account.GoogleAccountManager
 import kotlinx.coroutines.launch
 import com.egolite.mobile.BuildConfig
+import com.egolite.mobile.nativebridge.EgoRustBridge
 import com.egolite.mobile.CrashLogger
 import com.egolite.mobile.browser.AdBlockEngine
 import com.egolite.mobile.browser.BrowserActivityBridge
@@ -1038,6 +1065,14 @@ fun ChromeSettingsScreen(
                                     )
                                     M3SettingsGroup(settingsCardColor) {
                                         item {
+                                            ToolbarCustomPreviewCard(
+                                                prefs = prefs,
+                                                onReorder = { newOrder ->
+                                                    SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = newOrder) }
+                                                }
+                                            )
+                                        }
+                                        item {
                                             ChromeSwitchItem(
                                                 title = "MCP 상태 배지",
                                                 subtitle = "MCP 연결 끊김 경고 배지 표시",
@@ -1794,6 +1829,16 @@ fun ChromeSettingsScreen(
                                     }
                                     item {
                                         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("네이티브 가속 엔진", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Text(
+                                                text = if (EgoRustBridge.isLoaded) "${EgoRustBridge.engineVersion} · 활성" else "Kotlin 폴백 모드",
+                                                fontSize = 13.sp,
+                                                color = if (EgoRustBridge.isLoaded) EgoEmerald else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    item {
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                             Text("법적 정보", fontSize = 16.sp, fontWeight = FontWeight.Normal)
                                             Text("Ego Lite Mobile Open Project · Android System WebView / Ktor / ML Kit", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -2006,5 +2051,219 @@ private fun openSystemDefaultBrowserSettings(context: Context) {
         context.startActivity(intent)
     } catch (_: Exception) {
         Toast.makeText(context, "시스템 기본 앱 설정을 열 수 없습니다", Toast.LENGTH_SHORT).show()
+    }
+}
+
+
+@Composable
+private fun ToolbarCustomPreviewCard(
+    prefs: com.egolite.mobile.model.BrowserPreferences,
+    onReorder: (List<String>) -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val defaultOrder = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+    val normalizedOrder = remember(prefs.toolbarButtonOrder) {
+        val known = prefs.toolbarButtonOrder.filter { it in defaultOrder }
+        known + defaultOrder.filter { it !in known }
+    }
+    val enabledKeys = remember(normalizedOrder, prefs) {
+        normalizedOrder.filter { key ->
+            when (key) {
+                "MCP" -> prefs.showMcpBadgeButton
+                "AI" -> prefs.showAiCommandButton
+                "ADBLOCK" -> prefs.showAdBlockButton
+                "TRANSLATE" -> prefs.showTranslateButton
+                "DARKMODE" -> prefs.showDarkModeButton
+                "NEW_TAB" -> prefs.showNewTabToolbarButton
+                "SHARE" -> prefs.showShareButton
+                "FIND" -> prefs.showFindInPageButton
+                "DESKTOP" -> prefs.showDesktopSiteButton
+                "READER" -> prefs.showReaderModeButton
+                "PROFILE" -> prefs.showProfileAvatarButton
+                else -> false
+            }
+        }
+    }
+
+    var draggingKey by remember { mutableStateOf<String?>(null) }
+    var dragStartIdx by remember { mutableIntStateOf(-1) }
+    var dragTargetIdx by remember { mutableIntStateOf(-1) }
+    var dragOffsetX by remember { mutableFloatStateOf(0f) }
+    val slotStepPx = with(density) { 40.dp.toPx() }
+    val latestEnabled by rememberUpdatedState(enabledKeys)
+    val latestFullOrder by rememberUpdatedState(normalizedOrder)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("실시간 툴바 미리보기", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(
+                text = "길게 눌러 좌우로 순서 이동",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        // 축소형 크롬/Ego 툴바 미리보기
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.65f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (prefs.showHomeButton) {
+                    EgoIcon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 18.dp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                }
+                EgoIcon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 18.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 미니 주소창 필
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(30.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    EgoIcon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 13.dp)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text("ego-lite.app", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // 켜져 있는 커스텀 버튼들 (롱프레스 좌우 드래그로 순서 변경)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    enabledKeys.forEachIndexed { idx, key ->
+                        androidx.compose.runtime.key(key) {
+                            val isDragging = draggingKey == key
+                            val rawShift = when {
+                                draggingKey == null || isDragging || dragStartIdx < 0 || dragTargetIdx < 0 -> 0f
+                                dragStartIdx < dragTargetIdx && idx in (dragStartIdx + 1)..dragTargetIdx -> -slotStepPx
+                                dragStartIdx > dragTargetIdx && idx in dragTargetIdx until dragStartIdx -> slotStepPx
+                                else -> 0f
+                            }
+                            val animShift by animateFloatAsState(
+                                targetValue = rawShift,
+                                animationSpec = spring(dampingRatio = 0.82f, stiffness = 460f),
+                                label = "tbPreviewShift_$key"
+                            )
+                            val (iconVec, tintCol) = when (key) {
+                                "MCP" -> Icons.Default.LinkOff to EgoDangerRed
+                                "AI" -> Icons.Default.AutoAwesome to MaterialTheme.colorScheme.primary
+                                "ADBLOCK" -> Icons.Default.Shield to MaterialTheme.colorScheme.primary
+                                "TRANSLATE" -> Icons.Default.Translate to MaterialTheme.colorScheme.onSurface
+                                "DARKMODE" -> Icons.Default.DarkMode to MaterialTheme.colorScheme.onSurface
+                                "NEW_TAB" -> Icons.Default.Add to MaterialTheme.colorScheme.onSurface
+                                "SHARE" -> Icons.Default.Share to MaterialTheme.colorScheme.onSurface
+                                "FIND" -> Icons.Default.FindInPage to MaterialTheme.colorScheme.onSurface
+                                "DESKTOP" -> Icons.Default.DesktopWindows to MaterialTheme.colorScheme.onSurface
+                                "READER" -> Icons.Default.MenuBook to MaterialTheme.colorScheme.onSurface
+                                else -> Icons.Default.Person to MaterialTheme.colorScheme.primary
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .zIndex(if (isDragging) 12f else 0f)
+                                    .graphicsLayer {
+                                        translationX = if (isDragging) dragOffsetX else animShift
+                                        scaleX = if (isDragging) 1.18f else 1f
+                                        scaleY = if (isDragging) 1.18f else 1f
+                                    }
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isDragging) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                                    )
+                                    .pointerInput(key) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                val sIdx = latestEnabled.indexOf(key)
+                                                if (sIdx >= 0) {
+                                                    draggingKey = key
+                                                    dragStartIdx = sIdx
+                                                    dragTargetIdx = sIdx
+                                                    dragOffsetX = 0f
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                }
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                dragOffsetX += dragAmount.x
+                                                val curEnabled = latestEnabled
+                                                if (curEnabled.size > 1 && dragStartIdx >= 0) {
+                                                    val delta = kotlin.math.round(dragOffsetX / slotStepPx).toInt()
+                                                    val next = (dragStartIdx + delta).coerceIn(0, curEnabled.lastIndex)
+                                                    if (next != dragTargetIdx) {
+                                                        dragTargetIdx = next
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    }
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                val from = dragStartIdx
+                                                val to = dragTargetIdx
+                                                val curEnabled = latestEnabled
+                                                if (from >= 0 && to >= 0 && from != to && from in curEnabled.indices && to in curEnabled.indices) {
+                                                    val reorderedEnabled = curEnabled.toMutableList().apply {
+                                                        val moved = removeAt(from)
+                                                        add(to, moved)
+                                                    }
+                                                    val disabledRest = latestFullOrder.filter { it !in reorderedEnabled }
+                                                    onReorder(reorderedEnabled + disabledRest)
+                                                }
+                                                draggingKey = null
+                                                dragStartIdx = -1
+                                                dragTargetIdx = -1
+                                                dragOffsetX = 0f
+                                            },
+                                            onDragCancel = {
+                                                draggingKey = null
+                                                dragStartIdx = -1
+                                                dragTargetIdx = -1
+                                                dragOffsetX = 0f
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                EgoIcon(
+                                    imageVector = iconVec,
+                                    contentDescription = key,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = tintCol,
+                                    filled = key == "ADBLOCK" || key == "PROFILE",
+                                    symbolSize = 18.dp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+                EgoIcon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 18.dp)
+            }
+        }
     }
 }
