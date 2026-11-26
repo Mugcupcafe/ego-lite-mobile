@@ -133,7 +133,7 @@ fun ChromeOmniboxOverlay(
     val morphShadow = remember { Animatable(2f) }
     LaunchedEffect(Unit) {
         morphExpanded = true
-        morphShadow.animateTo(14f, animationSpec = EgoMotion.smoothSpring())
+        morphShadow.animateTo(14f, animationSpec = EgoMotion.morphSpring())
     }
 
     // 전체 반투명 검정 배경 제거 — 투명 바깥 터치 감지 + 커진 검색창의 깔끔한 그림자만 적용
@@ -223,7 +223,7 @@ fun ChromeOmniboxOverlay(
 
                 AnimatedVisibility(
                     visible = morphExpanded,
-                    enter = expandVertically(animationSpec = EgoMotion.intSizeSpring, expandFrom = Alignment.Top) + fadeIn(tween(150)),
+                    enter = expandVertically(animationSpec = EgoMotion.morphIntSizeSpring, expandFrom = Alignment.Top) + fadeIn(tween(150)),
                     exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) + fadeOut(tween(120))
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
