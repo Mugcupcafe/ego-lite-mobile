@@ -898,13 +898,15 @@ fun BrowserScreen() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         var pressedTabIndex by remember(activeSpace.id) { mutableIntStateOf(-1) }
+                        val tabElastic = rememberElasticOverscroll(isVertical = false, maxPullPx = 76f)
                         Row(
                             modifier = Modifier
                                 .weight(1f)
+                                .then(tabElastic.containerModifier)
                                 .horizontalScroll(rememberScrollState())
                                 .animateContentSize(animationSpec = EgoMotion.intSizeSpring),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            horizontalArrangement = Arrangement.spacedBy(3.dp + tabElastic.extraSpacingDp)
                         ) {
                             val totalTabs = activeSpace.tabs.size
                             activeSpace.tabs.forEachIndexed { idx, tab ->
@@ -1352,6 +1354,7 @@ fun BrowserScreen() {
                         .height(42.dp)
                         .clip(m3LeftGroupShape)
                         .background(toolbarChrome.groupSurface)
+                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 18.dp, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3LeftGroupShape)
                         .padding(horizontal = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1394,14 +1397,24 @@ fun BrowserScreen() {
                             symbolSize = 20.dp
                         )
                     }
+                    var refreshSpinTurns by remember { mutableIntStateOf(0) }
+                    val refreshSpinDeg by animateFloatAsState(
+                        targetValue = refreshSpinTurns * 360f,
+                        animationSpec = spring(dampingRatio = 0.72f, stiffness = 240f),
+                        label = "refreshSpinMorph"
+                    )
                     IconButton(
-                        onClick = { SpaceManager.reload(activeSpace.id) },
+                        onClick = {
+                            refreshSpinTurns++
+                            SpaceManager.reload(activeSpace.id)
+                        },
                         modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
                     ) {
                         EgoIcon(
                             Icons.Default.Refresh,
                             contentDescription = "새로고침",
                             tint = activeIconColor,
+                            modifier = Modifier.graphicsLayer { rotationZ = refreshSpinDeg },
                             symbolSize = 20.dp
                         )
                     }
@@ -1422,6 +1435,7 @@ fun BrowserScreen() {
                         }
                         .clip(m3CenterGroupShape)
                         .background(toolbarChrome.groupSurface)
+                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 6.dp, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3CenterGroupShape)
                         .pointerInput(activeSpace.id) {
                             var dragSum = 0f
@@ -1469,11 +1483,27 @@ fun BrowserScreen() {
                             },
                         contentAlignment = Alignment.Center
                     ) {
+                        val starPopScale by animateFloatAsState(
+                            targetValue = if (existingBookmark != null) 1.14f else 1.0f,
+                            animationSpec = EgoMotion.bouncySpring(),
+                            label = "bookmarkStarPop"
+                        )
+                        val starPopTilt by animateFloatAsState(
+                            targetValue = if (existingBookmark != null) 12f else 0f,
+                            animationSpec = EgoMotion.bouncySpring(),
+                            label = "bookmarkStarTilt"
+                        )
                         EgoIcon(
                             imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
                             contentDescription = "북마크 추가/수정",
                             tint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor,
-                            modifier = Modifier.size(19.dp),
+                            modifier = Modifier
+                                .size(19.dp)
+                                .graphicsLayer {
+                                    scaleX = starPopScale
+                                    scaleY = starPopScale
+                                    rotationZ = starPopTilt
+                                },
                             symbolSize = 19.dp
                         )
                     }
@@ -1485,6 +1515,7 @@ fun BrowserScreen() {
                         .height(42.dp)
                         .clip(m3RightGroupShape)
                         .background(toolbarChrome.groupSurface)
+                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 18.dp, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3RightGroupShape)
                         .padding(horizontal = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1600,10 +1631,9 @@ fun BrowserScreen() {
                                                 .padding(horizontal = 4.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(
-                                                text = pageBlockedCount.coerceAtMost(99).toString(),
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
+                                            RollingCounterText(
+                                                count = pageBlockedCount.coerceAtMost(99),
+                                                textStyle = TextStyle(fontSize = 9.sp, fontWeight = FontWeight.Bold),
                                                 color = androidx.compose.ui.graphics.Color.White
                                             )
                                         }
@@ -1646,19 +1676,26 @@ fun BrowserScreen() {
                                     onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
                                     modifier = Modifier.size(42.dp).pressBounceScale()
                                 ) {
+                                    val themeSpinDeg by animateFloatAsState(
+                                        targetValue = if (isEffectiveDark) 180f else 0f,
+                                        animationSpec = spring(dampingRatio = 0.70f, stiffness = 260f),
+                                        label = "themeIconRotation"
+                                    )
                                     AnimatedContent(
                                         targetState = isEffectiveDark,
                                         transitionSpec = {
-                                            (scaleIn(EgoMotion.bouncySpring(), initialScale = 0.6f) + fadeIn(tween(150)))
-                                                .togetherWith(scaleOut(tween(120), targetScale = 0.6f) + fadeOut(tween(110)))
+                                            (scaleIn(EgoMotion.bouncySpring(), initialScale = 0.55f) + fadeIn(tween(160)))
+                                                .togetherWith(scaleOut(tween(120), targetScale = 0.55f) + fadeOut(tween(110)))
                                         },
+                                        modifier = Modifier.graphicsLayer { rotationZ = themeSpinDeg },
                                         label = "themeIconMorph"
                                     ) { darkNow ->
                                         EgoIcon(
                                             imageVector = if (darkNow) Icons.Default.LightMode else Icons.Default.DarkMode,
                                             contentDescription = "다크모드 전환",
                                             tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor,
-                                            filled = darkNow
+                                            filled = darkNow,
+                                            modifier = Modifier.graphicsLayer { rotationZ = if (darkNow) -180f else 0f }
                                         )
                                     }
                                 }
@@ -1794,10 +1831,9 @@ fun BrowserScreen() {
                             .border(2.dp, activeIconColor, RoundedCornerShape(5.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = activeSpace.tabs.size.coerceAtMost(99).toString(),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
+                        RollingCounterText(
+                            count = activeSpace.tabs.size.coerceAtMost(99),
+                            textStyle = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                             color = activeIconColor
                         )
                     }
