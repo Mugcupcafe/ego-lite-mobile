@@ -87,11 +87,11 @@ fun AdBlockControlDialog(
             ) { onDismiss() }
     )
 
-    // 방패 아이콘 바로 아래 우상단 앵커 확장 팝업
+    // 방패 버튼을 그대로 덮으며 확장되는 우상단 모프 팝업
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = 98.dp, end = 64.dp),
+            .padding(top = 50.dp, end = 54.dp),
         contentAlignment = Alignment.TopEnd
     ) {
         AnimatedVisibility(
@@ -108,7 +108,7 @@ fun AdBlockControlDialog(
             )
         ) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 14.dp,
                 tonalElevation = 4.dp,
