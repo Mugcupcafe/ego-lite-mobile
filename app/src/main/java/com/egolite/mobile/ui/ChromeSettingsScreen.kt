@@ -110,6 +110,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -211,8 +214,56 @@ fun ChromeSettingsScreen(
     val settingsCardColor = egoChromeColors.settingsCardBg
     val selectedNavColor = egoChromeColors.selectedNavBg
 
+    val csScope = rememberCoroutineScope()
+    val dismissSwipeX = remember { Animatable(0f) }
+    val leftPaneElastic = rememberElasticOverscroll(isVertical = true, maxPullPx = 80f)
+    val rightPaneElastic = rememberElasticOverscroll(isVertical = true, maxPullPx = 88f)
+
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                translationX = dismissSwipeX.value
+                alpha = (1f - (dismissSwipeX.value / 1100f)).coerceIn(0.65f, 1f)
+            }
+            .pointerInput(Unit) {
+                val vt = VelocityTracker()
+                detectHorizontalDragGestures(
+                    onDragStart = { vt.resetTracking() },
+                    onHorizontalDrag = { change, dragAmount ->
+                        if (dragAmount > 0f || dismissSwipeX.value > 0f) {
+                            change.consume()
+                            vt.addPosition(change.uptimeMillis, change.position)
+                            val next = (dismissSwipeX.value + dragAmount).coerceAtLeast(0f)
+                            csScope.launch { dismissSwipeX.snapTo(next) }
+                        }
+                    },
+                    onDragEnd = {
+                        val vx = vt.calculateVelocity().x
+                        csScope.launch {
+                            if (dismissSwipeX.value > 220f || vx > 1100f) {
+                                dismissSwipeX.animateTo(
+                                    targetValue = 1200f,
+                                    animationSpec = EgoMotion.responsiveSpring(),
+                                    initialVelocity = vx
+                                )
+                                onDismiss()
+                            } else {
+                                dismissSwipeX.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = EgoMotion.responsiveSpring(),
+                                    initialVelocity = vx
+                                )
+                            }
+                        }
+                    },
+                    onDragCancel = {
+                        csScope.launch {
+                            dismissSwipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring())
+                        }
+                    }
+                )
+            },
         color = settingsCanvasColor
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
@@ -222,6 +273,7 @@ fun ChromeSettingsScreen(
                     .width(292.dp)
                     .fillMaxHeight()
                     .background(settingsCanvasColor)
+                    .then(leftPaneElastic.containerModifier)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 14.dp, vertical = 12.dp)
             ) {
@@ -399,8 +451,9 @@ fun ChromeSettingsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
+                            .then(rightPaneElastic.containerModifier)
                             .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp + rightPaneElastic.extraSpacingDp)
                     ) {
                         if (category == SettingsCategory.APPEARANCE && showThemeSubpage) {
                             Row(
@@ -1197,6 +1250,24 @@ fun ChromeSettingsScreen(
                                         eqPreviewMuted = !eqPreviewMuted
                                     }
                                 }
+                                Text(
+                                    text = "하모니OS 7 광학 모션",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                                )
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "터치 광학 테두리 발광 (Rim Light)",
+                                            subtitle = "툴바·설정 카드·팝업 터치 시 접촉 지점 테두리 광학 발광",
+                                            checked = prefs.rimGlowEnabled,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(rimGlowEnabled = c) } }
+                                        )
+                                    }
+                                }
+
                                 Text(
                                     text = "카드 삭제 애니메이션 (AI 모니터 · 전체 탭 보기)",
                                     fontSize = 13.sp,
@@ -2245,6 +2316,7 @@ private fun M3SettingsGroup(
     block: M3SettingsGroupScope.() -> Unit
 ) {
     val scope = M3SettingsGroupScope().apply(block)
+    val prefs by SpaceManager.preferences.collectAsState()
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -2256,11 +2328,18 @@ private fun M3SettingsGroup(
                 idx == scope.items.lastIndex -> RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp, bottomStart = 20.dp, bottomEnd = 20.dp)
                 else -> RoundedCornerShape(4.dp)
             }
+            val rimRadius = if (scope.items.size == 1 || idx == 0 || idx == scope.items.lastIndex) 16.dp else 4.dp
             Surface(
                 shape = shape,
                 color = cardColor,
                 tonalElevation = 0.dp,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .harmonyRimGlow(
+                        enabled = prefs.rimGlowEnabled,
+                        cornerRadius = rimRadius,
+                        glowColor = MaterialTheme.colorScheme.primary
+                    )
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     itemContent()
