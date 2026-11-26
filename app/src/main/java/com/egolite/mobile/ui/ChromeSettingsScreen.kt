@@ -1,5 +1,7 @@
 package com.egolite.mobile.ui
 
+import com.egolite.mobile.model.TabWidthMode
+import kotlin.math.roundToInt
 import com.egolite.mobile.model.EqualizerMorphStyle
 import android.app.DownloadManager
 import android.app.role.RoleManager
@@ -768,6 +770,85 @@ fun ChromeSettingsScreen(
                                         }
                                         if (idx < EqualizerMorphStyle.entries.lastIndex) {
                                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        }
+                                    }
+                                }
+
+                                // 탭 너비 조절 (동적 조절 / 수동 고정 너비 슬라이더)
+                                Text(
+                                    "상단 탭 너비",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 6.dp, start = 4.dp)
+                                )
+                                ChromeGroupCard {
+                                    TabWidthMode.entries.forEachIndexed { idx, mode ->
+                                        val selected = prefs.tabWidthMode == mode
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    SpaceManager.updatePreferences { it.copy(tabWidthMode = mode) }
+                                                }
+                                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    mode.label,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                                )
+                                                Text(
+                                                    if (mode == TabWidthMode.DYNAMIC) {
+                                                        "Google·NAVER 등 짧은 탭은 콤팩트하게, 긴 제목은 끝이 흐릿하게 표시"
+                                                    } else {
+                                                        "모든 탭을 지정한 너비(${prefs.manualTabWidthDp}dp)로 균일하게 표시"
+                                                    },
+                                                    fontSize = 11.5.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            RadioButton(
+                                                selected = selected,
+                                                onClick = {
+                                                    SpaceManager.updatePreferences { it.copy(tabWidthMode = mode) }
+                                                }
+                                            )
+                                        }
+                                        if (idx < TabWidthMode.entries.lastIndex) {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        }
+                                    }
+                                    if (prefs.tabWidthMode == TabWidthMode.MANUAL) {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text("수동 탭 너비", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                                                Text(
+                                                    "${prefs.manualTabWidthDp} dp",
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                            Slider(
+                                                value = prefs.manualTabWidthDp.toFloat().coerceIn(110f, 240f),
+                                                onValueChange = { v ->
+                                                    val snapped = (v / 5f).roundToInt() * 5
+                                                    SpaceManager.updatePreferences { it.copy(manualTabWidthDp = snapped.coerceIn(110, 240)) }
+                                                },
+                                                valueRange = 110f..240f
+                                            )
                                         }
                                     }
                                 }
