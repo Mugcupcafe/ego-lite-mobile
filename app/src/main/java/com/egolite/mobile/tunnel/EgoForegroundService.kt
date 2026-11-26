@@ -1,5 +1,9 @@
 package com.egolite.mobile.tunnel
 
+import com.egolite.mobile.browser.SpaceManager
+import com.egolite.mobile.model.AiSpaceStatus
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -34,6 +38,7 @@ class EgoForegroundService : Service() {
     private var mcpServer: McpHttpServer? = null
     private var tunnelManager: TunnelManager? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLockObserverJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -60,8 +65,23 @@ class EgoForegroundService : Service() {
     }
 
     private fun startAll(settings: TunnelSettings) {
-        if (wakeLock?.isHeld == false) {
-            wakeLock?.acquire(12 * 60 * 60 * 1000L)
+        // 배터리 최적화: 12시간 상시 WakeLock 대신 AI가 실제 WORKING/THINKING 중일 때만 짧게 점유 후 즉시 해제
+        wakeLockObserverJob?.cancel()
+        wakeLockObserverJob = serviceScope.launch {
+            SpaceManager.spaces.collect { list ->
+                val anyBusy = list.any {
+                    it.aiStatus == AiSpaceStatus.WORKING || it.aiStatus == AiSpaceStatus.THINKING
+                }
+                if (anyBusy) {
+                    if (wakeLock?.isHeld == false) {
+                        runCatching { wakeLock?.acquire(5 * 60 * 1000L) }
+                    }
+                } else {
+                    if (wakeLock?.isHeld == true) {
+                        runCatching { wakeLock?.release() }
+                    }
+                }
+            }
         }
         if (settings.bearerToken.isNotBlank()) {
             OAuth21Manager.staticBearerToken = settings.bearerToken
@@ -106,10 +126,12 @@ class EgoForegroundService : Service() {
     }
 
     private fun stopAll() {
+        wakeLockObserverJob?.cancel()
+        wakeLockObserverJob = null
         tunnelManager?.stop()
         mcpServer?.stop()
         if (wakeLock?.isHeld == true) {
-            wakeLock?.release()
+            runCatching { wakeLock?.release() }
         }
         _runtimeState.update {
             it.copy(
