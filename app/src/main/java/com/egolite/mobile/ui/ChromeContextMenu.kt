@@ -366,10 +366,10 @@ fun PagePreviewBottomSheet(
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = { onOpenInNewTab(url) }) {
-                        Icon(Icons.Default.OpenInNew, contentDescription = "새 탭에서 열기")
+                        EgoIcon(Icons.Default.OpenInNew, contentDescription = "새 탭에서 열기")
                     }
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "닫기")
+                        EgoIcon(Icons.Default.Close, contentDescription = "닫기")
                     }
                 }
                 HorizontalDivider()
