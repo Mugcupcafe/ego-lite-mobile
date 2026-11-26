@@ -1,5 +1,7 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.heightIn
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -72,27 +74,35 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
     val isRunning = runtimeState.connectionState == McpConnectionState.CONNECTED ||
         runtimeState.connectionState == McpConnectionState.STARTING
 
+    // 전체 반투명 검정 배경 제거 + MCP 버튼을 그대로 덮는 컴팩트 M3 모프 팝업 카드
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.35f))
-            .clickable { onDismiss() }
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { onDismiss() }
     ) {
         Surface(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight()
-                .width(400.dp)
-                .clickable(enabled = false) {},
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 12.dp
+                .align(Alignment.TopEnd)
+                .padding(top = 50.dp, end = 96.dp)
+                .width(368.dp)
+                .heightIn(max = 540.dp)
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) {},
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            shadowElevation = 22.dp
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
