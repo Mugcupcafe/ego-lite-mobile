@@ -11,7 +11,13 @@ import android.os.Environment
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -49,6 +55,8 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +70,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -90,7 +99,9 @@ import com.egolite.mobile.browser.EgoWebViewFactory
 import com.egolite.mobile.browser.FaviconCache
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.browser.TranslationManager
+import com.egolite.mobile.model.EqualizerMorphStyle
 import com.egolite.mobile.model.McpConnectionState
+import com.egolite.mobile.model.MonitorPosition
 import com.egolite.mobile.model.SearchEngine
 import com.egolite.mobile.model.ThemeMode
 import com.egolite.mobile.model.TranslationEngine
@@ -107,6 +118,7 @@ private enum class SettingsCategory(val title: String, val section: String) {
     TABS("탭 및 탭 그룹", "고급"),
     HOMEPAGE("홈페이지", "고급"),
     APPEARANCE("디자인", "고급"),
+    AI_MONITOR("AI 라이브 모니터", "고급"),
     ACCESSIBILITY("접근성", "고급"),
     SITE_SETTINGS("사이트 설정", "고급"),
     LANGUAGES("언어", "고급"),
@@ -119,9 +131,15 @@ fun ChromeSettingsScreen(
     onOpenMcpDrawer: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    // 시스템 뒤로가기 시 앱 종료가 아니라 설정 페이지만 깔끔하게 닫힘
+    var showThemeSubpage by remember { mutableStateOf(false) }
+
+    // 시스템 뒤로가기 시 하위 화면(디자인 > 테마)이 열려 있으면 상위 디자인 화면으로, 아니면 설정 닫기
     BackHandler(enabled = true) {
-        onDismiss()
+        if (showThemeSubpage) {
+            showThemeSubpage = false
+        } else {
+            onDismiss()
+        }
     }
 
     val context = LocalContext.current
@@ -180,6 +198,7 @@ fun ChromeSettingsScreen(
                         SettingsCategory.SEARCH_ENGINE -> prefs.searchEngine.label
                         SettingsCategory.HOMEPAGE -> if (prefs.homepageEnabled) "사용" else "사용 안 함"
                         SettingsCategory.APPEARANCE -> prefs.themeMode.label
+                        SettingsCategory.AI_MONITOR -> "세로: ${prefs.monitorPosPortrait.label} · 가로: ${prefs.monitorPosLandscape.label}"
                         SettingsCategory.PROFILE -> if (runtimeState.connectionState == McpConnectionState.CONNECTED) "MCP 연결됨" else "MCP 대기"
                         else -> null
                     }
@@ -198,6 +217,7 @@ fun ChromeSettingsScreen(
                                     openSystemDefaultBrowserSettings(context)
                                 }
                                 selectedCategory = cat
+                                showThemeSubpage = false
                             }
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -283,7 +303,37 @@ fun ChromeSettingsScreen(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text(category.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                        if (category == SettingsCategory.APPEARANCE && showThemeSubpage) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "디자인",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { showThemeSubpage = false }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "테마",
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        } else {
+                            Text(category.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                        }
 
                         when (category) {
                             SettingsCategory.PROFILE -> {
@@ -490,46 +540,236 @@ fun ChromeSettingsScreen(
                             }
 
                             SettingsCategory.APPEARANCE -> {
-                                // 첨부 18014.jpg 디자인 1:1 + 웹페이지 기기 폰트 & 커스텀 .ttf 추가!
-                                ChromeGroupCard {
-                                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("테마", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            ThemeMode.entries.forEach { tm ->
-                                                val sel = prefs.themeMode == tm
-                                                Surface(
-                                                    shape = CircleShape,
-                                                    color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
-                                                    modifier = Modifier.clickable {
-                                                        SpaceManager.updatePreferences {
-                                                            it.copy(themeMode = tm, darkModeEnabled = when (tm) { ThemeMode.DARK -> true; ThemeMode.LIGHT -> false; ThemeMode.SYSTEM -> SpaceManager.isSystemDarkMode() })
-                                                        }
-                                                    }
-                                                ) {
-                                                    Text(
-                                                        text = tm.label,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
-                                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                                                    )
+                                AnimatedContent(
+                                    targetState = showThemeSubpage,
+                                    transitionSpec = {
+                                        if (targetState) {
+                                            (slideInHorizontally(EgoMotion.intOffsetSpring) { it / 3 } + fadeIn(tween(180)))
+                                                .togetherWith(slideOutHorizontally(tween(150)) { -it / 4 } + fadeOut(tween(120)))
+                                        } else {
+                                            (slideInHorizontally(EgoMotion.intOffsetSpring) { -it / 3 } + fadeIn(tween(180)))
+                                                .togetherWith(slideOutHorizontally(tween(150)) { it / 4 } + fadeOut(tween(120)))
+                                        }
+                                    },
+                                    label = "appearanceThemeMorph"
+                                ) { inThemePage ->
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                if (inThemePage) {
+                                    // 크롬 태블릿 1:1 디자인 > 테마 하위 화면
+                                    val selectTheme: (ThemeMode) -> Unit = { tm ->
+                                        SpaceManager.updatePreferences {
+                                            it.copy(
+                                                themeMode = tm,
+                                                darkModeEnabled = when (tm) {
+                                                    ThemeMode.DARK -> true
+                                                    ThemeMode.LIGHT -> false
+                                                    ThemeMode.SYSTEM -> SpaceManager.isSystemDarkMode()
                                                 }
+                                            )
+                                        }
+                                    }
+
+                                    // 1. 시스템 기본값 카드
+                                    ChromeGroupCard {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { selectTheme(ThemeMode.SYSTEM) }
+                                                .padding(horizontal = 14.dp, vertical = 14.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = prefs.themeMode == ThemeMode.SYSTEM,
+                                                onClick = { selectTheme(ThemeMode.SYSTEM) }
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("시스템 기본값", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "기기의 어두운 테마가 사용 설정되어 있을 때 어두운 테마를 사용 설정합니다.",
+                                                    fontSize = 12.5.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    lineHeight = 18.sp
+                                                )
                                             }
                                         }
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    ChromeSwitchItem(
-                                        title = "툴바 바로가기 (홈 버튼 표시)",
-                                        subtitle = "주소창 왼쪽에 홈 버튼 표시",
-                                        checked = prefs.showHomeButton,
-                                        onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showHomeButton = c) } }
-                                    )
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    ChromeSwitchItem(
-                                        title = "북마크바 표시",
-                                        subtitle = "주소창 아래에 북마크 바 표시",
-                                        checked = prefs.showBookmarkBar,
-                                        onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showBookmarkBar = c) } }
-                                    )
+
+                                    // 크롬 1:1 체크박스: 시스템 기본값 또는 어둡게 선택 시 표시
+                                    if (prefs.themeMode != ThemeMode.LIGHT) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable {
+                                                    SpaceManager.updatePreferences {
+                                                        it.copy(darkenWebsitesWhenPossible = !it.darkenWebsitesWhenPossible)
+                                                    }
+                                                }
+                                                .padding(horizontal = 24.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = prefs.darkenWebsitesWhenPossible,
+                                                onCheckedChange = { checked ->
+                                                    SpaceManager.updatePreferences {
+                                                        it.copy(darkenWebsitesWhenPossible = checked)
+                                                    }
+                                                }
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "가능하면 사이트에 어두운 테마를 적용합니다",
+                                                fontSize = 14.sp,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+
+                                    // 2. 밝게 / 어둡게 라디오 그룹 카드
+                                    ChromeGroupCard {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { selectTheme(ThemeMode.LIGHT) }
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = prefs.themeMode == ThemeMode.LIGHT,
+                                                onClick = { selectTheme(ThemeMode.LIGHT) }
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text("밝게", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                        }
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { selectTheme(ThemeMode.DARK) }
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = prefs.themeMode == ThemeMode.DARK,
+                                                onClick = { selectTheme(ThemeMode.DARK) }
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text("어둡게", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                        }
+                                    }
+                                } else {
+                                    // 크롬 태블릿 1:1 디자인 상위 화면 (테마 탭 시 디자인 > 테마 진입)
+                                    ChromeGroupCard {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { showThemeSubpage = true }
+                                                .padding(16.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text("테마", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                                Text(
+                                                    text = prefs.themeMode.label,
+                                                    fontSize = 12.5.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                contentDescription = "테마 설정 열기",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        ChromeSwitchItem(
+                                            title = "툴바 바로가기 (홈 버튼 표시)",
+                                            subtitle = "주소창 왼쪽에 홈 버튼 표시",
+                                            checked = prefs.showHomeButton,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showHomeButton = c) } }
+                                        )
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        ChromeSwitchItem(
+                                            title = "북마크바 표시",
+                                            subtitle = "주소창 아래에 북마크 바 표시",
+                                            checked = prefs.showBookmarkBar,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showBookmarkBar = c) } }
+                                        )
+                                    }
+                                }
+
+                                if (!inThemePage) {
+                                // 탭 오디오 미니 이퀄라이저 유기적 모핑 스타일 선택 섹션
+                                var eqPreviewMuted by remember { mutableStateOf(false) }
+                                LaunchedEffect(Unit) {
+                                    while (true) {
+                                        delay(1750L)
+                                        eqPreviewMuted = !eqPreviewMuted
+                                    }
+                                }
+                                Text(
+                                    "탭 오디오 이퀄라이저 모핑",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 6.dp, start = 4.dp)
+                                )
+                                ChromeGroupCard {
+                                    EqualizerMorphStyle.entries.forEachIndexed { idx, style ->
+                                        val selected = prefs.equalizerMorphStyle == style
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    SpaceManager.updatePreferences { it.copy(equalizerMorphStyle = style) }
+                                                }
+                                                .padding(horizontal = 16.dp, vertical = 11.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                modifier = Modifier.size(34.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    TabEqualizerIcon(
+                                                        isPlaying = true,
+                                                        isMuted = eqPreviewMuted,
+                                                        activeColor = MaterialTheme.colorScheme.primary,
+                                                        mutedColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        cutoutBgColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                        morphStyle = style,
+                                                        onClick = { eqPreviewMuted = !eqPreviewMuted }
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    style.label,
+                                                    fontSize = 14.sp,
+                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                                )
+                                                Text(
+                                                    style.description,
+                                                    fontSize = 11.5.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            RadioButton(
+                                                selected = selected,
+                                                onClick = {
+                                                    SpaceManager.updatePreferences { it.copy(equalizerMorphStyle = style) }
+                                                }
+                                            )
+                                        }
+                                        if (idx < EqualizerMorphStyle.entries.lastIndex) {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        }
+                                    }
                                 }
 
                                 // 웹페이지 폰트 & 커스텀 .ttf 추가 섹션
@@ -584,6 +824,94 @@ fun ChromeSettingsScreen(
                                             Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text("커스텀 폰트 (.ttf / .otf) 파일 추가")
+                                        }
+                                    }
+                                }
+                            }
+
+                                                            }
+                                }
+                            }
+
+                            SettingsCategory.AI_MONITOR -> {
+                                Text(
+                                    text = "세로 모드 위치",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 4.dp)
+                                )
+                                ChromeGroupCard {
+                                    MonitorPosition.entries.forEachIndexed { idx, pos ->
+                                        val sel = prefs.monitorPosPortrait == pos
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { SpaceManager.updatePreferences { it.copy(monitorPosPortrait = pos) } }
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = sel,
+                                                onClick = { SpaceManager.updatePreferences { it.copy(monitorPosPortrait = pos) } }
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = if (pos == MonitorPosition.TOP) "상단 (기본값)" else "좌측 사이드바",
+                                                    fontSize = 15.sp,
+                                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                                                )
+                                                Text(
+                                                    text = if (pos == MonitorPosition.TOP) "세로 화면에서 탭 바 위로 확장됩니다." else "세로 화면에서도 왼쪽 사이드바로 확장됩니다.",
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        if (idx < MonitorPosition.entries.lastIndex) {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                        }
+                                    }
+                                }
+
+                                Text(
+                                    text = "가로 모드 위치",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 6.dp, start = 4.dp)
+                                )
+                                ChromeGroupCard {
+                                    MonitorPosition.entries.forEachIndexed { idx, pos ->
+                                        val sel = prefs.monitorPosLandscape == pos
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { SpaceManager.updatePreferences { it.copy(monitorPosLandscape = pos) } }
+                                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = sel,
+                                                onClick = { SpaceManager.updatePreferences { it.copy(monitorPosLandscape = pos) } }
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column {
+                                                Text(
+                                                    text = if (pos == MonitorPosition.LEFT) "좌측 사이드바 (기본값)" else "상단",
+                                                    fontSize = 15.sp,
+                                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                                                )
+                                                Text(
+                                                    text = if (pos == MonitorPosition.LEFT) "가로 화면에서 왼쪽 사이드바로 확장됩니다." else "가로 화면에서도 탭 바 위로 확장됩니다.",
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                        if (idx < MonitorPosition.entries.lastIndex) {
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                                         }
                                     }
                                 }
