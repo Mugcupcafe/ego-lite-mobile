@@ -560,6 +560,29 @@ object SpaceManager {
         }
     }
 
+    /**
+     * 앱이 백그라운드로 이동할 때 오디오 재생 탭·작업 중인 AI 스페이스를 제외한 모든 WebView 절전
+     */
+    fun pauseIdleWebViewsForBackground() {
+        val keepIds = buildSet {
+            _spaces.value.forEach { sp ->
+                val isBusy = sp.aiStatus == AiSpaceStatus.WORKING || sp.aiStatus == AiSpaceStatus.THINKING
+                sp.tabs.forEach { t ->
+                    if ((isBusy && t.id == sp.activeTabId) || (t.isPlayingAudio && !t.isMuted)) {
+                        add(t.id)
+                    }
+                }
+            }
+        }
+        mainHandler.post {
+            webViews.forEach { (tabId, wv) ->
+                if (tabId !in keepIds) {
+                    runCatching { wv.onPause() }
+                }
+            }
+        }
+    }
+
     fun resumeActiveWebView() {
         val activeTabId = getActiveSpace().activeTabId
         mainHandler.post {
