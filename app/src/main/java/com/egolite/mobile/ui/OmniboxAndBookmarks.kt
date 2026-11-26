@@ -175,12 +175,12 @@ fun ChromeOmniboxOverlay(
                         .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Search,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
-                    )
+                    , symbolSize = 20.dp)
                     Spacer(modifier = Modifier.width(12.dp))
                     BasicTextField(
                         value = query,
@@ -216,7 +216,7 @@ fun ChromeOmniboxOverlay(
                     )
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { query = "" }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = "지우기", modifier = Modifier.size(18.dp))
+                            EgoIcon(Icons.Default.Close, contentDescription = "지우기", modifier = Modifier.size(18.dp), symbolSize = 18.dp)
                         }
                     }
                 }
@@ -236,12 +236,12 @@ fun ChromeOmniboxOverlay(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Public,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
-                    )
+                    , symbolSize = 22.dp)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -271,7 +271,7 @@ fun ChromeOmniboxOverlay(
                         },
                         modifier = Modifier.size(36.dp)
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "공유", modifier = Modifier.size(18.dp))
+                        EgoIcon(Icons.Default.Share, contentDescription = "공유", modifier = Modifier.size(18.dp), symbolSize = 18.dp)
                     }
                     IconButton(
                         onClick = {
@@ -281,13 +281,13 @@ fun ChromeOmniboxOverlay(
                         },
                         modifier = Modifier.size(36.dp)
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "복사", modifier = Modifier.size(18.dp))
+                        EgoIcon(Icons.Default.ContentCopy, contentDescription = "복사", modifier = Modifier.size(18.dp), symbolSize = 18.dp)
                     }
                     IconButton(
                         onClick = { query = currentUrl },
                         modifier = Modifier.size(36.dp)
                     ) {
-                        Icon(Icons.Default.Edit, contentDescription = "URL 편집", modifier = Modifier.size(18.dp))
+                        EgoIcon(Icons.Default.Edit, contentDescription = "URL 편집", modifier = Modifier.size(18.dp), symbolSize = 18.dp)
                     }
                 }
 
@@ -345,12 +345,12 @@ fun ChromeOmniboxOverlay(
                                 .padding(horizontal = 16.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(18.dp)
-                            )
+                            , symbolSize = 18.dp)
                             Spacer(modifier = Modifier.width(14.dp))
                             Text(
                                 text = sug,
@@ -361,7 +361,7 @@ fun ChromeOmniboxOverlay(
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = { query = sug }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Default.NorthWest, contentDescription = "채우기", modifier = Modifier.size(16.dp))
+                                EgoIcon(Icons.Default.NorthWest, contentDescription = "채우기", modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                             }
                         }
                     }
@@ -392,12 +392,12 @@ fun ChromeOmniboxOverlay(
                                     .padding(horizontal = 16.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.History,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)
-                                )
+                                , symbolSize = 18.dp)
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Text(
                                     text = term,
@@ -411,12 +411,12 @@ fun ChromeOmniboxOverlay(
                                     onClick = { query = term },
                                     modifier = Modifier.size(32.dp)
                                 ) {
-                                    Icon(
+                                    EgoIcon(
                                         imageVector = Icons.Default.NorthWest,
                                         contentDescription = "검색창에 채우기",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(16.dp)
-                                    )
+                                    , symbolSize = 16.dp)
                                 }
                             }
                         }
@@ -479,11 +479,11 @@ fun BookmarkEditDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                            EgoIcon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp), symbolSize = 18.dp)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(selectedFolder, fontSize = 14.sp)
                         }
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        EgoIcon(Icons.Default.ArrowDropDown, contentDescription = null)
                     }
                     DropdownMenu(expanded = showFolderMenu, onDismissRequest = { showFolderMenu = false }) {
                         folders.forEach { folder ->
@@ -512,7 +512,7 @@ fun BookmarkEditDialog(
                             newFolderInput = ""
                         }
                     }) {
-                        Icon(Icons.Default.CreateNewFolder, contentDescription = "폴더 추가")
+                        EgoIcon(Icons.Default.CreateNewFolder, contentDescription = "폴더 추가")
                     }
                 }
             }
@@ -573,7 +573,7 @@ fun BookmarkManagerDialog(
                     onClick = { showNewFolderRow = !showNewFolderRow },
                     modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(Icons.Default.CreateNewFolder, contentDescription = "새 폴더 만들기", modifier = Modifier.size(20.dp))
+                    EgoIcon(Icons.Default.CreateNewFolder, contentDescription = "새 폴더 만들기", modifier = Modifier.size(20.dp), symbolSize = 20.dp)
                 }
             }
         },
@@ -594,12 +594,12 @@ fun BookmarkManagerDialog(
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
+                    EgoIcon(
                         Icons.Default.Search,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
-                    )
+                    , symbolSize = 18.dp)
                     Spacer(modifier = Modifier.width(8.dp))
                     BasicTextField(
                         value = search,
@@ -661,7 +661,7 @@ fun BookmarkManagerDialog(
                                 showNewFolderRow = false
                             }
                         }) {
-                            Icon(Icons.Default.Add, contentDescription = "폴더 추가")
+                            EgoIcon(Icons.Default.Add, contentDescription = "폴더 추가")
                         }
                     }
                 }
@@ -709,10 +709,10 @@ fun BookmarkManagerDialog(
                                     .padding(horizontal = 6.dp, vertical = 4.dp)
                             )
                             IconButton(onClick = { onEditBookmark(bm) }, modifier = Modifier.size(30.dp)) {
-                                Icon(Icons.Default.Edit, contentDescription = "수정", modifier = Modifier.size(16.dp))
+                                EgoIcon(Icons.Default.Edit, contentDescription = "수정", modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                             }
                             IconButton(onClick = { onDeleteBookmark(bm.id) }, modifier = Modifier.size(30.dp)) {
-                                Icon(Icons.Default.Delete, contentDescription = "삭제", modifier = Modifier.size(16.dp), tint = EgoDangerRed)
+                                EgoIcon(Icons.Default.Delete, contentDescription = "삭제", modifier = Modifier.size(16.dp), tint = EgoDangerRed, symbolSize = 16.dp)
                             }
                         }
                     }
