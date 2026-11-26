@@ -104,12 +104,14 @@ fun ChromeHistoryScreen(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter
         ) {
+            val hsElastic = rememberElasticOverscroll(isVertical = true, maxPullPx = 88f)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 640.dp),
+                    .widthIn(max = 640.dp)
+                    .then(hsElastic.containerModifier),
                 contentPadding = PaddingValues(horizontal = 24.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                verticalArrangement = Arrangement.spacedBy(2.dp + hsElastic.extraSpacingDp)
             ) {
                 // 1) 제목: 방문 기록 (크롬 1:1)
                 item(key = "hist_header") {
