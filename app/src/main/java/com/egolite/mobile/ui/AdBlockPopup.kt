@@ -46,6 +46,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
@@ -69,7 +81,7 @@ fun AdBlockControlDialog(
     currentHost: String,
     activeTabId: String,
     onReloadPage: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: (VanishSnapshot) -> Unit
 ) {
     val st by AdBlockEngine.state.collectAsState()
     val pageBlocked = st.perTabCounts[activeTabId] ?: 0
@@ -82,13 +94,21 @@ fun AdBlockControlDialog(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) { onDismiss() }
+            .pointerInput(Unit) {
+                detectTapGestures { offset -> dismissWithCapture(offset) }
+            }
     )
 
     var cardVisible by remember { mutableStateOf(false) }
+    var cardRect by remember { mutableStateOf<Rect?>(null) }
+    val captureLayer = rememberGraphicsLayer()
+    val captureScope = rememberCoroutineScope()
+    fun dismissWithCapture(touchRoot: Offset?) {
+        captureScope.launch {
+            val bmp = runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+            onDismiss(VanishSnapshot(rect = cardRect, touchRoot = touchRoot, bitmap = bmp))
+        }
+    }
     LaunchedEffect(Unit) { cardVisible = true }
 
     // 방패 버튼을 그대로 덮으며 카드 자체만 깔끔하게 모프
@@ -118,6 +138,11 @@ fun AdBlockControlDialog(
                 tonalElevation = 4.dp,
                 modifier = Modifier
                     .width(326.dp)
+                    .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                    .drawWithContent {
+                        captureLayer.record { this@drawWithContent.drawContent() }
+                        drawLayer(captureLayer)
+                    }
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
                     .clickable(
                         indication = null,
@@ -146,7 +171,7 @@ fun AdBlockControlDialog(
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
                         )
-                        IconButton(onClick = onDismiss, modifier = Modifier.size(26.dp)) {
+                        IconButton(onClick = { dismissWithCapture(cardRect?.let { Offset(it.right - 24f, it.top + 24f) }) }, modifier = Modifier.size(26.dp)) {
                             EgoIcon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                         }
                     }
