@@ -36,6 +36,28 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.sign
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.material3.Text
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Dp
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -72,6 +94,12 @@ object EgoMotion {
     )
 
     // 눈에 확실히 보이는 M3 Expressive 컨테이너 모프 스프링 (~340ms)
+    // 인터럽트 반응형 스프링: 방향 전환 시 현재 속도를 그대로 이어받아 매끄럽게 수렴
+    fun <T> responsiveSpring() = spring<T>(
+        dampingRatio = 0.82f,
+        stiffness = 380f
+    )
+
     fun <T> morphSpring() = spring<T>(
         dampingRatio = 0.80f,
         stiffness = 200f
@@ -292,4 +320,198 @@ fun TabEqualizerIcon(
             }
         }
     }
+}
+
+/**
+ * 하모니OS 7 터치 광학 테두리 발광 (Dynamic Rim Light)
+ * - 손가락이 닿은 좌표 주변 테두리와 표면에만 은은한 빛이 번졌다 잔광과 함께 소멸
+ * - 기존 clickable/drag 이벤트를 소비하지 않고 시각 효과만 중첩
+ */
+fun Modifier.harmonyRimGlow(
+    enabled: Boolean = true,
+    cornerRadius: Dp = 18.dp,
+    glowColor: Color = Color(0xFFBBD6FF),
+    strokeWidth: Dp = 1.5.dp
+): Modifier = composed {
+    if (!enabled) return@composed this
+    var touchPos by remember { mutableStateOf(Offset.Zero) }
+    var isTouching by remember { mutableStateOf(false) }
+    val glowAlpha by animateFloatAsState(
+        targetValue = if (isTouching) 1f else 0f,
+        animationSpec = tween(durationMillis = if (isTouching) 90 else 320),
+        label = "harmonyRimGlowAlpha"
+    )
+    this
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    touchPos = down.position
+                    isTouching = true
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val cur = event.changes.firstOrNull { it.id == down.id }
+                        if (cur == null || !cur.pressed) break
+                        touchPos = cur.position
+                    }
+                    isTouching = false
+                }
+            }
+        }
+        .drawWithContent {
+            drawContent()
+            if (glowAlpha > 0.01f) {
+                val radiusPx = (size.maxDimension * 0.48f).coerceIn(110f, 340f)
+                val crPx = cornerRadius.toPx()
+                // 표면 미세 광택
+                drawRoundRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            glowColor.copy(alpha = 0.14f * glowAlpha),
+                            Color.Transparent
+                        ),
+                        center = touchPos,
+                        radius = radiusPx
+                    ),
+                    cornerRadius = CornerRadius(crPx, crPx)
+                )
+                // 테두리 광학 발광 스트로크
+                drawRoundRect(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            glowColor.copy(alpha = 0.88f * glowAlpha),
+                            glowColor.copy(alpha = 0.28f * glowAlpha),
+                            Color.Transparent
+                        ),
+                        center = touchPos,
+                        radius = radiusPx * 0.86f
+                    ),
+                    cornerRadius = CornerRadius(crPx, crPx),
+                    style = Stroke(width = strokeWidth.toPx())
+                )
+            }
+        }
+}
+
+/**
+ * 하모니OS 7 오도미터 스타일 숫자 롤링 카운터
+ */
+@Composable
+fun RollingCounterText(
+    count: Int,
+    textStyle: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    AnimatedContent(
+        targetState = count,
+        transitionSpec = {
+            if (targetState >= initialState) {
+                (slideInVertically(tween(210)) { it } + fadeIn(tween(170)))
+                    .togetherWith(slideOutVertically(tween(180)) { -it } + fadeOut(tween(140)))
+            } else {
+                (slideInVertically(tween(210)) { -it } + fadeIn(tween(170)))
+                    .togetherWith(slideOutVertically(tween(180)) { it } + fadeOut(tween(140)))
+            }
+        },
+        modifier = modifier,
+        label = "rollingCounter"
+    ) { target ->
+        Text(
+            text = target.toString(),
+            style = textStyle,
+            color = color,
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+}
+
+/**
+ * 하모니OS 7 탄성 고무줄 간격 오버스크롤 (Elastic Gap Stretch)
+ * - 스크롤 끝에 도달해 더 당기면 요소 간 간격이 탄성적으로 벌어졌다가 놓으면 과감쇠 스프링으로 복원
+ */
+class ElasticOverscrollState(
+    val pullPx: Float,
+    val extraSpacingDp: Dp,
+    val nestedScrollConnection: NestedScrollConnection,
+    val containerModifier: Modifier
+)
+
+@Composable
+fun rememberElasticOverscroll(
+    isVertical: Boolean,
+    maxPullPx: Float = 88f
+): ElasticOverscrollState {
+    val scope = rememberCoroutineScope()
+    val pullAnim = remember { Animatable(0f) }
+
+    val connection = remember(isVertical, maxPullPx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val delta = if (isVertical) available.y else available.x
+                val cur = pullAnim.value
+                if (source == NestedScrollSource.UserInput && cur != 0f && delta.sign != cur.sign) {
+                    val consumed = if (abs(delta) > abs(cur)) -cur else delta
+                    scope.launch { pullAnim.snapTo(cur + consumed) }
+                    return if (isVertical) Offset(0f, consumed) else Offset(consumed, 0f)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                val leftover = if (isVertical) available.y else available.x
+                if (source == NestedScrollSource.UserInput && abs(leftover) > 0.5f) {
+                    val cur = pullAnim.value
+                    val resistance = (1f - (abs(cur) / maxPullPx).coerceIn(0f, 0.88f)) * 0.48f
+                    val next = (cur + leftover * resistance).coerceIn(-maxPullPx, maxPullPx)
+                    scope.launch { pullAnim.snapTo(next) }
+                    return available
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (abs(pullAnim.value) > 0.5f) {
+                    val v = if (isVertical) available.y else available.x
+                    pullAnim.animateTo(
+                        targetValue = 0f,
+                        animationSpec = EgoMotion.responsiveSpring(),
+                        initialVelocity = v * 0.35f
+                    )
+                }
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (abs(pullAnim.value) > 0.5f) {
+                    pullAnim.animateTo(
+                        targetValue = 0f,
+                        animationSpec = EgoMotion.responsiveSpring()
+                    )
+                }
+                return Velocity.Zero
+            }
+        }
+    }
+
+    val pull = pullAnim.value
+    val extraDp = (abs(pull) * 0.14f).coerceAtMost(13f).dp
+    val mod = Modifier
+        .nestedScroll(connection)
+        .graphicsLayer {
+            if (isVertical) translationY = pull * 0.36f
+            else translationX = pull * 0.36f
+        }
+
+    return ElasticOverscrollState(
+        pullPx = pull,
+        extraSpacingDp = extraDp,
+        nestedScrollConnection = connection,
+        containerModifier = mod
+    )
 }
