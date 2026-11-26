@@ -163,6 +163,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import android.content.res.Configuration
@@ -187,6 +191,7 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -295,6 +300,7 @@ fun BrowserScreen() {
     var showTranslateSettingsDialog by remember { mutableStateOf(false) }
     var globalDustBursts by remember { mutableStateOf<List<DustVanishRequest>>(emptyList()) }
     var vanishingTopTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var collapsingTopTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var nextDustBurstId by remember { mutableStateOf(1000L) }
     var showOmniboxOverlay by remember { mutableStateOf(false) }
     var showBookmarkManager by remember { mutableStateOf(false) }
@@ -320,7 +326,7 @@ fun BrowserScreen() {
         val localOriginX = touchRoot?.let { it.x - rootBoxLeftPx } ?: -1f
         val localOriginY = touchRoot?.let { it.y - rootBoxTopPx } ?: -1f
         val id = nextDustBurstId++
-        val count = (prefs.vanishParticleCount * densityFactor).toInt().coerceIn(360, 3600)
+        val count = (prefs.vanishParticleCount * densityFactor).toInt().coerceIn(400, 14000)
         globalDustBursts = globalDustBursts + DustVanishRequest(
             id = id,
             rect = localRect,
@@ -331,7 +337,19 @@ fun BrowserScreen() {
             durationMs = prefs.vanishDurationMs.coerceIn(520, 1600),
             originX = localOriginX,
             originY = localOriginY,
-            maxFps = prefs.vanishMaxFps
+            maxFps = prefs.vanishMaxFps,
+            direction = prefs.vanishDirection,
+            edgeGlow = prefs.vanishEdgeGlow,
+            curlStrength = prefs.vanishCurlStrength,
+            shockwaveStrength = prefs.vanishShockwaveStrength,
+            airDrag = prefs.vanishAirDrag,
+            additiveGlow = prefs.vanishAdditiveGlow,
+            zPerspective = prefs.vanishZPerspective,
+            sizeAdaptiveDuration = prefs.vanishSizeAdaptiveDuration,
+            sandRibbonDensity = prefs.sandRibbonDensity,
+            sandSilverRatio = prefs.sandSilverRatio,
+            sandWindStrength = prefs.sandWindStrength,
+            sandSwirlStrength = prefs.sandSwirlStrength
         )
     }
 
@@ -418,7 +436,7 @@ fun BrowserScreen() {
         add(ChromeMenuItemSpec("새 시크릿 창", Icons.Default.VisibilityOff, dividerAfter = true) {
             SpaceManager.createTab(activeSpace.id, incognito = true)
         })
-        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History) { showHistoryDialog = true })
+        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History) { SpaceManager.openHistoryTab(activeSpace.id) })
         add(ChromeMenuItemSpec("인터넷 사용 기록 삭제", Icons.Default.DeleteOutline) {
             SpaceManager.clearHistoryAndCache()
             Toast.makeText(context, "인터넷 사용 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
@@ -983,13 +1001,31 @@ fun BrowserScreen() {
                                     )
                                 } else Modifier
 
+                                val tabCaptureLayer = rememberGraphicsLayer()
+                                val isCollapsingTab = tab.id in collapsingTopTabIds
+                                val tabWidthFactor by animateFloatAsState(
+                                    targetValue = if (isCollapsingTab) 0f else 1f,
+                                    animationSpec = spring(dampingRatio = 0.88f, stiffness = 340f),
+                                    label = "tabCollapse_${tab.id}"
+                                )
                                 Row(
                                     modifier = Modifier
+                                        .layout { measurable, constraints ->
+                                            val placeable = measurable.measure(constraints)
+                                            val w = (placeable.width * tabWidthFactor).toInt().coerceAtLeast(0)
+                                            layout(w, placeable.height) {
+                                                if (w > 0) placeable.placeRelative(0, 0)
+                                            }
+                                        }
                                         .padding(horizontal = extraMargin.coerceAtLeast(0.dp))
                                         .onGloballyPositioned { coords ->
                                             if (draggingTabId == null) {
                                                 tabBoundsMap[tab.id] = coords.boundsInRoot()
                                             }
+                                        }
+                                        .drawWithContent {
+                                            tabCaptureLayer.record { this@drawWithContent.drawContent() }
+                                            drawLayer(tabCaptureLayer)
                                         }
                                         .graphicsLayer {
                                             scaleX = tabScale
@@ -1243,17 +1279,29 @@ fun BrowserScreen() {
                                                 if (prefs.cardVanishStyle == CardVanishStyle.OFF || tab.id in vanishingTopTabIds) {
                                                     SpaceManager.closeTab(activeSpace.id, tab.id)
                                                 } else {
-                                                    vanishingTopTabIds = vanishingTopTabIds + tab.id
-                                                    val tbRect = tabBoundsMap[tab.id]; emitDustBurst(tbRect, tabBg, densityFactor = 0.42f, touchRoot = tbRect?.let { Offset(it.right - 20f, it.center.y) })
+                                                    val tbRect = tabBoundsMap[tab.id]
                                                     val waitMs = when (prefs.cardVanishStyle) {
-                                                        CardVanishStyle.HARMONY_DUST, CardVanishStyle.HARMONY_GPU_SHADER -> (prefs.vanishDurationMs * 0.45f).toLong().coerceIn(260L, 620L)
+                                                        CardVanishStyle.HARMONY_DUST, CardVanishStyle.HARMONY_GPU_SHADER, CardVanishStyle.HARMONY_7_SAND_WAVE -> (prefs.vanishDurationMs * 0.45f).toLong().coerceIn(260L, 620L)
                                                         CardVanishStyle.LIGHT_PARTICLES -> 300L
                                                         CardVanishStyle.SCALE_FADE -> 180L
                                                         CardVanishStyle.OFF -> 0L
                                                     }
                                                     scope.launch {
+                                                        val capturedBmp = runCatching { tabCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+                                                        vanishingTopTabIds = vanishingTopTabIds + tab.id
+                                                        emitDustBurst(
+                                                            rootRect = tbRect,
+                                                            accent = tabBg,
+                                                            densityFactor = 0.42f,
+                                                            touchRoot = tbRect?.let { Offset(it.right - 20f, it.center.y) },
+                                                            capturedBitmap = capturedBmp
+                                                        )
+                                                        // 1단계: 40% 침식 구간 동안 자리 유지 -> 2단계: 과감쇠 스프링으로 가로 폭 0dp 수축 후 제거
                                                         kotlinx.coroutines.delay(waitMs)
+                                                        collapsingTopTabIds = collapsingTopTabIds + tab.id
+                                                        kotlinx.coroutines.delay(240L)
                                                         SpaceManager.closeTab(activeSpace.id, tab.id)
+                                                        collapsingTopTabIds = collapsingTopTabIds - tab.id
                                                         vanishingTopTabIds = vanishingTopTabIds - tab.id
                                                     }
                                                 }
@@ -2005,6 +2053,7 @@ fun BrowserScreen() {
                             .clip(RoundedCornerShape(outCorner.value.coerceAtLeast(12f).dp))
                     )
                 }
+                val tabPageDustColor = MaterialTheme.colorScheme.surfaceContainerHigh
                 androidx.compose.animation.AnimatedVisibility(
                     visible = activeTab.url == DOWNLOADS_URL,
                     enter = fadeIn(tween(150)),
@@ -2012,7 +2061,26 @@ fun BrowserScreen() {
                 ) {
                     ChromeDownloadsScreen(
                         embeddedInTab = true,
+                        onOpenSettings = {
+                            settingsInitialCategory = SettingsCategory.DOWNLOADS
+                            showChromeSettings = true
+                        },
+                        onDustVanish = { snap -> emitDustSnapshot(snap, tabPageDustColor, 0.72f) },
                         onDismiss = { SpaceManager.navigate(activeSpace.id, NEW_TAB_URL) }
+                    )
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = activeTab.url == HISTORY_URL,
+                    enter = fadeIn(tween(150)),
+                    exit = fadeOut(tween(120))
+                ) {
+                    ChromeHistoryScreen(
+                        history = history,
+                        onNavigate = { url -> SpaceManager.navigate(activeSpace.id, url) },
+                        onRemoveItem = { id -> SpaceManager.removeHistoryItem(id) },
+                        onClearAll = { SpaceManager.clearHistory() },
+                        onDustVanish = { snap -> emitDustSnapshot(snap, tabPageDustColor, 0.62f) }
                     )
                 }
 
