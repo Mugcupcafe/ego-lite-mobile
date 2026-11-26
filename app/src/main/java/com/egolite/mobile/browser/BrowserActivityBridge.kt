@@ -95,21 +95,29 @@ object BrowserActivityBridge {
         contentDisposition: String? = null,
         mimeType: String? = null
     ) {
-        runCatching {
-            val request = DownloadManager.Request(Uri.parse(url))
-            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-            request.setMimeType(mimeType)
-            CookieManager.getInstance().getCookie(url)?.let { request.addRequestHeader("Cookie", it) }
-            if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
-            request.setTitle(fileName)
-            request.setDescription("Ego Lite Mobile 다운로드")
-            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            dm.enqueue(request)
-            Toast.makeText(context, "다운로드 시작: $fileName", Toast.LENGTH_SHORT).show()
-        }.onFailure {
-            Toast.makeText(context, "다운로드 실패: ${it.message}", Toast.LENGTH_SHORT).show()
+        val cleanName = DownloadCenter.resolveCleanFileName(url, contentDisposition, mimeType)
+        val safeMime = mimeType?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
+        DownloadCenter.checkDuplicateOrProceed(context, cleanName, safeMime) { finalFileName ->
+            runCatching {
+                val request = DownloadManager.Request(Uri.parse(url))
+                request.setMimeType(mimeType)
+                CookieManager.getInstance().getCookie(url)?.let { request.addRequestHeader("Cookie", it) }
+                if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
+                request.setTitle(finalFileName)
+                request.setDescription("Ego Lite Mobile 다운로드")
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, finalFileName)
+                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                val sysId = dm.enqueue(request)
+                DownloadCenter.registerDownloading(
+                    systemDownloadId = sysId,
+                    fileName = finalFileName,
+                    sourceUrl = url,
+                    mimeType = safeMime
+                )
+            }.onFailure {
+                Toast.makeText(context, "다운로드 실패: ${it.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -120,47 +128,60 @@ object BrowserActivityBridge {
         context: Context,
         dataUrl: String,
         suggestedName: String,
-        mimeType: String? = null
+        mimeType: String? = null,
+        sourceUrl: String = ""
     ) {
         val mainHandler = Handler(Looper.getMainLooper())
-        runCatching {
-            val commaIdx = dataUrl.indexOf(',')
-            val header = if (commaIdx > 0) dataUrl.substring(0, commaIdx) else ""
-            val base64Body = if (commaIdx > 0) dataUrl.substring(commaIdx + 1) else dataUrl
-            val detectedMime = mimeType?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
-                ?: Regex("data:([^;]+);").find(header)?.groupValues?.getOrNull(1)
-                ?: "application/octet-stream"
-            val bytes = Base64.decode(base64Body, Base64.DEFAULT)
-            val safeName = suggestedName
-                .ifBlank { "download_${System.currentTimeMillis()}" }
-                .replace(Regex("""[\\/:*?"<>|]"""), "_")
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, safeName)
-                    put(MediaStore.Downloads.MIME_TYPE, detectedMime)
-                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                    put(MediaStore.Downloads.IS_PENDING, 1)
+        val commaIdx = dataUrl.indexOf(',')
+        val header = if (commaIdx > 0) dataUrl.substring(0, commaIdx) else ""
+        val detectedMime = mimeType?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
+            ?: Regex("data:([^;]+);").find(header)?.groupValues?.getOrNull(1)
+            ?: "application/octet-stream"
+        val cleanName = DownloadCenter.resolveCleanFileName(
+            url = sourceUrl.ifBlank { dataUrl },
+            contentDisposition = null,
+            mimeType = detectedMime,
+            suggestedDownloadAttr = suggestedName
+        )
+        mainHandler.post {
+            DownloadCenter.checkDuplicateOrProceed(context, cleanName, detectedMime) { finalName ->
+                runCatching {
+                    val base64Body = if (commaIdx > 0) dataUrl.substring(commaIdx + 1) else dataUrl
+                    val bytes = Base64.decode(base64Body, Base64.DEFAULT)
+                    var savedUriStr = ""
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val values = ContentValues().apply {
+                            put(MediaStore.Downloads.DISPLAY_NAME, finalName)
+                            put(MediaStore.Downloads.MIME_TYPE, detectedMime)
+                            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                            put(MediaStore.Downloads.IS_PENDING, 1)
+                        }
+                        val resolver = context.contentResolver
+                        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                            ?: error("MediaStore 파일 생성 실패")
+                        resolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
+                        values.clear()
+                        values.put(MediaStore.Downloads.IS_PENDING, 0)
+                        resolver.update(uri, values, null, null)
+                        savedUriStr = uri.toString()
+                    } else {
+                        @Suppress("DEPRECATION")
+                        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        if (!dir.exists()) dir.mkdirs()
+                        val f = File(dir, finalName)
+                        f.writeBytes(bytes)
+                        savedUriStr = Uri.fromFile(f).toString()
+                    }
+                    DownloadCenter.registerCompletedImmediate(
+                        fileName = finalName,
+                        sourceUrl = sourceUrl.ifBlank { "data:" },
+                        mimeType = detectedMime,
+                        sizeBytes = bytes.size.toLong(),
+                        contentUri = savedUriStr
+                    )
+                }.onFailure { err ->
+                    Toast.makeText(context, "Blob 다운로드 실패: ${err.message}", Toast.LENGTH_SHORT).show()
                 }
-                val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                    ?: error("MediaStore 파일 생성 실패")
-                resolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
-                values.clear()
-                values.put(MediaStore.Downloads.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-            } else {
-                @Suppress("DEPRECATION")
-                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                if (!dir.exists()) dir.mkdirs()
-                File(dir, safeName).writeBytes(bytes)
-            }
-            mainHandler.post {
-                Toast.makeText(context, "다운로드 완료: $safeName", Toast.LENGTH_SHORT).show()
-            }
-        }.onFailure { err ->
-            mainHandler.post {
-                Toast.makeText(context, "Blob 다운로드 실패: ${err.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
