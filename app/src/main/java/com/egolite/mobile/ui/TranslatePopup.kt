@@ -1,6 +1,10 @@
 package com.egolite.mobile.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -35,6 +39,8 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -79,8 +85,8 @@ fun ChromeStyleTranslatePopup(
 
     AnimatedVisibility(
         visible = state.visible,
-        enter = fadeIn() + slideInVertically { -it / 2 },
-        exit = fadeOut() + slideOutVertically { -it / 2 }
+        enter = fadeIn(tween(140)) + slideInVertically(animationSpec = EgoMotion.intOffsetSpring) { -it } + scaleIn(animationSpec = EgoMotion.bouncySpring(), initialScale = 0.86f),
+        exit = fadeOut(tween(120)) + slideOutVertically(animationSpec = tween(160)) { -it / 2 } + scaleOut(animationSpec = tween(140), targetScale = 0.90f)
     ) {
         // 슬림 알약 캡슐형 번역 바
         Surface(
@@ -95,6 +101,7 @@ fun ChromeStyleTranslatePopup(
             Row(
                 modifier = Modifier
                     .height(40.dp)
+                    .animateContentSize(animationSpec = EgoMotion.intSizeSpring)
                     .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -383,4 +390,150 @@ private fun LanguageRow(
             }
         }
     }
+}
+
+
+/**
+ * 주소줄 번역 버튼 길게 누르기(Long-press) 시 표시되는 번역 설정 팝업
+ */
+@Composable
+fun TranslateSettingsPopupDialog(
+    engine: TranslationEngine,
+    defaultTargetLang: String,
+    offerTranslate: Boolean,
+    currentHost: String,
+    alwaysTranslateSite: Boolean,
+    onChangeEngine: (TranslationEngine) -> Unit,
+    onChangeDefaultTarget: (String) -> Unit,
+    onToggleOfferTranslate: (Boolean) -> Unit,
+    onToggleAlwaysTranslateSite: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val quickLangs = listOf(
+        "ko" to "한국어",
+        "en" to "영어",
+        "ja" to "일본어",
+        "zh-CN" to "중국어(간체)",
+        "es" to "스페인어"
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Translate,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text("번역 설정", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "번역 엔진",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    listOf(
+                        TranslationEngine.ONLINE_GOOGLE to ("온라인 Google 번역" to "빠르고 자연스러운 실시간 번역"),
+                        TranslationEngine.OFFLINE_MLKIT to ("오프라인 ML Kit 번역" to "네트워크 없이 기기 내 자체 번역")
+                    ).forEach { (eng, labels) ->
+                        val sel = engine == eng
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { onChangeEngine(eng) }
+                                .padding(horizontal = 4.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = sel, onClick = { onChangeEngine(eng) })
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Column {
+                                Text(labels.first, fontSize = 13.5.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal)
+                                Text(labels.second, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                Text(
+                    text = "기본 번역 언어",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    quickLangs.forEach { (code, name) ->
+                        val sel = defaultTargetLang == code
+                        Surface(
+                            shape = CircleShape,
+                            color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .border(
+                                    1.dp,
+                                    if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                    CircleShape
+                                )
+                                .clip(CircleShape)
+                                .clickable { onChangeDefaultTarget(code) }
+                        ) {
+                            Text(
+                                text = name,
+                                fontSize = 12.sp,
+                                fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
+                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("번역 제안 표시", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                        Text("외국어 페이지 방문 시 번역 안내", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = offerTranslate, onCheckedChange = onToggleOfferTranslate)
+                }
+
+                if (currentHost.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("이 사이트 항상 자동 번역", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                            Text(currentHost, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Switch(checked = alwaysTranslateSite, onCheckedChange = { onToggleAlwaysTranslateSite() })
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("닫기") }
+        }
+    )
 }
