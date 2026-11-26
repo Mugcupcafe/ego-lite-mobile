@@ -2,6 +2,15 @@ package com.egolite.mobile.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import kotlin.math.abs
+import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -75,6 +84,8 @@ import com.egolite.mobile.browser.DownloadStatus
 import com.egolite.mobile.browser.DuplicateDownloadPrompt
 import java.util.Calendar
 
+const val DOWNLOADS_URL = "ego://downloads"
+
 @Composable
 fun ChromeDownloadStatusBanner(
     banner: DownloadBannerState,
@@ -98,12 +109,45 @@ fun ChromeDownloadStatusBanner(
             append(rec.sourceHost.ifBlank { rec.fileName })
         }
 
+        val scope = rememberCoroutineScope()
+        val density = LocalDensity.current
+        val dismissThresholdPx = with(density) { 92.dp.toPx() }
+        val swipeX = remember(rec.id, banner.isCompleted) { Animatable(0f) }
+
         Surface(
             shape = RoundedCornerShape(22.dp),
             color = cardBg,
             shadowElevation = 8.dp,
             modifier = Modifier
                 .widthIn(min = 320.dp, max = 460.dp)
+                .graphicsLayer {
+                    translationX = swipeX.value
+                    alpha = (1f - (abs(swipeX.value) / (dismissThresholdPx * 2.2f))).coerceIn(0.15f, 1f)
+                }
+                .pointerInput(rec.id, banner.isCompleted) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            scope.launch { swipeX.snapTo(swipeX.value + dragAmount) }
+                        },
+                        onDragEnd = {
+                            scope.launch {
+                                if (abs(swipeX.value) >= dismissThresholdPx) {
+                                    val target = if (swipeX.value >= 0f) dismissThresholdPx * 4.5f else -dismissThresholdPx * 4.5f
+                                    swipeX.animateTo(target, animationSpec = tween(160))
+                                    onDismiss()
+                                } else {
+                                    swipeX.animateTo(0f, animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f))
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch {
+                                swipeX.animateTo(0f, animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f))
+                            }
+                        }
+                    )
+                }
                 .clickable {
                     if (banner.isCompleted) onOpenFile(rec) else onOpenDetails()
                     onDismiss()
@@ -240,9 +284,12 @@ fun ChromeDuplicateDownloadDialog(
 
 @Composable
 fun ChromeDownloadsScreen(
+    embeddedInTab: Boolean = false,
     onDismiss: () -> Unit
 ) {
-    BackHandler { onDismiss() }
+    if (!embeddedInTab) {
+        BackHandler { onDismiss() }
+    }
     val context = LocalContext.current
     val records by DownloadCenter.records.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
@@ -298,10 +345,12 @@ fun ChromeDownloadsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onDismiss) {
-                    EgoIcon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "닫기")
+                if (!embeddedInTab) {
+                    IconButton(onClick = onDismiss) {
+                        EgoIcon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "닫기")
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
                 }
-                Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = "다운로드",
                     fontSize = 22.sp,
