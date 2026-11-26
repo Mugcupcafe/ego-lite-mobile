@@ -169,7 +169,8 @@ fun ChromeTabSwitcherOverlay(
                 thumbnail = thumbnails[tabId],
                 style = style,
                 particleCount = prefs.vanishParticleCount,
-                durationMs = prefs.vanishDurationMs
+                durationMs = prefs.vanishDurationMs,
+                maxFps = prefs.vanishMaxFps
             )
         )
     }
