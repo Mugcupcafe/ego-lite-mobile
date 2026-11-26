@@ -1,6 +1,6 @@
 workflows:
   android-ego-lite-mobile:
-    name: ego-lite-mobile v1.0.0.b (Release R8 + Rust arm64-v8a · Free M2)
+    name: ego-lite-mobile v1.0.0.c (Release R8 + Rust arm64-v8a · Free M2)
     max_build_duration: 30
     instance_type: mac_mini_m2
     environment:
