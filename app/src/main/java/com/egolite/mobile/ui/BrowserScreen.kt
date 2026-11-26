@@ -1,6 +1,8 @@
 package com.egolite.mobile.ui
 
 import android.graphics.Bitmap
+import androidx.compose.ui.platform.LocalView
+import android.view.RoundedCorner
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
@@ -388,11 +390,7 @@ fun BrowserScreen() {
             if (isWebPage) showAdBlockDialog = true else showChromeSettings = true
         })
         add(ChromeMenuItemSpec("다운로드", Icons.Default.DownloadDone) {
-            runCatching {
-                context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
-            }.onFailure {
-                Toast.makeText(context, "다운로드 앱을 열 수 없습니다", Toast.LENGTH_SHORT).show()
-            }
+            SpaceManager.openDownloadsTab(activeSpace.id)
         })
         add(ChromeMenuItemSpec("북마크", Icons.Default.StarBorder) { showBookmarkManager = true })
         add(ChromeMenuItemSpec("북마크 바 표시", Icons.Default.BookmarkBorder, checked = prefs.showBookmarkBar, isToggleCheckbox = true) {
@@ -1339,288 +1337,302 @@ fun BrowserScreen() {
                     , symbolSize = 20.dp)
                 }
 
-                // 조건부 경고 배지: MCP 연결 끊김일 때만 주소창과 광고차단 버튼 사이에 붉은색으로 표시
-                if (prefs.showMcpBadgeButton && isMcpDisconnected) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Row(
-                        modifier = Modifier
-                            .height(32.dp)
-                            .clip(CircleShape)
-                            .background(EgoDangerRed.copy(alpha = 0.12f))
-                            .border(1.dp, EgoDangerRed.copy(alpha = 0.45f), CircleShape)
-                            .clickable { showMcpDrawer = true }
-                            .padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        EgoIcon(
-                            imageVector = Icons.Default.LinkOff,
-                            contentDescription = "MCP 연결 끊김",
-                            modifier = Modifier.size(15.dp),
-                            tint = EgoDangerRed
-                        , symbolSize = 15.dp)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "MCP 끊김",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = EgoDangerRed
-                        )
-                    }
+                // 사용자 커스텀 순서(prefs.toolbarButtonOrder)에 따라 주소창 우측 버튼 동적 배치
+                val defaultTbOrder = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+                val effectiveTbOrder = remember(prefs.toolbarButtonOrder) {
+                    val known = prefs.toolbarButtonOrder.filter { it in defaultTbOrder }
+                    known + defaultTbOrder.filter { it !in known }
                 }
-
-                // MCP 연결 시에만 주소창과 광고차단 사이에 아이콘 전용 AI 명령 버튼 표시
-                AnimatedVisibility(
-                    visible = prefs.showAiCommandButton && runtimeState.connectionState == McpConnectionState.CONNECTED,
-                    enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.78f, animationSpec = EgoMotion.bouncySpring()),
-                    exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.78f, animationSpec = tween(140))
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .pressBounceScale(0.88f)
-                                .clip(CircleShape)
-                                .background(
-                                    if (showAiCommandPopup) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
-                                    shape = CircleShape
-                                )
-                                .clickable {
-                                    aiPopupSpaceId = null
-                                    aiPopupTabId = null
-                                    showAiCommandPopup = !showAiCommandPopup
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            EgoIcon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "AI 명령 팝업 열기",
-                                tint = if (showAiCommandPopup) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                filled = showAiCommandPopup,
-                                modifier = Modifier.size(19.dp)
-                            , symbolSize = 19.dp)
-                            if (mcpPendingCount > 0) {
+                effectiveTbOrder.forEach { tbKey ->
+                    when (tbKey) {
+                        "MCP" -> {
+                            if (prefs.showMcpBadgeButton && isMcpDisconnected) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .clip(CircleShape)
+                                        .background(EgoDangerRed.copy(alpha = 0.12f))
+                                        .border(1.dp, EgoDangerRed.copy(alpha = 0.45f), CircleShape)
+                                        .clickable { showMcpDrawer = true }
+                                        .padding(horizontal = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    EgoIcon(
+                                        imageVector = Icons.Default.LinkOff,
+                                        contentDescription = "MCP 연결 끊김",
+                                        modifier = Modifier.size(15.dp),
+                                        tint = EgoDangerRed,
+                                        symbolSize = 15.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "MCP 끊김",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = EgoDangerRed
+                                    )
+                                }
+                            }
+                        }
+                        "AI" -> {
+                            AnimatedVisibility(
+                                visible = prefs.showAiCommandButton && runtimeState.connectionState == McpConnectionState.CONNECTED,
+                                enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.78f, animationSpec = EgoMotion.bouncySpring()),
+                                exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.78f, animationSpec = tween(140))
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .pressBounceScale(0.88f)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (showAiCommandPopup) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
+                                            )
+                                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), CircleShape)
+                                            .clickable {
+                                                aiPopupSpaceId = null
+                                                aiPopupTabId = null
+                                                showAiCommandPopup = !showAiCommandPopup
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        EgoIcon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = "AI 명령 팝업 열기",
+                                            tint = if (showAiCommandPopup) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                            filled = showAiCommandPopup,
+                                            modifier = Modifier.size(19.dp),
+                                            symbolSize = 19.dp
+                                        )
+                                        if (mcpPendingCount > 0) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(top = 5.dp, end = 5.dp)
+                                                    .size(7.dp)
+                                                    .clip(CircleShape)
+                                                    .background(EgoEmerald)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "ADBLOCK" -> {
+                            if (prefs.showAdBlockButton) {
                                 Box(
                                     modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(top = 5.dp, end = 5.dp)
-                                        .size(7.dp)
+                                        .size(42.dp)
                                         .clip(CircleShape)
-                                        .background(EgoEmerald)
-                                )
+                                        .combinedClickable(
+                                            onClick = {
+                                                if (currentHost.isNotBlank() && adBlockState.globalEnabled) {
+                                                    AdBlockEngine.toggleWhitelistForHost(currentHost)
+                                                } else {
+                                                    val next = !adBlockState.globalEnabled
+                                                    AdBlockEngine.setGlobalEnabled(next)
+                                                    SpaceManager.updatePreferences { it.copy(adBlockEnabled = next) }
+                                                }
+                                                SpaceManager.reload(activeSpace.id)
+                                            },
+                                            onLongClick = { showAdBlockDialog = true }
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    EgoIcon(
+                                        imageVector = Icons.Default.Shield,
+                                        contentDescription = "광고 차단 (길게 눌러 상세 설정)",
+                                        tint = if (isSiteAdBlockOn) MaterialTheme.colorScheme.primary else mutedIconColor,
+                                        filled = isSiteAdBlockOn
+                                    )
+                                    if (isSiteAdBlockOn && pageBlockedCount > 0) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(top = 4.dp, end = 2.dp)
+                                                .clip(CircleShape)
+                                                .background(EgoDangerRed)
+                                                .padding(horizontal = 4.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = pageBlockedCount.coerceAtMost(99).toString(),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = androidx.compose.ui.graphics.Color.White
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                // 광고 차단 (짧게: 현재 사이트 ON/OFF + 새로고침, 길게: 크롬 확장 스타일 팝업)
-                if (prefs.showAdBlockButton) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .combinedClickable(
-                            onClick = {
-                                if (currentHost.isNotBlank() && adBlockState.globalEnabled) {
-                                    AdBlockEngine.toggleWhitelistForHost(currentHost)
-                                } else {
-                                    val next = !adBlockState.globalEnabled
-                                    AdBlockEngine.setGlobalEnabled(next)
-                                    SpaceManager.updatePreferences { it.copy(adBlockEnabled = next) }
+                        "TRANSLATE" -> {
+                            if (prefs.showTranslateButton) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(CircleShape)
+                                        .combinedClickable(
+                                            onClick = {
+                                                if (translateState.visible) {
+                                                    translateState = translateState.copy(visible = false)
+                                                } else {
+                                                    triggerTranslation(translateState.sourceLang, translateState.targetLang)
+                                                }
+                                            },
+                                            onLongClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                showTranslateSettingsDialog = true
+                                            }
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    EgoIcon(
+                                        imageVector = Icons.Default.Translate,
+                                        contentDescription = "페이지 번역 (길게 눌러 번역 설정)",
+                                        tint = if (translateState.isTranslated) MaterialTheme.colorScheme.primary else activeIconColor
+                                    )
                                 }
-                                SpaceManager.reload(activeSpace.id)
-                            },
-                            onLongClick = { showAdBlockDialog = true }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    EgoIcon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = "광고 차단 (길게 눌러 상세 설정)",
-                        tint = if (isSiteAdBlockOn) MaterialTheme.colorScheme.primary else mutedIconColor,
-                        filled = isSiteAdBlockOn
-                    )
-                    if (isSiteAdBlockOn && pageBlockedCount > 0) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(top = 4.dp, end = 2.dp)
-                                .clip(CircleShape)
-                                .background(EgoDangerRed)
-                                .padding(horizontal = 4.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = pageBlockedCount.coerceAtMost(99).toString(),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = androidx.compose.ui.graphics.Color.White
-                            )
+                            }
                         }
-                    }
-                }
-
-                }
-
-                // 크롬 스타일 번역 버튼 (짧게: 즉시 번역/팝업 토글, 길게: 번역 설정 팝업)
-                if (prefs.showTranslateButton) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .combinedClickable(
-                            onClick = {
-                                if (translateState.visible) {
-                                    translateState = translateState.copy(visible = false)
-                                } else {
-                                    triggerTranslation(translateState.sourceLang, translateState.targetLang)
-                                }
-                            },
-                            onLongClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                showTranslateSettingsDialog = true
-                            }
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    EgoIcon(
-                        imageVector = Icons.Default.Translate,
-                        contentDescription = "페이지 번역 (길게 눌러 번역 설정)",
-                        tint = if (translateState.isTranslated) MaterialTheme.colorScheme.primary else activeIconColor
-                    )
-                }
-
-                }
-
-                // 주/야간 다크모드 토글 (아이콘 모프 전환 + Micro-press)
-                if (prefs.showDarkModeButton) {
-                IconButton(
-                    onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
-                    modifier = Modifier.size(42.dp).pressBounceScale()
-                ) {
-                    AnimatedContent(
-                        targetState = isEffectiveDark,
-                        transitionSpec = {
-                            (scaleIn(EgoMotion.bouncySpring(), initialScale = 0.6f) + fadeIn(tween(150)))
-                                .togetherWith(scaleOut(tween(120), targetScale = 0.6f) + fadeOut(tween(110)))
-                        },
-                        label = "themeIconMorph"
-                    ) { darkNow ->
-                        EgoIcon(
-                            imageVector = if (darkNow) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "다크모드 전환",
-                            tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor,
-                            filled = darkNow
-                        )
-                    }
-                }
-
-                }
-
-                // 사용자 커스텀 툴바 버튼 (설정 → 디자인에서 개별 ON/OFF)
-                if (prefs.showNewTabToolbarButton) {
-                    IconButton(
-                        onClick = { SpaceManager.createTab(activeSpace.id, selectImmediately = true) },
-                        modifier = Modifier.size(40.dp).pressBounceScale()
-                    ) {
-                        EgoIcon(Icons.Default.Add, contentDescription = "새 탭", tint = activeIconColor)
-                    }
-                }
-                if (prefs.showShareButton && isWebPage) {
-                    IconButton(
-                        onClick = {
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
-                                putExtra(Intent.EXTRA_TEXT, activeTab.url)
-                            }
-                            context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
-                        },
-                        modifier = Modifier.size(40.dp).pressBounceScale()
-                    ) {
-                        EgoIcon(Icons.Default.Share, contentDescription = "공유", tint = activeIconColor)
-                    }
-                }
-                if (prefs.showFindInPageButton && isWebPage) {
-                    IconButton(
-                        onClick = { showFindBar = !showFindBar },
-                        modifier = Modifier.size(40.dp).pressBounceScale()
-                    ) {
-                        EgoIcon(Icons.Default.FindInPage, contentDescription = "페이지 내 찾기", tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor)
-                    }
-                }
-                if (prefs.showDesktopSiteButton) {
-                    IconButton(
-                        onClick = { SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) } },
-                        modifier = Modifier.size(40.dp).pressBounceScale()
-                    ) {
-                        EgoIcon(
-                            Icons.Default.DesktopWindows,
-                            contentDescription = "데스크톱 사이트 전환",
-                            tint = if (prefs.desktopModeEnabled) MaterialTheme.colorScheme.primary else mutedIconColor,
-                            filled = prefs.desktopModeEnabled
-                        )
-                    }
-                }
-                if (prefs.showReaderModeButton && isWebPage) {
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                runCatching {
-                                    val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
-                                    val md = JSONObject(raw).optString("markdown", "")
-                                    readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                        "DARKMODE" -> {
+                            if (prefs.showDarkModeButton) {
+                                IconButton(
+                                    onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
+                                    modifier = Modifier.size(42.dp).pressBounceScale()
+                                ) {
+                                    AnimatedContent(
+                                        targetState = isEffectiveDark,
+                                        transitionSpec = {
+                                            (scaleIn(EgoMotion.bouncySpring(), initialScale = 0.6f) + fadeIn(tween(150)))
+                                                .togetherWith(scaleOut(tween(120), targetScale = 0.6f) + fadeOut(tween(110)))
+                                        },
+                                        label = "themeIconMorph"
+                                    ) { darkNow ->
+                                        EgoIcon(
+                                            imageVector = if (darkNow) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                            contentDescription = "다크모드 전환",
+                                            tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor,
+                                            filled = darkNow
+                                        )
+                                    }
                                 }
                             }
-                        },
-                        modifier = Modifier.size(40.dp).pressBounceScale()
-                    ) {
-                        EgoIcon(Icons.Default.MenuBook, contentDescription = "읽기 모드", tint = activeIconColor)
-                    }
-                }
-                if (prefs.showProfileAvatarButton) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .pressBounceScale()
-                            .clip(CircleShape)
-                            .clickable {
-                                settingsInitialCategory = SettingsCategory.ACCOUNT
-                                showChromeSettings = true
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (googleAccount.isSignedIn && googleAvatar != null) {
-                            Image(
-                                bitmap = googleAvatar!!.asImageBitmap(),
-                                contentDescription = "Google 프로필",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .clip(CircleShape)
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (googleAccount.isSignedIn) googleAccount.displayName.take(1).uppercase().ifBlank { "G" } else "G",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
+                        }
+                        "NEW_TAB" -> {
+                            if (prefs.showNewTabToolbarButton) {
+                                IconButton(
+                                    onClick = { SpaceManager.createTab(activeSpace.id, selectImmediately = true) },
+                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                ) {
+                                    EgoIcon(Icons.Default.Add, contentDescription = "새 탭", tint = activeIconColor)
+                                }
+                            }
+                        }
+                        "SHARE" -> {
+                            if (prefs.showShareButton && isWebPage) {
+                                IconButton(
+                                    onClick = {
+                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
+                                            putExtra(Intent.EXTRA_TEXT, activeTab.url)
+                                        }
+                                        context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
+                                    },
+                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                ) {
+                                    EgoIcon(Icons.Default.Share, contentDescription = "공유", tint = activeIconColor)
+                                }
+                            }
+                        }
+                        "FIND" -> {
+                            if (prefs.showFindInPageButton && isWebPage) {
+                                IconButton(
+                                    onClick = { showFindBar = !showFindBar },
+                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                ) {
+                                    EgoIcon(Icons.Default.FindInPage, contentDescription = "페이지 내 찾기", tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor)
+                                }
+                            }
+                        }
+                        "DESKTOP" -> {
+                            if (prefs.showDesktopSiteButton) {
+                                IconButton(
+                                    onClick = { SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) } },
+                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                ) {
+                                    EgoIcon(
+                                        Icons.Default.DesktopWindows,
+                                        contentDescription = "데스크톱 사이트 전환",
+                                        tint = if (prefs.desktopModeEnabled) MaterialTheme.colorScheme.primary else mutedIconColor,
+                                        filled = prefs.desktopModeEnabled
+                                    )
+                                }
+                            }
+                        }
+                        "READER" -> {
+                            if (prefs.showReaderModeButton && isWebPage) {
+                                IconButton(
+                                    onClick = {
+                                        scope.launch {
+                                            runCatching {
+                                                val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                                                val md = JSONObject(raw).optString("markdown", "")
+                                                readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                ) {
+                                    EgoIcon(Icons.Default.MenuBook, contentDescription = "읽기 모드", tint = activeIconColor)
+                                }
+                            }
+                        }
+                        "PROFILE" -> {
+                            if (prefs.showProfileAvatarButton) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .pressBounceScale()
+                                        .clip(CircleShape)
+                                        .clickable {
+                                            settingsInitialCategory = SettingsCategory.ACCOUNT
+                                            showChromeSettings = true
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (googleAccount.isSignedIn && googleAvatar != null) {
+                                        Image(
+                                            bitmap = googleAvatar!!.asImageBitmap(),
+                                            contentDescription = "Google 프로필",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = if (googleAccount.isSignedIn) googleAccount.displayName.take(1).uppercase().ifBlank { "G" } else "G",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1788,15 +1800,11 @@ fun BrowserScreen() {
                 )
             }
 
-            if (activeTab.isLoading && activeTab.progress in 1..99) {
-                LinearProgressIndicator(
-                    progress = { activeTab.progress / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(2.dp),
-                    color = if (activeSpace.type == SpaceType.AI) EgoEmerald else MaterialTheme.colorScheme.primary
-                )
-            }
+            IsolatedTabProgressBar(
+                isLoading = activeTab.isLoading,
+                progress = activeTab.progress,
+                isAiSpace = activeSpace.type == SpaceType.AI
+            )
 
             // AI Space Takeover 제어권 바
             if (activeSpace.type == SpaceType.AI &&
@@ -1828,8 +1836,26 @@ fun BrowserScreen() {
             }
 
             val activeSpaceAccent = parseSpaceColor(activeSpace.accentColorHex)
-            val canvasCornerDp = mainSwapCorner.value.coerceAtLeast(12f).dp
-            val canvasShape = RoundedCornerShape(canvasCornerDp)
+            val hostView = LocalView.current
+            val (deviceBottomLeftDp, deviceBottomRightDp) = remember(hostView, density) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val insets = hostView.rootWindowInsets
+                    val blPx = insets?.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_LEFT)?.radius ?: 0
+                    val brPx = insets?.getRoundedCorner(RoundedCorner.POSITION_BOTTOM_RIGHT)?.radius ?: 0
+                    val blDp = if (blPx > 0) ((blPx / density.density) - 3f).coerceIn(10f, 28f) else 16f
+                    val brDp = if (brPx > 0) ((brPx / density.density) - 3f).coerceIn(10f, 28f) else 16f
+                    blDp.dp to brDp.dp
+                } else {
+                    16.dp to 16.dp
+                }
+            }
+            val topCanvasCornerDp = mainSwapCorner.value.coerceAtLeast(14f).dp
+            val canvasShape = RoundedCornerShape(
+                topStart = topCanvasCornerDp,
+                topEnd = topCanvasCornerDp,
+                bottomStart = if (mainSwapCorner.value > 20f) mainSwapCorner.value.dp else deviceBottomLeftDp,
+                bottomEnd = if (mainSwapCorner.value > 20f) mainSwapCorner.value.dp else deviceBottomRightDp
+            )
             // 웹 캔버스 (AI Space일 때 상·하단 4모서리 모두 둥근 2dp 공간 색상 테두리 + 모프 전환)
             val canvasBorder = if (activeSpace.type == SpaceType.AI) {
                 Modifier
@@ -1885,6 +1911,17 @@ fun BrowserScreen() {
                             .clip(RoundedCornerShape(outCorner.value.coerceAtLeast(12f).dp))
                     )
                 }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = activeTab.url == DOWNLOADS_URL,
+                    enter = fadeIn(tween(150)),
+                    exit = fadeOut(tween(120))
+                ) {
+                    ChromeDownloadsScreen(
+                        embeddedInTab = true,
+                        onDismiss = { SpaceManager.navigate(activeSpace.id, NEW_TAB_URL) }
+                    )
+                }
+
                 androidx.compose.animation.AnimatedVisibility(
                     visible = activeTab.url == NEW_TAB_URL,
                     enter = fadeIn(tween(180)),
@@ -1979,16 +2016,19 @@ fun BrowserScreen() {
                 }
                 else -> null
             }
-            val pillHalfW = with(density) { 86.dp.roundToPx() }
-            val pillHalfH = with(density) { 19.dp.roundToPx() }
+            val exactTabWidthPx = (draggedTabWidthPx - with(density) { 4.dp.toPx() })
+                .coerceIn(with(density) { 68.dp.toPx() }, with(density) { 240.dp.toPx() })
+            val exactTabWidthDp = with(density) { exactTabWidthPx.toDp() }
+            val pillHalfW = (exactTabWidthPx / 2f).roundToInt()
+            val pillHalfH = with(density) { 18.dp.roundToPx() }
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.primaryContainer,
                 shadowElevation = 14.dp,
                 modifier = Modifier
                     .offset { IntOffset(localX - pillHalfW, localY - pillHalfH) }
-                    .height(38.dp)
-                    .widthIn(min = 128.dp, max = 224.dp)
+                    .height(36.dp)
+                    .width(if (badgeText != null) (exactTabWidthDp + 56.dp).coerceAtMost(268.dp) else exactTabWidthDp)
                     .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
                     .graphicsLayer {
                         val s = if (inDropMode) 0.96f else 1.06f
@@ -2373,7 +2413,7 @@ fun BrowserScreen() {
         // 크롬 스타일 상단 다운로드 상태 팝업 ("파일 1개 다운로드 중..." / "다운로드 1개 완료")
         ChromeDownloadStatusBanner(
             banner = downloadBanner,
-            onOpenDetails = { showDownloadsScreen = true },
+            onOpenDetails = { SpaceManager.openDownloadsTab(activeSpace.id) },
             onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
             onDismiss = { DownloadCenter.dismissBanner() },
             modifier = Modifier
@@ -2624,8 +2664,6 @@ private fun M3ExpressiveLoadingIndicator(
     modifier: Modifier = Modifier
 ) {
     val visible = isRefreshing || pullProgress > 0.04f
-    if (!visible) return
-
     val containerColor = MaterialTheme.colorScheme.primaryContainer
     val shapeColor = MaterialTheme.colorScheme.onPrimaryContainer
 
@@ -2667,11 +2705,17 @@ private fun M3ExpressiveLoadingIndicator(
         label = "m3RefreshScale"
     )
 
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.6f, animationSpec = tween(150)),
+        exit = fadeOut(tween(240)) + scaleOut(targetScale = 0.35f, animationSpec = tween(240)) + slideOutVertically(tween(240)) { -it / 2 },
+        modifier = modifier
+    ) {
     Surface(
         shape = CircleShape,
         color = containerColor,
         shadowElevation = 5.dp,
-        modifier = modifier
+        modifier = Modifier
             .graphicsLayer {
                 translationY = animatedOffsetY * density
                 scaleX = animatedScale
@@ -2729,6 +2773,7 @@ private fun M3ExpressiveLoadingIndicator(
                 drawPath(path = path, color = shapeColor)
             }
         }
+    }
     }
 }
 
@@ -2887,3 +2932,20 @@ private fun WebViewHostContainer(
     }
 }
 
+
+@Composable
+private fun IsolatedTabProgressBar(
+    isLoading: Boolean,
+    progress: Int,
+    isAiSpace: Boolean
+) {
+    if (isLoading && progress in 1..99) {
+        LinearProgressIndicator(
+            progress = { progress / 100f },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp),
+            color = if (isAiSpace) EgoEmerald else MaterialTheme.colorScheme.primary
+        )
+    }
+}
