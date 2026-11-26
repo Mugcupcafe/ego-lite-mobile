@@ -204,7 +204,8 @@ object EgoWebViewFactory {
                 var style = document.createElement('style');
                 style.id = 'ego-dark-mode-css';
                 style.textContent =
-                    'html { filter: invert(0.92) hue-rotate(180deg) !important; background-color: #131314 !important; } ' +
+                    'html { height: auto !important; min-height: 100% !important; background-color: #131314 !important; filter: invert(0.92) hue-rotate(180deg) !important; } ' +
+                    'body { height: auto !important; min-height: 100% !important; background-color: #ffffff !important; } ' +
                     'img, video, picture, canvas, iframe, [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }';
                 head.appendChild(style);
             } catch (e) {}
