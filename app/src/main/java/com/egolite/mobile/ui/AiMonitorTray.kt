@@ -1,5 +1,6 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.foundation.Canvas
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
@@ -23,7 +24,6 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
