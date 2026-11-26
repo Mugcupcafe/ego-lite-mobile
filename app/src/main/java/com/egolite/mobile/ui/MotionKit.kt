@@ -132,16 +132,22 @@ fun TabEqualizerIcon(
         animationSpec = tween(durationMillis = 220),
         label = "eqBarColor"
     )
-    val infinite = rememberInfiniteTransition(label = "eqWaveLoop")
-    val phase by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = (2.0 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1050, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "eqPhase"
-    )
+    // 발열 최적화: 실제 오디오가 재생 중이고 음소거가 아닐 때만 파형 루프 구동
+    val isActivelyWaving = isPlaying && !isMuted
+    val phase = if (isActivelyWaving) {
+        val infinite = rememberInfiniteTransition(label = "eqWaveLoop")
+        infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = (2.0 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1050, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "eqPhase"
+        ).value
+    } else {
+        0f
+    }
 
     Box(
         modifier = Modifier
