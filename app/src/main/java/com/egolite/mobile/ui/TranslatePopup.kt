@@ -373,7 +373,7 @@ private fun LanguagePickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { dismissCapsuleWithCapture() }) { Text("닫기") }
+            TextButton(onClick = { onDismiss() }) { Text("닫기") }
         }
     )
 }
