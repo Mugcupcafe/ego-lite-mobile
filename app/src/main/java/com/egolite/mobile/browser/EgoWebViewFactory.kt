@@ -792,9 +792,10 @@ object EgoWebViewFactory {
     fun captureThumbnailBitmap(webView: WebView): Bitmap? {
         if (webView.width <= 0 || webView.height <= 0) return null
         return runCatching {
-            val scale = 0.25f
-            val tw = (webView.width * scale).toInt().coerceIn(160, 420)
-            val th = (webView.height * scale).toInt().coerceIn(160, 520)
+            val aspect = webView.width.toFloat() / webView.height.toFloat()
+            val maxDim = 380f
+            val tw = if (aspect >= 1f) maxDim.toInt() else (maxDim * aspect).toInt().coerceIn(120, 380)
+            val th = if (aspect >= 1f) (maxDim / aspect).toInt().coerceIn(120, 380) else maxDim.toInt()
             val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.RGB_565)
             val canvas = Canvas(bmp)
             canvas.save()
