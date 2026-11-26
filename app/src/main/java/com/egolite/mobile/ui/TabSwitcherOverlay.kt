@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -170,7 +171,19 @@ fun ChromeTabSwitcherOverlay(
                 style = style,
                 particleCount = prefs.vanishParticleCount,
                 durationMs = prefs.vanishDurationMs,
-                maxFps = prefs.vanishMaxFps
+                maxFps = prefs.vanishMaxFps,
+                direction = prefs.vanishDirection,
+                edgeGlow = prefs.vanishEdgeGlow,
+                curlStrength = prefs.vanishCurlStrength,
+                shockwaveStrength = prefs.vanishShockwaveStrength,
+                airDrag = prefs.vanishAirDrag,
+                additiveGlow = prefs.vanishAdditiveGlow,
+                zPerspective = prefs.vanishZPerspective,
+                sizeAdaptiveDuration = prefs.vanishSizeAdaptiveDuration,
+            sandRibbonDensity = prefs.sandRibbonDensity,
+            sandSilverRatio = prefs.sandSilverRatio,
+            sandWindStrength = prefs.sandWindStrength,
+            sandSwirlStrength = prefs.sandSwirlStrength
             )
         )
     }
@@ -582,7 +595,7 @@ fun ChromeTabSwitcherOverlay(
                                 selectionMode = selectionMode,
                                 isSelectedForBatch = isPicked,
                                 modifier = Modifier
-                                    .animateItem()
+                                    .animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f))
                                     .onGloballyPositioned { coords ->
                                         tabCardRootRects[tab.id] = coords.boundsInRoot()
                                     }
