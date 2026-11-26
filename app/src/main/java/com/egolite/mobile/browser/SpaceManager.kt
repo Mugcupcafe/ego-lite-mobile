@@ -613,7 +613,6 @@ object SpaceManager {
 
     fun removeHistoryItem(id: String) {
         _history.update { prev -> prev.filterNot { it.id == id } }
-        persistSessionState()
     }
 
     fun getActiveWebView(spaceId: String): WebView? {
