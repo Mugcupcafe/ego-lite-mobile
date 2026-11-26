@@ -1,5 +1,12 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -121,7 +128,15 @@ fun ChromeOmniboxOverlay(
     val topDp = with(density) { anchorTopPx.coerceAtLeast(0f).toDp() }
     val widthDp = with(density) { anchorWidthPx.coerceAtLeast(320f).toDp() }
 
-    // 전체 반투명 검정 배경 제거 — 투명 바깥 터치 감지 + 커진 검색창의 다층 그림자만 강조
+    // 실제 주소창 카드 자체가 아래로 모프 확장되도록 카드 단위 애니메이션 구동
+    var morphExpanded by remember { mutableStateOf(false) }
+    val morphShadow = remember { Animatable(2f) }
+    LaunchedEffect(Unit) {
+        morphExpanded = true
+        morphShadow.animateTo(14f, animationSpec = EgoMotion.smoothSpring())
+    }
+
+    // 전체 반투명 검정 배경 제거 — 투명 바깥 터치 감지 + 커진 검색창의 깔끔한 그림자만 적용
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -132,23 +147,26 @@ fun ChromeOmniboxOverlay(
         contentAlignment = if (hasAnchor) Alignment.TopStart else Alignment.TopCenter
     ) {
         Surface(
-            modifier = if (hasAnchor) {
+            modifier = (if (hasAnchor) {
                 Modifier
                     .padding(start = startDp, top = topDp)
                     .width(widthDp)
-                    .clickable(enabled = false) {}
             } else {
                 Modifier
                     .padding(top = 48.dp, start = 16.dp, end = 16.dp)
                     .widthIn(max = 580.dp)
                     .fillMaxWidth()
-                    .clickable(enabled = false) {}
-            },
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 14.dp
+            })
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(22.dp))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) {},
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            shadowElevation = morphShadow.value.dp
         ) {
-            Column(modifier = Modifier.padding(bottom = 10.dp)) {
+            Column(modifier = Modifier.padding(bottom = if (morphExpanded) 10.dp else 0.dp)) {
                 // 1) 상단 검색 / URL 입력 바
                 Row(
                     modifier = Modifier
@@ -203,6 +221,12 @@ fun ChromeOmniboxOverlay(
                     }
                 }
 
+                AnimatedVisibility(
+                    visible = morphExpanded,
+                    enter = expandVertically(animationSpec = EgoMotion.intSizeSpring, expandFrom = Alignment.Top) + fadeIn(tween(150)),
+                    exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) + fadeOut(tween(120))
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
                 HorizontalDivider()
 
                 // 2) 현재 페이지 빠른 액션 행 (제목 + URL + 공유 · 복사 · URL 편집)
@@ -396,6 +420,9 @@ fun ChromeOmniboxOverlay(
                                 }
                             }
                         }
+                    }
+                }
+
                     }
                 }
             }
