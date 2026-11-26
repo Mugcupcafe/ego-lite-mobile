@@ -424,21 +424,124 @@ object DownloadCenter {
         persistRecords(emptyList())
     }
 
-    fun openFile(context: Context, uriString: String, mimeType: String) {
+    private fun resolveEffectiveMimeType(rawMime: String, fileName: String): String {
+        val cleanRaw = rawMime.substringBefore(';').trim().lowercase(Locale.ROOT)
+        val ext = fileName.substringAfterLast('.', "").trim().lowercase(Locale.ROOT)
+        val byExt = when (ext) {
+            "txt", "log", "md", "markdown", "ini", "cfg", "conf", "yaml", "yml",
+            "kt", "java", "py", "js", "ts", "css", "sh", "gradle", "properties" -> "text/plain"
+            "html", "htm" -> "text/html"
+            "csv" -> "text/csv"
+            "json" -> "application/json"
+            "xml" -> "application/xml"
+            "pdf" -> "application/pdf"
+            "zip" -> "application/zip"
+            "rar" -> "application/vnd.rar"
+            "7z" -> "application/x-7z-compressed"
+            "apk" -> "application/vnd.android.package-archive"
+            "doc" -> "application/msword"
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "xls" -> "application/vnd.ms-excel"
+            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "ppt" -> "application/vnd.ms-powerpoint"
+            "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            "hwp" -> "application/x-hwp"
+            "hwpx" -> "application/haansofthwpx"
+            "mp3" -> "audio/mpeg"
+            "m4a" -> "audio/mp4"
+            "wav" -> "audio/wav"
+            "mp4" -> "video/mp4"
+            "mkv" -> "video/x-matroska"
+            "webm" -> "video/webm"
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            "gif" -> "image/gif"
+            else -> if (ext.isNotBlank()) MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) else null
+        }
+        if (!byExt.isNullOrBlank()) return byExt
+        if (cleanRaw.isNotBlank() && cleanRaw != "application/octet-stream" && cleanRaw != "*/*") {
+            return cleanRaw
+        }
+        return "*/*"
+    }
+
+    private fun recoverDownloadUri(context: Context, fileName: String): Uri? {
+        if (fileName.isBlank() || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return runCatching {
+            val projection = arrayOf(MediaStore.Downloads._ID)
+            val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ?"
+            context.contentResolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                arrayOf(fileName),
+                "${MediaStore.Downloads.DATE_MODIFIED} DESC"
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
+                    ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+                } else null
+            }
+        }.getOrNull()
+    }
+
+    fun openFile(
+        context: Context,
+        uriString: String,
+        mimeType: String,
+        fileName: String = "",
+        forceChooser: Boolean = true
+    ) {
         val uri = uriString.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
+            ?: recoverDownloadUri(context, fileName)
         if (uri == null) {
-            runCatching { context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) }
+            Toast.makeText(context, "파일 위치를 찾을 수 없어 다운로드 폴더를 엽니다.", Toast.LENGTH_SHORT).show()
+            runCatching {
+                context.startActivity(
+                    Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
             return
         }
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mimeType.ifBlank { "*/*" })
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        val resolvedMime = resolveEffectiveMimeType(mimeType, fileName)
+
+        fun launchView(targetMime: String, useChooser: Boolean): Boolean {
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, targetMime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val pm = context.packageManager
+            val hasHandler = runCatching {
+                pm.queryIntentActivities(viewIntent, 0).isNotEmpty()
+            }.getOrDefault(false)
+            if (!hasHandler) return false
+
+            return runCatching {
+                val launchIntent = if (useChooser) {
+                    Intent.createChooser(viewIntent, "연결 프로그램 선택").apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                } else {
+                    viewIntent.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                }
+                context.startActivity(launchIntent)
+                true
+            }.getOrDefault(false)
         }
+
+        // 1) 보정된 MIME으로 외부 앱 선택기(또는 직접 실행)
+        if (launchView(resolvedMime, forceChooser)) return
+        // 2) 매칭 앱이 없으면 */* 와일드카드로 외부 앱 선택기 재시도
+        if (resolvedMime != "*/*" && launchView("*/*", true)) return
+        // 3) 최후 폴백: 시스템 다운로드 폴더
         runCatching {
-            context.startActivity(intent)
+            context.startActivity(
+                Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
         }.onFailure {
-            runCatching { context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) }
-                .onFailure { Toast.makeText(context, "파일을 열 수 있는 앱이 없습니다.", Toast.LENGTH_SHORT).show() }
+            Toast.makeText(context, "이 파일을 열 수 있는 앱이 설치되어 있지 않습니다.", Toast.LENGTH_SHORT).show()
         }
     }
 
