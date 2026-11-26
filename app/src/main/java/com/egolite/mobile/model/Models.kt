@@ -43,10 +43,30 @@ enum class TranslationEngine {
     OFFLINE_MLKIT
 }
 
+enum class MonitorPosition(val label: String) {
+    TOP("상단"),
+    LEFT("좌측")
+}
+
+enum class EqualizerMorphStyle(val label: String, val description: String) {
+    DOTS_SLASH(
+        "A안 · 3점 안착 + 컷아웃 사선",
+        "3단 바가 3개의 둥근 점으로 탄성 수축하며 대각선 사선이 그려짐"
+    ),
+    FLAT_MERGE(
+        "B안 · 중앙 플랫바 병합 + 사선",
+        "3단 바가 중앙 수평선으로 납작하게 병합되며 대각선 사선이 겹쳐짐"
+    ),
+    PAUSE_MORPH(
+        "C안 · 일시정지(II) 유기적 정렬",
+        "사선 없이 가운데 바가 사라지고 양옆 바가 일시정지 형태로 정렬"
+    )
+}
+
 enum class ThemeMode(val label: String) {
     SYSTEM("시스템 기본값"),
-    LIGHT("라이트"),
-    DARK("다크")
+    LIGHT("밝게"),
+    DARK("어둡게")
 }
 
 enum class SearchEngine(
@@ -79,7 +99,9 @@ data class BrowserTab(
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val parentTabId: String? = null,
-    val isIncognito: Boolean = false
+    val isIncognito: Boolean = false,
+    val isPlayingAudio: Boolean = false,
+    val isMuted: Boolean = false
 )
 
 data class BrowserSpace(
@@ -124,13 +146,17 @@ data class LongPressTarget(
 data class BrowserPreferences(
     val adBlockEnabled: Boolean = true,
     val darkModeEnabled: Boolean = false,
-    val themeMode: ThemeMode = ThemeMode.LIGHT,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val darkenWebsitesWhenPossible: Boolean = true,
     val desktopModeEnabled: Boolean = true,
     val showBookmarkBar: Boolean = false,
     val showHomeButton: Boolean = true,
     val homepageEnabled: Boolean = true,
     val homepageUrl: String = "ego://newtab",
     val maxAiSpaces: Int = 5,
+    val monitorPosPortrait: MonitorPosition = MonitorPosition.TOP,
+    val monitorPosLandscape: MonitorPosition = MonitorPosition.LEFT,
+    val equalizerMorphStyle: EqualizerMorphStyle = EqualizerMorphStyle.DOTS_SLASH,
     val inactiveTabDays: Int = 21,
     val translationEngine: TranslationEngine = TranslationEngine.ONLINE_GOOGLE,
     val offerTranslate: Boolean = true,
