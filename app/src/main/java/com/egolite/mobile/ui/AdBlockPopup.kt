@@ -101,8 +101,8 @@ fun AdBlockControlDialog(
         AnimatedVisibility(
             visible = cardVisible,
             enter = fadeIn(tween(130)) + scaleIn(
-                animationSpec = EgoMotion.smoothSpring(),
-                initialScale = 0.72f,
+                animationSpec = EgoMotion.morphSpring(),
+                initialScale = 0.30f,
                 transformOrigin = TransformOrigin(1f, 0f)
             ),
             exit = fadeOut(tween(100)) + scaleOut(
