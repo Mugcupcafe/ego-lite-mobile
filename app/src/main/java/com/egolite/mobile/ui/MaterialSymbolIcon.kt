@@ -16,6 +16,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -234,8 +237,23 @@ fun McpHubStatusIcon(
     cutoutColor: Color = MaterialTheme.colorScheme.surface,
     symbolSize: Dp = 22.dp
 ) {
+    val slashProg by animateFloatAsState(
+        targetValue = if (disconnected) 1f else 0f,
+        animationSpec = tween(durationMillis = 280),
+        label = "mcpSlashMorph"
+    )
+    val hubScale by animateFloatAsState(
+        targetValue = if (disconnected) 0.94f else 1.0f,
+        animationSpec = EgoMotion.bouncySpring(),
+        label = "mcpHubScale"
+    )
     Box(
-        modifier = modifier.size(symbolSize),
+        modifier = modifier
+            .size(symbolSize)
+            .graphicsLayer {
+                scaleX = hubScale
+                scaleY = hubScale
+            },
         contentAlignment = Alignment.Center
     ) {
         EgoIcon(
@@ -246,13 +264,16 @@ fun McpHubStatusIcon(
             filled = !disconnected,
             symbolSize = symbolSize
         )
-        if (disconnected) {
+        if (slashProg > 0.01f) {
             Canvas(modifier = Modifier.size(symbolSize)) {
                 val w = size.width
                 val h = size.height
-                val start = Offset(w * 0.13f, h * 0.13f)
-                val end = Offset(w * 0.87f, h * 0.87f)
-                // 배경색 컷아웃 스트로크로 허브 노드와 사선을 선명하게 분리
+                val sx = w * 0.13f
+                val sy = h * 0.13f
+                val ex = sx + (w * 0.74f) * slashProg
+                val ey = sy + (h * 0.74f) * slashProg
+                val start = Offset(sx, sy)
+                val end = Offset(ex, ey)
                 drawLine(
                     color = cutoutColor,
                     start = start,
