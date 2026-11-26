@@ -1,6 +1,7 @@
 package com.egolite.mobile.ui
 
 import android.graphics.Bitmap
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.Image
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -63,6 +64,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.spring
 import androidx.compose.ui.zIndex
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -204,6 +206,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.browser.AdBlockEngine
+import com.egolite.mobile.browser.DownloadCenter
 import com.egolite.mobile.browser.BrowserActivityBridge
 import com.egolite.mobile.browser.BrowserScripts
 import org.json.JSONObject
@@ -274,6 +277,9 @@ fun BrowserScreen() {
     var returningSpaceId by remember { mutableStateOf<String?>(null) }
     var showMcpDrawer by remember { mutableStateOf(false) }
     var showChromeSettings by remember { mutableStateOf(false) }
+    var showDownloadsScreen by remember { mutableStateOf(false) }
+    val downloadBanner by DownloadCenter.banner.collectAsState()
+    val duplicateDownloadPrompt by DownloadCenter.duplicatePrompt.collectAsState()
     var settingsInitialCategory by remember { mutableStateOf(SettingsCategory.ACCOUNT) }
     val googleAccount by GoogleAccountManager.state.collectAsState()
     val googleAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
@@ -1139,12 +1145,12 @@ fun BrowserScreen() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     if (tab.isIncognito) {
-                                        Icon(
+                                        EgoIcon(
                                             imageVector = Icons.Default.VisibilityOff,
                                             contentDescription = "시크릿 탭",
                                             modifier = Modifier.size(14.dp),
                                             tint = MaterialTheme.colorScheme.primary
-                                        )
+                                        , symbolSize = 14.dp)
                                         Spacer(modifier = Modifier.width(5.dp))
                                     }
                                     if (tab.isPlayingAudio || tab.isMuted) {
@@ -1192,14 +1198,14 @@ fun BrowserScreen() {
                                         }
                                     }
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Icon(
+                                    EgoIcon(
                                         imageVector = Icons.Default.Close,
                                         contentDescription = "탭 닫기",
                                         modifier = Modifier
                                             .size(16.dp)
                                             .clickable { SpaceManager.closeTab(activeSpace.id, tab.id) },
                                         tint = if (isSelected) tabFg.copy(alpha = 0.78f) else mutedIconColor
-                                    )
+                                    , symbolSize = 16.dp)
                                 }
                                 }
                             }
@@ -1211,7 +1217,7 @@ fun BrowserScreen() {
                             onClick = { SpaceManager.createTab(activeSpace.id) },
                             modifier = Modifier.size(36.dp).pressBounceScale()
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = "새 탭",
                                 tint = activeIconColor
@@ -1234,7 +1240,7 @@ fun BrowserScreen() {
                     onClick = { SpaceManager.goHome(activeSpace.id) },
                     modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(
+                    EgoIcon(
                         Icons.Default.Home,
                         contentDescription = "홈",
                         tint = activeIconColor
@@ -1246,7 +1252,7 @@ fun BrowserScreen() {
                     enabled = canBackOrClose,
                     modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(
+                    EgoIcon(
                         Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "뒤로",
                         tint = if (canBackOrClose) activeIconColor else mutedIconColor.copy(alpha = 0.45f)
@@ -1257,7 +1263,7 @@ fun BrowserScreen() {
                     enabled = activeTab.canGoForward,
                     modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(
+                    EgoIcon(
                         Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = "앞으로",
                         tint = if (activeTab.canGoForward) activeIconColor else mutedIconColor.copy(alpha = 0.45f)
@@ -1267,7 +1273,7 @@ fun BrowserScreen() {
                     onClick = { SpaceManager.reload(activeSpace.id) },
                     modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = "새로고침", tint = activeIconColor)
+                    EgoIcon(Icons.Default.Refresh, contentDescription = "새로고침", tint = activeIconColor)
                 }
 
                 // 주소창 (터치 시 실제 주소창과 정확히 같은 위치·길이로 Omnibox 오버레이 표시)
@@ -1301,12 +1307,12 @@ fun BrowserScreen() {
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = if (activeTab.isIncognito) Icons.Default.VisibilityOff else Icons.Default.Lock,
                         contentDescription = if (activeTab.isIncognito) "시크릿 모드" else null,
                         modifier = Modifier.size(15.dp),
                         tint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor
-                    )
+                    , symbolSize = 15.dp)
                     Spacer(modifier = Modifier.width(8.dp))
                     val isNewTab = activeTab.url == NEW_TAB_URL
                     Text(
@@ -1317,7 +1323,7 @@ fun BrowserScreen() {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    Icon(
+                    EgoIcon(
                         imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
                         contentDescription = "북마크 추가/수정",
                         tint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor,
@@ -1330,7 +1336,7 @@ fun BrowserScreen() {
                                     showAddBookmarkDialog = true
                                 }
                             }
-                    )
+                    , symbolSize = 20.dp)
                 }
 
                 // 조건부 경고 배지: MCP 연결 끊김일 때만 주소창과 광고차단 버튼 사이에 붉은색으로 표시
@@ -1346,12 +1352,12 @@ fun BrowserScreen() {
                             .padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
+                        EgoIcon(
                             imageVector = Icons.Default.LinkOff,
                             contentDescription = "MCP 연결 끊김",
                             modifier = Modifier.size(15.dp),
                             tint = EgoDangerRed
-                        )
+                        , symbolSize = 15.dp)
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = "MCP 끊김",
@@ -1391,12 +1397,13 @@ fun BrowserScreen() {
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.AutoAwesome,
                                 contentDescription = "AI 명령 팝업 열기",
                                 tint = if (showAiCommandPopup) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                                filled = showAiCommandPopup,
                                 modifier = Modifier.size(19.dp)
-                            )
+                            , symbolSize = 19.dp)
                             if (mcpPendingCount > 0) {
                                 Box(
                                     modifier = Modifier
@@ -1434,10 +1441,11 @@ fun BrowserScreen() {
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Shield,
                         contentDescription = "광고 차단 (길게 눌러 상세 설정)",
-                        tint = if (isSiteAdBlockOn) MaterialTheme.colorScheme.primary else mutedIconColor
+                        tint = if (isSiteAdBlockOn) MaterialTheme.colorScheme.primary else mutedIconColor,
+                        filled = isSiteAdBlockOn
                     )
                     if (isSiteAdBlockOn && pageBlockedCount > 0) {
                         Box(
@@ -1482,7 +1490,7 @@ fun BrowserScreen() {
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Translate,
                         contentDescription = "페이지 번역 (길게 눌러 번역 설정)",
                         tint = if (translateState.isTranslated) MaterialTheme.colorScheme.primary else activeIconColor
@@ -1505,10 +1513,11 @@ fun BrowserScreen() {
                         },
                         label = "themeIconMorph"
                     ) { darkNow ->
-                        Icon(
+                        EgoIcon(
                             imageVector = if (darkNow) Icons.Default.LightMode else Icons.Default.DarkMode,
                             contentDescription = "다크모드 전환",
-                            tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor
+                            tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor,
+                            filled = darkNow
                         )
                     }
                 }
@@ -1521,7 +1530,7 @@ fun BrowserScreen() {
                         onClick = { SpaceManager.createTab(activeSpace.id, selectImmediately = true) },
                         modifier = Modifier.size(40.dp).pressBounceScale()
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "새 탭", tint = activeIconColor)
+                        EgoIcon(Icons.Default.Add, contentDescription = "새 탭", tint = activeIconColor)
                     }
                 }
                 if (prefs.showShareButton && isWebPage) {
@@ -1536,7 +1545,7 @@ fun BrowserScreen() {
                         },
                         modifier = Modifier.size(40.dp).pressBounceScale()
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = "공유", tint = activeIconColor)
+                        EgoIcon(Icons.Default.Share, contentDescription = "공유", tint = activeIconColor)
                     }
                 }
                 if (prefs.showFindInPageButton && isWebPage) {
@@ -1544,7 +1553,7 @@ fun BrowserScreen() {
                         onClick = { showFindBar = !showFindBar },
                         modifier = Modifier.size(40.dp).pressBounceScale()
                     ) {
-                        Icon(Icons.Default.FindInPage, contentDescription = "페이지 내 찾기", tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor)
+                        EgoIcon(Icons.Default.FindInPage, contentDescription = "페이지 내 찾기", tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor)
                     }
                 }
                 if (prefs.showDesktopSiteButton) {
@@ -1552,10 +1561,11 @@ fun BrowserScreen() {
                         onClick = { SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) } },
                         modifier = Modifier.size(40.dp).pressBounceScale()
                     ) {
-                        Icon(
+                        EgoIcon(
                             Icons.Default.DesktopWindows,
                             contentDescription = "데스크톱 사이트 전환",
-                            tint = if (prefs.desktopModeEnabled) MaterialTheme.colorScheme.primary else mutedIconColor
+                            tint = if (prefs.desktopModeEnabled) MaterialTheme.colorScheme.primary else mutedIconColor,
+                            filled = prefs.desktopModeEnabled
                         )
                     }
                 }
@@ -1572,7 +1582,7 @@ fun BrowserScreen() {
                         },
                         modifier = Modifier.size(40.dp).pressBounceScale()
                     ) {
-                        Icon(Icons.Default.MenuBook, contentDescription = "읽기 모드", tint = activeIconColor)
+                        EgoIcon(Icons.Default.MenuBook, contentDescription = "읽기 모드", tint = activeIconColor)
                     }
                 }
                 if (prefs.showProfileAvatarButton) {
@@ -1707,7 +1717,7 @@ fun BrowserScreen() {
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.MoreVert,
                         contentDescription = "브라우저 메뉴",
                         tint = activeIconColor
@@ -1745,17 +1755,17 @@ fun BrowserScreen() {
                         }
                     )
                     IconButton(onClick = { SpaceManager.findNextInPage(activeSpace.id, false) }) {
-                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "이전", tint = activeIconColor)
+                        EgoIcon(Icons.Default.KeyboardArrowUp, contentDescription = "이전", tint = activeIconColor)
                     }
                     IconButton(onClick = { SpaceManager.findNextInPage(activeSpace.id, true) }) {
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "다음", tint = activeIconColor)
+                        EgoIcon(Icons.Default.KeyboardArrowDown, contentDescription = "다음", tint = activeIconColor)
                     }
                     IconButton(onClick = {
                         findQuery = ""
                         SpaceManager.findInPage(activeSpace.id, "")
                         showFindBar = false
                     }) {
-                        Icon(Icons.Default.Close, contentDescription = "닫기", tint = activeIconColor)
+                        EgoIcon(Icons.Default.Close, contentDescription = "닫기", tint = activeIconColor)
                     }
                 }
             }
@@ -1906,7 +1916,7 @@ fun BrowserScreen() {
         }
 
         // 최상단 좌측 고정 알약 캡슐 (설정·전체 탭·리더 전체화면에서는 숨김)
-        if (!showChromeSettings && !showAllTabsDialog && readerMarkdown == null) {
+        if (!showChromeSettings && !showDownloadsScreen && !showAllTabsDialog && readerMarkdown == null) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -2050,12 +2060,12 @@ fun BrowserScreen() {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
+                        EgoIcon(
                             imageVector = Icons.Default.AutoAwesome,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
-                        )
+                        , symbolSize = 16.dp)
                         Text(
                             text = "방금 넘긴 '${info.third.take(16)}' · 지시 보내기",
                             fontSize = 12.5.sp,
@@ -2284,7 +2294,7 @@ fun BrowserScreen() {
                     ) {
                         Text("읽기 모드", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         IconButton(onClick = { readerMarkdown = null }) {
-                            Icon(Icons.Default.Close, contentDescription = "닫기")
+                            EgoIcon(Icons.Default.Close, contentDescription = "닫기")
                         }
                     }
                     HorizontalDivider()
@@ -2358,6 +2368,38 @@ fun BrowserScreen() {
                 showAllTabsDialog -> showAllTabsDialog = false
                 readerMarkdown != null -> readerMarkdown = null
             }
+        }
+
+        // 크롬 스타일 상단 다운로드 상태 팝업 ("파일 1개 다운로드 중..." / "다운로드 1개 완료")
+        ChromeDownloadStatusBanner(
+            banner = downloadBanner,
+            onOpenDetails = { showDownloadsScreen = true },
+            onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
+            onDismiss = { DownloadCenter.dismissBanner() },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 98.dp)
+                .zIndex(46f)
+        )
+
+        // 동일 파일 중복 다운로드 확인 팝업 (Chrome 1:1)
+        duplicateDownloadPrompt?.let { prompt ->
+            ChromeDuplicateDownloadDialog(
+                prompt = prompt,
+                onDismiss = { DownloadCenter.dismissDuplicatePrompt() }
+            )
+        }
+
+        // 인앱 다운로드 파일 관리 페이지 (M3 Expressive)
+        AnimatedVisibility(
+            visible = showDownloadsScreen,
+            modifier = Modifier.zIndex(50f),
+            enter = slideInHorizontally(EgoMotion.intOffsetSpring) { it / 3 } + fadeIn(tween(200)),
+            exit = slideOutHorizontally(tween(190)) { it / 3 } + fadeOut(tween(160))
+        ) {
+            ChromeDownloadsScreen(
+                onDismiss = { showDownloadsScreen = false }
+            )
         }
 
         AnimatedVisibility(
