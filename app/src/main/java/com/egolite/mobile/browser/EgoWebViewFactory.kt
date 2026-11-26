@@ -174,15 +174,40 @@ object EgoWebViewFactory {
 
     private const val APPLY_DARK_CSS_JS = """
         (function() {
-            if (document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running, #cf-wrapper')) return;
-            var existing = document.getElementById('ego-dark-mode-css');
-            if (existing) return;
-            var style = document.createElement('style');
-            style.id = 'ego-dark-mode-css';
-            style.textContent =
-                'html { filter: invert(0.92) hue-rotate(180deg) !important; background-color: #121212 !important; } ' +
-                'img, video, picture, canvas, iframe, [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }';
-            (document.head || document.documentElement).appendChild(style);
+            try {
+                if (document.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running, #cf-wrapper')) return;
+                var head = document.head || document.documentElement;
+                if (!document.getElementById('ego-color-scheme-meta')) {
+                    var meta = document.createElement('meta');
+                    meta.id = 'ego-color-scheme-meta';
+                    meta.name = 'color-scheme';
+                    meta.content = 'dark';
+                    head.appendChild(meta);
+                }
+                function parseRgb(c) {
+                    if (!c || c === 'transparent' || c === 'rgba(0, 0, 0, 0)') return null;
+                    var m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+                    if (!m) return null;
+                    var a = m[4] !== undefined ? parseFloat(m[4]) : 1;
+                    if (a < 0.15) return null;
+                    return (0.299 * parseInt(m[1], 10) + 0.587 * parseInt(m[2], 10) + 0.114 * parseInt(m[3], 10)) / 255.0;
+                }
+                var bodyLum = document.body ? parseRgb(getComputedStyle(document.body).backgroundColor) : null;
+                var htmlLum = document.documentElement ? parseRgb(getComputedStyle(document.documentElement).backgroundColor) : null;
+                var lum = bodyLum !== null ? bodyLum : (htmlLum !== null ? htmlLum : 1.0);
+                var existing = document.getElementById('ego-dark-mode-css');
+                if (lum <= 0.45) {
+                    if (existing) existing.remove();
+                    return;
+                }
+                if (existing) return;
+                var style = document.createElement('style');
+                style.id = 'ego-dark-mode-css';
+                style.textContent =
+                    'html { filter: invert(0.92) hue-rotate(180deg) !important; background-color: #131314 !important; } ' +
+                    'img, video, picture, canvas, iframe, [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }';
+                head.appendChild(style);
+            } catch (e) {}
         })();
     """
 
@@ -190,6 +215,8 @@ object EgoWebViewFactory {
         (function() {
             var existing = document.getElementById('ego-dark-mode-css');
             if (existing) existing.remove();
+            var meta = document.getElementById('ego-color-scheme-meta');
+            if (meta) meta.remove();
         })();
     """
 
@@ -635,11 +662,15 @@ object EgoWebViewFactory {
 
     fun applyDarkMode(webView: WebView, enabled: Boolean) {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            // 크로미움 네이티브 Algorithmic Darkening 단독 사용 (CSS invert 중첩으로 인한 이중 반전·회색 뭉개짐 방지)
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, enabled)
-            webView.evaluateJavascript(REMOVE_DARK_CSS_JS, null)
+        }
+        if (enabled) {
+            webView.evaluateJavascript(APPLY_DARK_CSS_JS, null)
+            webView.postDelayed({
+                runCatching { webView.evaluateJavascript(APPLY_DARK_CSS_JS, null) }
+            }, 350L)
         } else {
-            webView.evaluateJavascript(if (enabled) APPLY_DARK_CSS_JS else REMOVE_DARK_CSS_JS, null)
+            webView.evaluateJavascript(REMOVE_DARK_CSS_JS, null)
         }
     }
 
