@@ -139,6 +139,7 @@ fun McpSettingsDrawer(
                             captureLayer.record { this@drawWithContent.drawContent() }
                             drawLayer(captureLayer)
                         }
+                        .harmonyRimGlow(enabled = true, cornerRadius = 24.dp, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
                         .clickable(
                             indication = null,
