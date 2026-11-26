@@ -397,7 +397,8 @@ object SpaceManager {
 
     fun createTab(spaceId: String, initialUrl: String = "ego://newtab", incognito: Boolean = false, selectImmediately: Boolean = true): BrowserTab {
         val currentActive = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId
-        val tab = BrowserTab(title = if (incognito) "시크릿 탭" else "새 탭", url = initialUrl, parentTabId = currentActive, isIncognito = incognito)
+        val tabTitle = when { initialUrl == "ego://downloads" -> "다운로드"; incognito -> "시크릿 탭"; else -> "새 탭" }
+        val tab = BrowserTab(title = tabTitle, url = initialUrl, parentTabId = currentActive, isIncognito = incognito)
         _spaces.update { list ->
             list.map { space ->
                 if (space.id == spaceId) {
@@ -588,6 +589,16 @@ object SpaceManager {
     fun goForward(spaceId: String) {
         val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return
         mainHandler.post { webViews[tabId]?.goForward() }
+    }
+
+    fun openDownloadsTab(spaceId: String) {
+        val sp = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        val existing = sp.tabs.firstOrNull { it.url == "ego://downloads" }
+        if (existing != null) {
+            selectTab(spaceId, existing.id)
+        } else {
+            createTab(spaceId, initialUrl = "ego://downloads", selectImmediately = true)
+        }
     }
 
     fun getActiveWebView(spaceId: String): WebView? {
