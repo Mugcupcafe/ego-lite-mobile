@@ -1,5 +1,6 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -132,28 +133,36 @@ fun AiCommandOverlay(
         enter = fadeIn(tween(170)),
         exit = fadeOut(tween(150))
     ) {
+        // 전체 반투명 검정 배경 제거 — AI 버튼을 덮으며 확장되는 모프 팝업
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.56f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = onDismiss
                 )
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(top = 50.dp, start = 16.dp, end = 16.dp),
             contentAlignment = Alignment.TopCenter
         ) {
             AnimatedVisibility(
                 visible = visible,
-                enter = scaleIn(initialScale = 0.96f, animationSpec = EgoMotion.smoothSpring()) + fadeIn(tween(160)),
-                exit = scaleOut(targetScale = 0.96f, animationSpec = tween(140)) + fadeOut(tween(140))
+                enter = scaleIn(
+                    initialScale = 0.30f,
+                    transformOrigin = TransformOrigin(0.86f, 0.04f),
+                    animationSpec = EgoMotion.smoothSpring()
+                ) + fadeIn(tween(150)),
+                exit = scaleOut(
+                    targetScale = 0.30f,
+                    transformOrigin = TransformOrigin(0.86f, 0.04f),
+                    animationSpec = tween(170)
+                ) + fadeOut(tween(130))
             ) {
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 8.dp,
-                    shadowElevation = 20.dp,
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    tonalElevation = 6.dp,
+                    shadowElevation = 24.dp,
                     modifier = Modifier
                         .widthIn(max = 620.dp)
                         .fillMaxWidth()
