@@ -54,7 +54,12 @@ object EgoWebViewFactory {
         (function() {
             if (window.__egoScrollGuardInstalled) return;
             window.__egoScrollGuardInstalled = true;
-            function checkInnerScroll(target) {
+            var lastScrollCheckMs = 0;
+            var lastScrolledSent = null;
+            function checkInnerScroll(target, force) {
+                var now = Date.now();
+                if (!force && now - lastScrollCheckMs < 100) return;
+                lastScrollCheckMs = now;
                 var scrolled = (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0) > 2;
                 var el = target && target.nodeType === 1 ? target : null;
                 while (!scrolled && el && el !== document && el !== document.documentElement) {
@@ -64,14 +69,16 @@ object EgoWebViewFactory {
                     }
                     el = el.parentElement;
                 }
+                if (scrolled === lastScrolledSent) return;
+                lastScrolledSent = scrolled;
                 try {
                     if (window.EgoScrollBridge && window.EgoScrollBridge.setInnerScrolled) {
                         window.EgoScrollBridge.setInnerScrolled(scrolled);
                     }
                 } catch (e) {}
             }
-            document.addEventListener('touchstart', function(e) { checkInnerScroll(e.target); }, { passive: true, capture: true });
-            document.addEventListener('scroll', function(e) { checkInnerScroll(e.target); }, { passive: true, capture: true });
+            document.addEventListener('touchstart', function(e) { checkInnerScroll(e.target, true); }, { passive: true, capture: true });
+            document.addEventListener('scroll', function(e) { checkInnerScroll(e.target, false); }, { passive: true, capture: true });
             function checkMedia() {
                 try {
                     var list = document.querySelectorAll('video, audio');
@@ -91,7 +98,8 @@ object EgoWebViewFactory {
             document.addEventListener('pause', checkMedia, true);
             document.addEventListener('ended', checkMedia, true);
             document.addEventListener('volumechange', checkMedia, true);
-            setInterval(checkMedia, 2500);
+            document.addEventListener('visibilitychange', checkMedia, false);
+            setTimeout(checkMedia, 1200);
         })();
     """
 
