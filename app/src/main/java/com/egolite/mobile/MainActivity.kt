@@ -248,6 +248,13 @@ class MainActivity : ComponentActivity() {
         SpaceManager.resumeActiveWebView()
     }
 
+    override fun onStop() {
+        super.onStop()
+        if (!isInPictureInPictureMode) {
+            SpaceManager.pauseIdleWebViewsForBackground()
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
