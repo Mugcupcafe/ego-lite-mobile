@@ -1,5 +1,6 @@
 package com.egolite.mobile.browser
 
+import android.webkit.URLUtil
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -259,9 +260,50 @@ object EgoWebViewFactory {
 
         syncUserAgentAndClientHints(webView, desktopModeProvider())
 
-        // 파일 다운로드 (PDF, 이미지, APK 등)
+        // blob: / data: 다운로드 전용 JS 브리지 등록
+        webView.addJavascriptInterface(
+            object {
+                @android.webkit.JavascriptInterface
+                fun onBlobDownloaded(dataUrl: String, fileName: String, mimeType: String) {
+                    BrowserActivityBridge.saveBase64Download(context, dataUrl, fileName, mimeType)
+                }
+            },
+            "__egoBlobDownload"
+        )
+
+        // 파일 다운로드 (HTTP/HTTPS + blob:/data: URI 모두 지원)
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-            BrowserActivityBridge.enqueueDownload(context, url, userAgent, contentDisposition, mimeType)
+            val guessedName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            when {
+                url.startsWith("data:", ignoreCase = true) -> {
+                    BrowserActivityBridge.saveBase64Download(context, url, guessedName, mimeType)
+                }
+                url.startsWith("blob:", ignoreCase = true) -> {
+                    val safeUrlJs = JSONObject.quote(url)
+                    val safeNameJs = JSONObject.quote(guessedName)
+                    val safeMimeJs = JSONObject.quote(mimeType ?: "application/octet-stream")
+                    val js = """
+                        (function() {
+                            fetch($safeUrlJs)
+                                .then(function(r) { return r.blob(); })
+                                .then(function(b) {
+                                    var reader = new FileReader();
+                                    reader.onloadend = function() {
+                                        if (window.__egoBlobDownload && reader.result) {
+                                            window.__egoBlobDownload.onBlobDownloaded(String(reader.result), $safeNameJs, b.type || $safeMimeJs);
+                                        }
+                                    };
+                                    reader.readAsDataURL(b);
+                                })
+                                .catch(function(e) { console.error('ego blob dl error', e); });
+                        })();
+                    """.trimIndent()
+                    webView.evaluateJavascript(js, null)
+                }
+                else -> {
+                    BrowserActivityBridge.enqueueDownload(context, url, userAgent, contentDisposition, mimeType)
+                }
+            }
         }
 
         // 롱프레스 팝업의 정확한 터치 위치 계산용 좌표 기록 (WebView 기본 스크롤/클릭 동작은 그대로 통과)
