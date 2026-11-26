@@ -1,5 +1,7 @@
 package com.egolite.mobile.browser
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -15,29 +17,36 @@ import java.io.StringReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 data class NewsArticleItem(
     val title: String,
     val url: String,
     val source: String,
-    val pubDate: String
+    val sourceUrl: String,
+    val pubDate: String,
+    val relativeTime: String,
+    val imageUrl: String = ""
 )
 
 data class TrendIdeaItem(
     val title: String,
     val url: String,
     val source: String,
+    val sourceUrl: String,
     val score: Int,
     val comments: Int,
     val normalizedHeat: Float
 )
 
-enum class NewsCategory(val label: String, val query: String?) {
-    TOP("주요 뉴스", null),
-    TECH("IT · AI", "인공지능 OR 스마트폰 OR 테크"),
-    ECONOMY("경제 · 증시", "경제 OR 반도체 OR 증시"),
-    HOT("인기 이슈", "트렌드 OR 신제품")
+enum class NewsCategory(val label: String) {
+    TOP("주요 뉴스"),
+    TECH("IT · AI"),
+    ECONOMY("경제 · 증시"),
+    HOT("인기 이슈")
 }
 
 object DiscoverFeedRepository {
@@ -47,8 +56,10 @@ object DiscoverFeedRepository {
 
     private val newsCache = ConcurrentHashMap<NewsCategory, Pair<Long, List<NewsArticleItem>>>()
     private var trendsCache: Pair<Long, List<TrendIdeaItem>>? = null
+    private val imageCache = ConcurrentHashMap<String, Bitmap>()
+    private val failedImages = ConcurrentHashMap<String, Long>()
 
-    private fun httpGet(endpoint: String, timeoutMs: Int = 8_000): String? {
+    private fun httpGet(endpoint: String, timeoutMs: Int = 7_500, maxBytes: Int = 512_000): String? {
         return runCatching {
             val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -56,15 +67,71 @@ object DiscoverFeedRepository {
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
                 setRequestProperty("User-Agent", UA)
-                setRequestProperty("Accept", "application/rss+xml, application/xml, application/json, text/xml, */*")
+                setRequestProperty("Accept", "application/rss+xml, application/xml, application/json, text/html, */*")
             }
             try {
                 if (conn.responseCode !in 200..299) return null
-                BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { reader ->
+                    val sb = StringBuilder()
+                    val buf = CharArray(4096)
+                    var total = 0
+                    while (total < maxBytes) {
+                        val read = reader.read(buf)
+                        if (read <= 0) break
+                        sb.append(buf, 0, read)
+                        total += read
+                    }
+                    sb.toString()
+                }
             } finally {
                 conn.disconnect()
             }
         }.getOrNull()
+    }
+
+    suspend fun loadArticleImage(imageUrl: String?): Bitmap? {
+        if (imageUrl.isNullOrBlank() || !imageUrl.startsWith("http")) return null
+        imageCache[imageUrl]?.let { return it }
+        val lastFail = failedImages[imageUrl]
+        if (lastFail != null && System.currentTimeMillis() - lastFail < 180_000L) return null
+
+        return withContext(Dispatchers.IO) {
+            val bmp = runCatching {
+                val conn = (URL(imageUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    instanceFollowRedirects = true
+                    connectTimeout = 6_000
+                    readTimeout = 7_000
+                    setRequestProperty("User-Agent", UA)
+                    setRequestProperty("Accept", "image/webp,image/jpeg,image/png,image/*,*/*;q=0.8")
+                }
+                try {
+                    if (conn.responseCode !in 200..299) return@runCatching null
+                    val bytes = conn.inputStream.use { it.readBytes() }
+                    if (bytes.size < 200) return@runCatching null
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    var sample = 1
+                    while (bounds.outWidth / sample > 720) sample *= 2
+                    val opts = BitmapFactory.Options().apply {
+                        inSampleSize = sample
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull()
+
+            if (bmp != null) {
+                if (imageCache.size > 40) imageCache.clear()
+                imageCache[imageUrl] = bmp
+                failedImages.remove(imageUrl)
+            } else {
+                failedImages[imageUrl] = System.currentTimeMillis()
+            }
+            bmp
+        }
     }
 
     suspend fun fetchKoreaNews(category: NewsCategory, forceRefresh: Boolean = false): List<NewsArticleItem> {
@@ -75,24 +142,98 @@ object DiscoverFeedRepository {
             }
         }
         return withContext(Dispatchers.IO) {
-            val rssUrl = if (category.query == null) {
-                "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"
+            val feeds: List<Pair<String, String>> = when (category) {
+                NewsCategory.TOP -> listOf(
+                    "SBS 뉴스" to "https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=01&plink=RSSREADER",
+                    "연합뉴스" to "https://www.yna.co.kr/rss/news.xml",
+                    "GeekNews" to "https://news.hada.io/rss/news"
+                )
+                NewsCategory.TECH -> listOf(
+                    "GeekNews" to "https://news.hada.io/rss/news",
+                    "ZDNet Korea" to "https://feeds.feedburner.com/zdkorea",
+                    "SBS IT" to "https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=08&plink=RSSREADER"
+                )
+                NewsCategory.ECONOMY -> listOf(
+                    "SBS 경제" to "https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=02&plink=RSSREADER",
+                    "매일경제" to "https://www.mk.co.kr/rss/30100041/"
+                )
+                NewsCategory.HOT -> listOf(
+                    "SBS 문화" to "https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=07&plink=RSSREADER",
+                    "SBS 연예" to "https://news.sbs.co.kr/news/SectionRssFeed.do?sectionId=14&plink=RSSREADER",
+                    "GeekNews" to "https://news.hada.io/rss/news"
+                )
+            }
+
+            val combined = mutableListOf<NewsArticleItem>()
+            coroutineScope {
+                val results = feeds.map { (defaultSource, url) ->
+                    async(Dispatchers.IO) {
+                        val xml = httpGet(url) ?: return@async emptyList<NewsArticleItem>()
+                        parseRssOrAtom(xml, defaultSource).take(8)
+                    }
+                }.awaitAll()
+
+                // 언론사가 섞여 보이도록 라운드로빈 병합
+                val maxLen = results.maxOfOrNull { it.size } ?: 0
+                for (i in 0 until maxLen) {
+                    for (list in results) {
+                        list.getOrNull(i)?.let { combined.add(it) }
+                    }
+                }
+            }
+
+            // 사진이 없는 기사는 앞 10개에 한해 og:image 병렬 추출
+            val topList = combined.distinctBy { it.title }.take(16)
+            val enriched = coroutineScope {
+                topList.mapIndexed { idx, item ->
+                    async(Dispatchers.IO) {
+                        if (item.imageUrl.isNotBlank() || idx >= 10 || item.url.contains("news.google.com")) {
+                            item
+                        } else {
+                            val og = fetchOgImage(item.url)
+                            if (!og.isNullOrBlank()) item.copy(imageUrl = og) else item
+                        }
+                    }
+                }.awaitAll()
+            }
+
+            // 위 피드가 모두 비어있을 때만 Google News RSS 폴백
+            val finalItems = if (enriched.isNotEmpty()) {
+                enriched
             } else {
-                "https://news.google.com/rss/search?q=${URLEncoder.encode(category.query, "UTF-8")}&hl=ko&gl=KR&ceid=KR:ko"
+                val fallbackUrl = "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko"
+                val xml = httpGet(fallbackUrl)
+                if (xml != null) parseRssOrAtom(xml, "Google 뉴스").take(14) else emptyList()
             }
-            val xml = httpGet(rssUrl) ?: return@withContext emptyList()
-            val parsed = parseGoogleNewsRss(xml).take(12)
-            if (parsed.isNotEmpty()) {
-                newsCache[category] = System.currentTimeMillis() to parsed
+
+            if (finalItems.isNotEmpty()) {
+                newsCache[category] = System.currentTimeMillis() to finalItems
             }
-            parsed
+            finalItems
         }
     }
 
-    private fun parseGoogleNewsRss(xml: String): List<NewsArticleItem> {
+    private fun fetchOgImage(articleUrl: String): String? {
+        val html = httpGet(articleUrl, timeoutMs = 3_500, maxBytes = 28_000) ?: return null
+        val patterns = listOf(
+            Regex("""<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+            Regex("""<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']""", RegexOption.IGNORE_CASE),
+            Regex("""<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        )
+        for (p in patterns) {
+            val found = p.find(html)?.groupValues?.getOrNull(1)?.trim()
+            if (!found.isNullOrBlank() && found.startsWith("http")) {
+                return found.replace("&amp;", "&")
+            }
+        }
+        return null
+    }
+
+    private fun parseRssOrAtom(xml: String, defaultSource: String): List<NewsArticleItem> {
         val items = mutableListOf<NewsArticleItem>()
         runCatching {
             val factory = XmlPullParserFactory.newInstance()
+            factory.isNamespaceAware = false
             val parser = factory.newPullParser()
             parser.setInput(StringReader(xml))
             var inItem = false
@@ -100,45 +241,79 @@ object DiscoverFeedRepository {
             var link = ""
             var source = ""
             var pubDate = ""
+            var imageUrl = ""
+            var description = ""
             var currentTag = ""
             var event = parser.eventType
             while (event != XmlPullParser.END_DOCUMENT) {
                 when (event) {
                     XmlPullParser.START_TAG -> {
-                        currentTag = parser.name.orEmpty()
-                        if (currentTag == "item") {
+                        val name = parser.name.orEmpty().lowercase()
+                        currentTag = name
+                        if (name == "item" || name == "entry") {
                             inItem = true
                             title = ""
                             link = ""
                             source = ""
                             pubDate = ""
+                            imageUrl = ""
+                            description = ""
+                        } else if (inItem) {
+                            if (name == "enclosure" || name == "media:content" || name == "media:thumbnail") {
+                                val u = parser.getAttributeValue(null, "url").orEmpty().trim()
+                                val type = parser.getAttributeValue(null, "type").orEmpty().lowercase()
+                                if (u.startsWith("http") && (type.isBlank() || type.startsWith("image") || name.contains("media"))) {
+                                    if (imageUrl.isBlank()) imageUrl = u
+                                }
+                            } else if (name == "link") {
+                                val href = parser.getAttributeValue(null, "href").orEmpty().trim()
+                                if (href.startsWith("http") && link.isBlank()) link = href
+                            }
                         }
                     }
                     XmlPullParser.TEXT -> {
                         if (inItem) {
                             when (currentTag) {
                                 "title" -> title += parser.text.orEmpty()
-                                "link" -> link += parser.text.orEmpty()
+                                "link" -> if (link.isBlank()) link += parser.text.orEmpty()
                                 "source" -> source += parser.text.orEmpty()
-                                "pubDate" -> pubDate += parser.text.orEmpty()
+                                "pubdate", "published", "updated" -> pubDate += parser.text.orEmpty()
+                                "description", "content", "summary" -> description += parser.text.orEmpty()
                             }
                         }
                     }
                     XmlPullParser.END_TAG -> {
-                        if (parser.name == "item" && inItem) {
-                            val cleanTitle = title.trim()
-                            val splitIdx = cleanTitle.lastIndexOf(" - ")
-                            val finalTitle = if (splitIdx > 6) cleanTitle.substring(0, splitIdx).trim() else cleanTitle
-                            val finalSource = source.trim().ifBlank {
-                                if (splitIdx > 6) cleanTitle.substring(splitIdx + 3).trim() else "Google 뉴스"
+                        val name = parser.name.orEmpty().lowercase()
+                        if ((name == "item" || name == "entry") && inItem) {
+                            val cleanTitle = title.replace(Regex("<[^>]+>"), "").trim()
+                            val cleanLink = link.trim()
+                            if (imageUrl.isBlank() && description.isNotBlank()) {
+                                val imgMatch = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(description)
+                                val cand = imgMatch?.groupValues?.getOrNull(1)?.trim().orEmpty()
+                                if (cand.startsWith("http")) imageUrl = cand.replace("&amp;", "&")
                             }
-                            if (finalTitle.isNotBlank() && link.trim().startsWith("http")) {
+                            val splitIdx = cleanTitle.lastIndexOf(" - ")
+                            val finalTitle = if (defaultSource == "Google 뉴스" && splitIdx > 6) {
+                                cleanTitle.substring(0, splitIdx).trim()
+                            } else cleanTitle
+                            val finalSource = source.trim().ifBlank {
+                                if (defaultSource == "Google 뉴스" && splitIdx > 6) cleanTitle.substring(splitIdx + 3).trim()
+                                else defaultSource
+                            }
+                            if (finalTitle.isNotBlank() && cleanLink.startsWith("http")) {
+                                val hostUrl = runCatching {
+                                    val u = URL(cleanLink)
+                                    "${u.protocol}://${u.host}"
+                                }.getOrDefault(cleanLink)
                                 items.add(
                                     NewsArticleItem(
                                         title = finalTitle,
-                                        url = link.trim(),
+                                        url = cleanLink,
                                         source = finalSource,
-                                        pubDate = pubDate.trim().take(16)
+                                        sourceUrl = hostUrl,
+                                        pubDate = pubDate.trim(),
+                                        relativeTime = formatRelativeKoreanTime(pubDate.trim()),
+                                        imageUrl = imageUrl
                                     )
                                 )
                             }
@@ -153,8 +328,32 @@ object DiscoverFeedRepository {
         return items
     }
 
+    private fun formatRelativeKoreanTime(rawDate: String): String {
+        if (rawDate.isBlank()) return "오늘"
+        val formats = listOf(
+            "EEE, dd MMM yyyy HH:mm:ss Z",
+            "EEE, dd MMM yyyy HH:mm:ss z",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd HH:mm:ss"
+        )
+        var parsed: Date? = null
+        for (fmt in formats) {
+            parsed = runCatching { SimpleDateFormat(fmt, Locale.ENGLISH).parse(rawDate) }.getOrNull()
+            if (parsed != null) break
+        }
+        if (parsed == null) return "오늘"
+        val diffMin = ((System.currentTimeMillis() - parsed.time) / 60_000L).coerceAtLeast(0L)
+        return when {
+            diffMin < 2 -> "방금"
+            diffMin < 60 -> "${diffMin}분"
+            diffMin < 24 * 60 -> "${diffMin / 60}시간"
+            else -> "${diffMin / (24 * 60)}일"
+        }
+    }
+
     /**
-     * Last30Days 스타일 글로벌 트렌드 & 아이디어 피드 (Hacker News + Reddit AI/Tech 실시간 수집)
+     * Last30Days 스타일 글로벌 트렌드 & 아이디어 피드 (Hacker News + Reddit r/artificial 실시간 수집)
      */
     suspend fun fetchLast30DaysTrends(forceRefresh: Boolean = false): List<TrendIdeaItem> {
         val now = System.currentTimeMillis()
@@ -200,7 +399,8 @@ object DiscoverFeedRepository {
                     val url = obj.optString("url", "").ifBlank { "https://news.ycombinator.com/item?id=$id" }
                     val score = obj.optInt("score", 0)
                     val comments = obj.optInt("descendants", 0)
-                    if (title.isBlank()) null else TrendIdeaItem(title, url, "Hacker News", score, comments, 0.5f)
+                    if (title.isBlank()) null
+                    else TrendIdeaItem(title, url, "Hacker News", "https://news.ycombinator.com", score, comments, 0.5f)
                 }.getOrNull()
             }
         }.awaitAll().filterNotNull()
@@ -219,7 +419,7 @@ object DiscoverFeedRepository {
                 val score = d.optInt("ups", 0)
                 val comments = d.optInt("num_comments", 0)
                 if (title.isBlank() || url.isBlank()) null
-                else TrendIdeaItem(title, url, "r/$subreddit", score, comments, 0.5f)
+                else TrendIdeaItem(title, url, "r/$subreddit", "https://www.reddit.com", score, comments, 0.5f)
             }
         }.getOrDefault(emptyList())
     }
