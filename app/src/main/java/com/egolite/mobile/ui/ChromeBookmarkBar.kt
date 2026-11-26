@@ -7,8 +7,10 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -102,23 +104,60 @@ fun ChromeBookmarkBar(
         if (direct.isNotEmpty()) direct else bookmarks
     }
 
-    Row(
+    var showOverflowMenu by remember { mutableStateOf(false) }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .height(38.dp)
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 10.dp)
     ) {
+        // 우측 " | ☆ 모든 북마크" 고정 영역(약 118dp) + 좌우 패딩 제외 후 가용 너비 산출
+        val maxAvailableDp = (maxWidth.value - 148f).coerceAtLeast(120f)
+        fun estimateChipDp(title: String, maxTextDp: Float): Float {
+            val charW = title.sumOf { ch -> if (ch.code > 0x7F) 11.5 else 7.2 }.toFloat().coerceAtMost(maxTextDp)
+            return 34f + charW
+        }
+
+        val visibleFolders = mutableListOf<String>()
+        val overflowFolders = mutableListOf<String>()
+        val visibleItems = mutableListOf<BookmarkItem>()
+        val overflowItems = mutableListOf<BookmarkItem>()
+
+        var usedDp = 0f
+        barFolders.forEach { folderName ->
+            val need = estimateChipDp(folderName, 110f) + if (usedDp > 0f) 14f else 0f
+            if (usedDp + need <= maxAvailableDp) {
+                visibleFolders.add(folderName)
+                usedDp += need
+            } else {
+                overflowFolders.add(folderName)
+            }
+        }
+        barItems.forEach { bm ->
+            val need = estimateChipDp(bm.title, 124f) + if (usedDp > 0f) 14f else 0f
+            if (overflowFolders.isEmpty() && overflowItems.isEmpty() && usedDp + need <= maxAvailableDp) {
+                visibleItems.add(bm)
+                usedDp += need
+            } else {
+                overflowItems.add(bm)
+            }
+        }
+        val hasOverflow = overflowFolders.isNotEmpty() || overflowItems.isNotEmpty()
+
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
         Row(
             modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState()),
+                .weight(1f),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1) 폴더 항목 (예: 📁 AI)
-            barFolders.forEach { folderName ->
+            // 1) 화면에 들어가는 폴더 항목 (예: 📁 AI)
+            visibleFolders.forEach { folderName ->
                 var expanded by remember(folderName) { mutableStateOf(false) }
                 val folderItems = remember(bookmarks, folderName) {
                     bookmarks.filter { it.folder == folderName }
@@ -178,7 +217,7 @@ fun ChromeBookmarkBar(
             }
 
             // 2) 북마크 바 직접 항목 (플랫 아이콘 + 텍스트, 길게 눌러 편집/위치변경/삭제)
-            barItems.forEachIndexed { idx, bm ->
+            visibleItems.forEachIndexed { idx, bm ->
                 var showItemMenu by remember(bm.id) { mutableStateOf(false) }
                 Box {
                     Row(
@@ -257,18 +296,83 @@ fun ChromeBookmarkBar(
             }
         }
 
-        // 우측: > | ☆ 모든 북마크 (크롬 태블릿 1:1)
-        Icon(
-            imageVector = Icons.Default.ChevronRight,
-            contentDescription = "더보기",
-            modifier = Modifier
-                .size(22.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .clickable { onOpenAllBookmarks() }
-                .padding(2.dp),
-            tint = mutedIconColor
-        )
-        Spacer(modifier = Modifier.width(6.dp))
+        // 우측 오버플로우 '>' 확장 버튼 (북마크바가 가득 차서 숨겨진 항목이 있을 때만 표시 — Chrome 1:1)
+        if (hasOverflow) {
+            Box {
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (showOverflowMenu) MaterialTheme.colorScheme.secondaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f)
+                        )
+                        .clickable { showOverflowMenu = !showOverflowMenu },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = "숨겨진 북마크 펼치기",
+                        modifier = Modifier.size(18.dp),
+                        tint = activeIconColor
+                    )
+                }
+                DropdownMenu(
+                    expanded = showOverflowMenu,
+                    onDismissRequest = { showOverflowMenu = false },
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.widthIn(min = 240.dp, max = 320.dp)
+                ) {
+                    overflowFolders.forEach { folderName ->
+                        val folderBookmarks = bookmarks.filter { it.folder == folderName }
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Folder,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = mutedIconColor
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "$folderName (${folderBookmarks.size})",
+                                        fontSize = 13.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            },
+                            onClick = {
+                                showOverflowMenu = false
+                                onOpenAllBookmarks()
+                            }
+                        )
+                    }
+                    overflowItems.forEach { bm ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    BookmarkMiniFavicon(bm, sizeDp = 18)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = bm.title,
+                                        fontSize = 13.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            },
+                            onClick = {
+                                showOverflowMenu = false
+                                onNavigate(bm.url)
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(6.dp))
+        }
         Box(
             modifier = Modifier
                 .width(1.dp)
@@ -296,6 +400,7 @@ fun ChromeBookmarkBar(
                 color = activeIconColor,
                 maxLines = 1
             )
+        }
         }
     }
 }
