@@ -1,5 +1,6 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.Canvas
 import android.graphics.Bitmap
 import android.os.Build
@@ -48,6 +49,17 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.spring
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.runtime.mutableIntStateOf
+import com.egolite.mobile.model.CardVanishStyle
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.cos
+import kotlin.random.Random
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Add
@@ -124,6 +136,7 @@ fun AiLiveMonitorTray(
     onRegisterSpaceBounds: (String, Rect) -> Unit = { _, _ -> },
     onRegisterNewSpaceBounds: (Rect?) -> Unit = {},
     onSelectSpace: (String) -> Unit,
+    onCloseSpace: (String) -> Unit = {},
     onMoveSpace: (fromId: String, toId: String) -> Unit,
     onCreateAiSpace: () -> Unit,
     onCollapse: () -> Unit
@@ -140,6 +153,7 @@ fun AiLiveMonitorTray(
     }
     var thumbnails by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
 
     // 발열 최적화: 열릴 때 1회 캡처 후, 실제 작업 중(WORKING/THINKING)인 스페이스만 2.5초 주기로 갱신
     LaunchedEffect(visible, monitoredSpaces.map { "${it.id}:${it.activeTab.id}:${it.activeTab.url}:${it.aiStatus}:${it.lastActionSummary}" }) {
@@ -177,6 +191,47 @@ fun AiLiveMonitorTray(
         }
     }
 
+    val prefs by SpaceManager.preferences.collectAsState()
+    val activeVanishBursts = remember { mutableStateListOf<DustVanishRequest>() }
+    val vanishingSpaceIds = remember { mutableStateListOf<String>() }
+    val pendingCloseByBurstId = remember { mutableMapOf<Long, String>() }
+    val cardLocalRects = remember { mutableMapOf<String, Rect>() }
+
+    fun triggerDustVanishClose(space: BrowserSpace) {
+        if (space.id in vanishingSpaceIds) return
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        val style = prefs.cardVanishStyle
+        val rect = cardLocalRects[space.id]
+        if (style == CardVanishStyle.OFF || rect == null || rect.width <= 10f || rect.height <= 10f) {
+            onCloseSpace(space.id)
+            return
+        }
+        // 2단계 시퀀스: 애니메이션이 끝날 때까지 카드의 빈 자리를 유지(투명 처리)하고, 종료 후 실제 삭제하여 주변 카드가 자연스럽게 채움
+        vanishingSpaceIds.add(space.id)
+        val burstId = System.nanoTime()
+        pendingCloseByBurstId[burstId] = space.id
+        activeVanishBursts.add(
+            DustVanishRequest(
+                id = burstId,
+                rect = rect,
+                accentColor = parseSpaceColor(space.accentColorHex),
+                thumbnail = thumbnails[space.id],
+                style = style,
+                particleCount = prefs.vanishParticleCount,
+                durationMs = prefs.vanishDurationMs
+            )
+        )
+    }
+
+    fun finishVanishBurst(burstId: Long) {
+        activeVanishBursts.removeAll { it.id == burstId }
+        val spaceId = pendingCloseByBurstId.remove(burstId)
+        if (spaceId != null) {
+            vanishingSpaceIds.remove(spaceId)
+            onCloseSpace(spaceId)
+        }
+    }
+
     if (position == MonitorPosition.LEFT) {
         // ============================================================
         // 좌측 사이드바 모드 (가로모드 기본): 상단 페이드 그라데이션 오버레이 적용
@@ -188,20 +243,31 @@ fun AiLiveMonitorTray(
         ) {
             val listState = rememberLazyListState()
             var draggingId by remember { mutableStateOf<String?>(null) }
+            var dragStartIdx by remember { mutableIntStateOf(-1) }
+            var dragTargetIdx by remember { mutableIntStateOf(-1) }
+            var dragOffsetX by remember { mutableFloatStateOf(0f) }
             var dragOffsetY by remember { mutableFloatStateOf(0f) }
-            val latestCanDrag by rememberUpdatedState(monitoredSpaces.size > 1)
+            var draggedStepPx by remember { mutableFloatStateOf(220f) }
+            var isHoveringDelete by remember { mutableStateOf(false) }
+            var trayHeightPx by remember { mutableFloatStateOf(800f) }
+            val latestSpaces by rememberUpdatedState(monitoredSpaces)
+            val spacingPx = with(density) { 14.dp.toPx() }
+            val topPadPx = with(density) { 56.dp.toPx() }
+            val deleteSwipeThresholdPx = with(density) { 68.dp.toPx() }
             val bgColor = MaterialTheme.colorScheme.background
+            val draggingSpaceIsAi = draggingId != null && monitoredSpaces.firstOrNull { it.id == draggingId }?.type == SpaceType.AI
 
             Box(
                 modifier = Modifier
                     .width(244.dp)
                     .fillMaxHeight()
                     .background(Color.Transparent)
+                    .onGloballyPositioned { coords -> trayHeightPx = coords.size.height.toFloat() }
             ) {
-                // 전체 높이 스크롤 리스트 (상단 54dp 여백 → 스크롤 시 그라데이션 아래로 자연스럽게 사라짐)
+                // 전체 높이 스크롤 리스트 (드래그 중 리스트 변경 없이 인접 카드만 부드럽게 비켜주기 -> 튕김 완전 제거)
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(top = 56.dp, bottom = 24.dp, start = 13.dp, end = 13.dp),
+                    contentPadding = PaddingValues(top = 56.dp, bottom = 72.dp, start = 13.dp, end = 13.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
@@ -209,42 +275,100 @@ fun AiLiveMonitorTray(
                         .pointerInput(Unit) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { startOffset ->
-                                    if (!latestCanDrag) return@detectDragGesturesAfterLongPress
+                                    val curList = latestSpaces
+                                    if (curList.isEmpty()) return@detectDragGesturesAfterLongPress
+                                    val adjY = startOffset.y - topPadPx
                                     val hit = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
-                                        startOffset.y >= item.offset && startOffset.y <= item.offset + item.size
+                                        item.key is String && !(item.key as String).startsWith("__") &&
+                                            adjY >= item.offset && adjY <= item.offset + item.size
                                     }
                                     val key = hit?.key as? String
-                                    if (key != null) {
+                                    val idx = curList.indexOfFirst { it.id == key }
+                                    if (key != null && idx >= 0) {
                                         draggingId = key
+                                        dragStartIdx = idx
+                                        dragTargetIdx = idx
+                                        dragOffsetX = 0f
                                         dragOffsetY = 0f
+                                        draggedStepPx = (hit.size.toFloat() + spacingPx)
+                                        isHoveringDelete = false
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     }
                                 },
                                 onDrag = { change, dragAmount ->
                                     val curId = draggingId ?: return@detectDragGesturesAfterLongPress
                                     change.consume()
+                                    dragOffsetX += dragAmount.x
                                     dragOffsetY += dragAmount.y
-                                    val items = listState.layoutInfo.visibleItemsInfo
-                                    val draggedInfo = items.firstOrNull { it.key == curId } ?: return@detectDragGesturesAfterLongPress
-                                    val centerY = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetY
-                                    val target = items.firstOrNull { item ->
-                                        item.key != curId && centerY >= item.offset && centerY <= item.offset + item.size
-                                    }
-                                    val targetKey = target?.key as? String
-                                    if (target != null && targetKey != null) {
-                                        val shift = (draggedInfo.offset - target.offset).toFloat()
-                                        onMoveSpace(curId, targetKey)
-                                        dragOffsetY += shift
+                                    val curList = latestSpaces
+                                    val draggedSpace = curList.firstOrNull { it.id == curId }
+                                    val canDelete = draggedSpace?.type == SpaceType.AI
+                                    val ptrY = change.position.y
+                                    val hitDelete = canDelete && (ptrY >= trayHeightPx - with(density) { 84.dp.toPx() } || dragOffsetX <= -deleteSwipeThresholdPx)
+                                    if (hitDelete != isHoveringDelete) {
+                                        isHoveringDelete = hitDelete
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     }
+                                    if (!hitDelete && curList.size > 1 && dragStartIdx >= 0) {
+                                        val deltaSlots = kotlin.math.round(dragOffsetY / draggedStepPx.coerceAtLeast(80f)).toInt()
+                                        val nextIdx = (dragStartIdx + deltaSlots).coerceIn(0, curList.lastIndex)
+                                        if (nextIdx != dragTargetIdx) {
+                                            dragTargetIdx = nextIdx
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                    }
                                 },
-                                onDragEnd = { draggingId = null; dragOffsetY = 0f },
-                                onDragCancel = { draggingId = null; dragOffsetY = 0f }
+                                onDragEnd = {
+                                    val curId = draggingId
+                                    val fromIdx = dragStartIdx
+                                    val toIdx = dragTargetIdx
+                                    val delNow = isHoveringDelete
+                                    val curList = latestSpaces
+                                    val draggedSpace = curList.firstOrNull { it.id == curId }
+                                    if (delNow && draggedSpace != null && draggedSpace.type == SpaceType.AI) {
+                                        triggerDustVanishClose(draggedSpace)
+                                    } else if (curId != null && fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+                                        val targetSpace = curList.getOrNull(toIdx)
+                                        if (targetSpace != null && targetSpace.id != curId) {
+                                            onMoveSpace(curId, targetSpace.id)
+                                        }
+                                    }
+                                    draggingId = null
+                                    dragStartIdx = -1
+                                    dragTargetIdx = -1
+                                    dragOffsetX = 0f
+                                    dragOffsetY = 0f
+                                    isHoveringDelete = false
+                                },
+                                onDragCancel = {
+                                    draggingId = null
+                                    dragStartIdx = -1
+                                    dragTargetIdx = -1
+                                    dragOffsetX = 0f
+                                    dragOffsetY = 0f
+                                    isHoveringDelete = false
+                                }
                             )
                         }
                 ) {
+                    if (monitoredSpaces.isEmpty() && !isTabDragging) {
+                        item(key = "__empty_ai_left__") {
+                            EmptyAiMonitorCard(isLeftSidebar = true, onCreateAiSpace = onCreateAiSpace)
+                        }
+                    }
                     itemsIndexed(monitoredSpaces, key = { _, sp -> sp.id }) { idx, space ->
                         val isDragging = draggingId == space.id
+                        val rawNeighborShift = when {
+                            draggingId == null || isHoveringDelete || dragStartIdx < 0 || dragTargetIdx < 0 || isDragging -> 0f
+                            dragStartIdx < dragTargetIdx && idx in (dragStartIdx + 1)..dragTargetIdx -> -draggedStepPx
+                            dragStartIdx > dragTargetIdx && idx in dragTargetIdx until dragStartIdx -> draggedStepPx
+                            else -> 0f
+                        }
+                        val neighborShiftY by animateFloatAsState(
+                            targetValue = rawNeighborShift,
+                            animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
+                            label = "leftMonitorShift_${space.id}"
+                        )
                         MonitorSpaceCard(
                             space = space,
                             index = idx,
@@ -253,17 +377,22 @@ fun AiLiveMonitorTray(
                             trayVisible = visible,
                             isReturning = space.id == returningSpaceId,
                             isDragging = isDragging,
+                            isDeleteHovered = isDragging && isHoveringDelete,
                             isDropHovered = hoveredDropSpaceId == space.id,
-                            dragTranslationX = 0f,
-                            dragTranslationY = if (isDragging) dragOffsetY else 0f,
+                            dragTranslationX = if (isDragging) dragOffsetX * 0.45f else 0f,
+                            dragTranslationY = if (isDragging) dragOffsetY else neighborShiftY,
                             connectedAiName = connectedAiName,
                             thumbnail = thumbnails[space.id],
                             modifier = Modifier
-                                .animateItem()
+                                .then(if (draggingId == null) Modifier.animateItem() else Modifier)
+                                .graphicsLayer { alpha = if (space.id in vanishingSpaceIds) 0f else 1f }
                                 .onGloballyPositioned { coords ->
                                     onRegisterSpaceBounds(space.id, coords.boundsInRoot())
+                                    val pos = coords.positionInParent()
+                                    cardLocalRects[space.id] = Rect(pos.x, pos.y, pos.x + coords.size.width, pos.y + coords.size.height)
                                 },
-                            onSelect = { onSelectSpace(space.id) }
+                            onSelect = { onSelectSpace(space.id) },
+                            onClose = if (space.type == SpaceType.AI) ({ triggerDustVanishClose(space) }) else null
                         )
                     }
                     if (isTabDragging && canAddAiSpace) {
@@ -330,6 +459,21 @@ fun AiLiveMonitorTray(
                         }
                     }
                 }
+                MonitorDeleteDropZone(
+                    visible = draggingSpaceIsAi,
+                    isHovered = isHoveringDelete,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 14.dp, start = 14.dp, end = 14.dp)
+                        .zIndex(30f)
+                )
+
+                if (activeVanishBursts.isNotEmpty()) {
+                    ParticleDisintegrationOverlay(
+                        bursts = activeVanishBursts,
+                        onBurstFinished = { bid -> finishVanishBurst(bid) }
+                    )
+                }
             }
         }
     } else {
@@ -343,8 +487,17 @@ fun AiLiveMonitorTray(
         ) {
             val rowState = rememberLazyListState()
             var draggingId by remember { mutableStateOf<String?>(null) }
+            var dragStartIdx by remember { mutableIntStateOf(-1) }
+            var dragTargetIdx by remember { mutableIntStateOf(-1) }
             var dragOffsetX by remember { mutableFloatStateOf(0f) }
-            val latestCanDrag by rememberUpdatedState(monitoredSpaces.size > 1)
+            var dragOffsetY by remember { mutableFloatStateOf(0f) }
+            var draggedStepPx by remember { mutableFloatStateOf(200f) }
+            var isHoveringDelete by remember { mutableStateOf(false) }
+            val latestSpaces by rememberUpdatedState(monitoredSpaces)
+            val spacingPx = with(density) { 14.dp.toPx() }
+            val startPadPx = with(density) { 14.dp.toPx() }
+            val deletePullDownPx = with(density) { 64.dp.toPx() }
+            val draggingSpaceIsAi = draggingId != null && monitoredSpaces.firstOrNull { it.id == draggingId }?.type == SpaceType.AI
 
             Column(
                 modifier = Modifier
@@ -409,26 +562,35 @@ fun AiLiveMonitorTray(
                     }
                 }
 
-                // 가로 스크롤 카드 행 (길게 눌러 좌우 순서 변경 + animateItem 스프링 정렬)
+                // 가로 스크롤 카드 행 (드래그 중 리스트 변경 없이 인접 카드만 부드럽게 비켜주기 + 아래로 끌어 삭제)
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 LazyRow(
                     state = rowState,
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
+                        .fillMaxSize()
                         .pointerInput(Unit) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { startOffset ->
-                                    if (!latestCanDrag) return@detectDragGesturesAfterLongPress
+                                    val curList = latestSpaces
+                                    if (curList.isEmpty()) return@detectDragGesturesAfterLongPress
+                                    val adjX = startOffset.x - startPadPx
                                     val hit = rowState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
-                                        startOffset.x >= item.offset && startOffset.x <= item.offset + item.size
+                                        item.key is String && !(item.key as String).startsWith("__") &&
+                                            adjX >= item.offset && adjX <= item.offset + item.size
                                     }
                                     val key = hit?.key as? String
-                                    if (key != null) {
+                                    val idx = curList.indexOfFirst { it.id == key }
+                                    if (key != null && idx >= 0) {
                                         draggingId = key
+                                        dragStartIdx = idx
+                                        dragTargetIdx = idx
                                         dragOffsetX = 0f
+                                        dragOffsetY = 0f
+                                        draggedStepPx = (hit.size.toFloat() + spacingPx)
+                                        isHoveringDelete = false
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     }
                                 },
@@ -436,27 +598,75 @@ fun AiLiveMonitorTray(
                                     val curId = draggingId ?: return@detectDragGesturesAfterLongPress
                                     change.consume()
                                     dragOffsetX += dragAmount.x
-                                    val items = rowState.layoutInfo.visibleItemsInfo
-                                    val draggedInfo = items.firstOrNull { it.key == curId } ?: return@detectDragGesturesAfterLongPress
-                                    val centerX = draggedInfo.offset + draggedInfo.size / 2f + dragOffsetX
-                                    val target = items.firstOrNull { item ->
-                                        item.key != curId && centerX >= item.offset && centerX <= item.offset + item.size
-                                    }
-                                    val targetKey = target?.key as? String
-                                    if (target != null && targetKey != null) {
-                                        val shift = (draggedInfo.offset - target.offset).toFloat()
-                                        onMoveSpace(curId, targetKey)
-                                        dragOffsetX += shift
+                                    dragOffsetY += dragAmount.y
+                                    val curList = latestSpaces
+                                    val draggedSpace = curList.firstOrNull { it.id == curId }
+                                    val canDelete = draggedSpace?.type == SpaceType.AI
+                                    val hitDelete = canDelete && dragOffsetY >= deletePullDownPx
+                                    if (hitDelete != isHoveringDelete) {
+                                        isHoveringDelete = hitDelete
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     }
+                                    if (!hitDelete && curList.size > 1 && dragStartIdx >= 0) {
+                                        val deltaSlots = kotlin.math.round(dragOffsetX / draggedStepPx.coerceAtLeast(80f)).toInt()
+                                        val nextIdx = (dragStartIdx + deltaSlots).coerceIn(0, curList.lastIndex)
+                                        if (nextIdx != dragTargetIdx) {
+                                            dragTargetIdx = nextIdx
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        }
+                                    }
                                 },
-                                onDragEnd = { draggingId = null; dragOffsetX = 0f },
-                                onDragCancel = { draggingId = null; dragOffsetX = 0f }
+                                onDragEnd = {
+                                    val curId = draggingId
+                                    val fromIdx = dragStartIdx
+                                    val toIdx = dragTargetIdx
+                                    val delNow = isHoveringDelete
+                                    val curList = latestSpaces
+                                    val draggedSpace = curList.firstOrNull { it.id == curId }
+                                    if (delNow && draggedSpace != null && draggedSpace.type == SpaceType.AI) {
+                                        triggerDustVanishClose(draggedSpace)
+                                    } else if (curId != null && fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+                                        val targetSpace = curList.getOrNull(toIdx)
+                                        if (targetSpace != null && targetSpace.id != curId) {
+                                            onMoveSpace(curId, targetSpace.id)
+                                        }
+                                    }
+                                    draggingId = null
+                                    dragStartIdx = -1
+                                    dragTargetIdx = -1
+                                    dragOffsetX = 0f
+                                    dragOffsetY = 0f
+                                    isHoveringDelete = false
+                                },
+                                onDragCancel = {
+                                    draggingId = null
+                                    dragStartIdx = -1
+                                    dragTargetIdx = -1
+                                    dragOffsetX = 0f
+                                    dragOffsetY = 0f
+                                    isHoveringDelete = false
+                                }
                             )
                         }
                 ) {
+                    if (monitoredSpaces.isEmpty() && !isTabDragging) {
+                        item(key = "__empty_ai_top__") {
+                            EmptyAiMonitorCard(isLeftSidebar = false, onCreateAiSpace = onCreateAiSpace)
+                        }
+                    }
                     itemsIndexed(monitoredSpaces, key = { _, sp -> sp.id }) { idx, space ->
                         val isDragging = draggingId == space.id
+                        val rawNeighborShift = when {
+                            draggingId == null || isHoveringDelete || dragStartIdx < 0 || dragTargetIdx < 0 || isDragging -> 0f
+                            dragStartIdx < dragTargetIdx && idx in (dragStartIdx + 1)..dragTargetIdx -> -draggedStepPx
+                            dragStartIdx > dragTargetIdx && idx in dragTargetIdx until dragStartIdx -> draggedStepPx
+                            else -> 0f
+                        }
+                        val neighborShiftX by animateFloatAsState(
+                            targetValue = rawNeighborShift,
+                            animationSpec = spring(dampingRatio = 0.84f, stiffness = 420f),
+                            label = "topMonitorShift_${space.id}"
+                        )
                         MonitorSpaceCard(
                             space = space,
                             index = idx,
@@ -465,17 +675,22 @@ fun AiLiveMonitorTray(
                             trayVisible = visible,
                             isReturning = space.id == returningSpaceId,
                             isDragging = isDragging,
+                            isDeleteHovered = isDragging && isHoveringDelete,
                             isDropHovered = hoveredDropSpaceId == space.id,
-                            dragTranslationX = if (isDragging) dragOffsetX else 0f,
-                            dragTranslationY = 0f,
+                            dragTranslationX = if (isDragging) dragOffsetX else neighborShiftX,
+                            dragTranslationY = if (isDragging) dragOffsetY * 0.55f else 0f,
                             connectedAiName = connectedAiName,
                             thumbnail = thumbnails[space.id],
                             modifier = Modifier
-                                .animateItem()
+                                .then(if (draggingId == null) Modifier.animateItem() else Modifier)
+                                .graphicsLayer { alpha = if (space.id in vanishingSpaceIds) 0f else 1f }
                                 .onGloballyPositioned { coords ->
                                     onRegisterSpaceBounds(space.id, coords.boundsInRoot())
+                                    val pos = coords.positionInParent()
+                                    cardLocalRects[space.id] = Rect(pos.x, pos.y, pos.x + coords.size.width, pos.y + coords.size.height)
                                 },
-                            onSelect = { onSelectSpace(space.id) }
+                            onSelect = { onSelectSpace(space.id) },
+                            onClose = if (space.type == SpaceType.AI) ({ triggerDustVanishClose(space) }) else null
                         )
                     }
                     if (isTabDragging && canAddAiSpace) {
@@ -492,6 +707,23 @@ fun AiLiveMonitorTray(
                         }
                     }
                 }
+
+                MonitorDeleteDropZone(
+                    visible = draggingSpaceIsAi,
+                    isHovered = isHoveringDelete,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 8.dp)
+                        .zIndex(30f)
+                )
+
+                if (activeVanishBursts.isNotEmpty()) {
+                    ParticleDisintegrationOverlay(
+                        bursts = activeVanishBursts,
+                        onBurstFinished = { bid -> finishVanishBurst(bid) }
+                    )
+                }
+                }
             }
         }
     }
@@ -506,13 +738,15 @@ private fun MonitorSpaceCard(
     trayVisible: Boolean,
     isReturning: Boolean,
     isDragging: Boolean,
+    isDeleteHovered: Boolean = false,
     isDropHovered: Boolean = false,
     dragTranslationX: Float,
     dragTranslationY: Float,
     connectedAiName: String,
     thumbnail: Bitmap?,
     modifier: Modifier = Modifier,
-    onSelect: () -> Unit
+    onSelect: () -> Unit,
+    onClose: (() -> Unit)? = null
 ) {
     val isPersonal = space.type == SpaceType.PERSONAL
     val spaceColor = if (isPersonal) EgoCobalt else parseSpaceColor(space.accentColorHex)
@@ -555,7 +789,8 @@ private fun MonitorSpaceCard(
 
     val dragScale by animateFloatAsState(
         targetValue = when {
-            isDragging -> 1.06f
+            isDeleteHovered -> 0.84f
+            isDragging -> 1.05f
             isDropHovered -> 1.045f
             else -> 1f
         },
@@ -740,6 +975,27 @@ private fun MonitorSpaceCard(
             }
         }
 
+        // AI 스페이스 카드 우측 상단 닫기(×) 버튼 (Personal에는 미표시)
+        if (onClose != null && !isDropHovered) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 8.dp, end = 8.dp)
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .clickable { onClose() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "AI 스페이스 닫기",
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+
         if (isDropHovered) {
             val isIdleTarget = space.aiStatus == AiSpaceStatus.IDLE || space.aiStatus == AiSpaceStatus.DONE
             Box(
@@ -872,6 +1128,119 @@ private fun PerCharWaveText(
                     translationY = offsetY
                 }
             )
+        }
+    }
+}
+
+
+@Composable
+private fun EmptyAiMonitorCard(
+    isLeftSidebar: Boolean,
+    onCreateAiSpace: () -> Unit
+) {
+    val accent = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier
+            .width(if (isLeftSidebar) 216.dp else 230.dp)
+            .height(if (isLeftSidebar) 168.dp else 220.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .clickable { onCreateAiSpace() },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.matchParentSize()) {
+            drawRoundRect(
+                color = accent.copy(alpha = 0.42f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(24.dp.toPx(), 24.dp.toPx()),
+                style = Stroke(
+                    width = 1.5.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+                )
+            )
+        }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = accent.copy(alpha = 0.14f),
+                modifier = Modifier.size(38.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "새 AI 스페이스",
+                        tint = accent,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            Text(
+                text = "생성된 AI 스페이스 없음",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "눌러서 새 AI 스페이스 만들기",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+
+@Composable
+private fun MonitorDeleteDropZone(
+    visible: Boolean,
+    isHovered: Boolean,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(150)) + scaleIn(initialScale = 0.82f, animationSpec = EgoMotion.bouncySpring()),
+        exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.82f, animationSpec = tween(140)),
+        modifier = modifier
+    ) {
+        val scale by animateFloatAsState(
+            targetValue = if (isHovered) 1.08f else 1f,
+            animationSpec = EgoMotion.bouncySpring(),
+            label = "deleteZoneScale"
+        )
+        Surface(
+            shape = CircleShape,
+            color = if (isHovered) EgoDangerRed else EgoDangerRed.copy(alpha = 0.16f),
+            shadowElevation = if (isHovered) 8.dp else 2.dp,
+            border = androidx.compose.foundation.BorderStroke(
+                width = 1.dp,
+                color = if (isHovered) EgoDangerRed else EgoDangerRed.copy(alpha = 0.55f)
+            ),
+            modifier = Modifier.graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeleteOutline,
+                    contentDescription = "삭제",
+                    tint = if (isHovered) Color.White else EgoDangerRed,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = if (isHovered) "놓아서 스페이스 삭제" else "여기로 끌어다 삭제",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isHovered) Color.White else EgoDangerRed
+                )
+            }
         }
     }
 }
