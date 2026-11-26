@@ -133,12 +133,12 @@ fun AdBlockControlDialog(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
+                        EgoIcon(
                             Icons.Default.Shield,
                             contentDescription = null,
                             tint = if (isSiteActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(19.dp)
-                        )
+                        , symbolSize = 19.dp)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "광고 차단",
@@ -147,7 +147,7 @@ fun AdBlockControlDialog(
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(onClick = onDismiss, modifier = Modifier.size(26.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(16.dp))
+                            EgoIcon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                         }
                     }
 
@@ -355,7 +355,7 @@ private fun CompactRuleInputRow(
             }
         )
         IconButton(onClick = onAdd, modifier = Modifier.size(28.dp)) {
-            Icon(Icons.Default.Add, contentDescription = "추가", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            EgoIcon(Icons.Default.Add, contentDescription = "추가", modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary, symbolSize = 16.dp)
         }
     }
 }
@@ -371,13 +371,13 @@ private fun RemovableRuleChip(text: String, onRemove: () -> Unit) {
     ) {
         Text(text, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
         Spacer(modifier = Modifier.width(4.dp))
-        Icon(
+        EgoIcon(
             Icons.Default.Close,
             contentDescription = "삭제",
             modifier = Modifier
                 .size(13.dp)
                 .clickable { onRemove() },
             tint = MaterialTheme.colorScheme.primary
-        )
+        , symbolSize = 13.dp)
     }
 }
