@@ -71,6 +71,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -128,22 +132,32 @@ fun ChromeOmniboxOverlay(
     val topDp = with(density) { anchorTopPx.coerceAtLeast(0f).toDp() }
     val widthDp = with(density) { anchorWidthPx.coerceAtLeast(320f).toDp() }
 
-    // 실제 주소창 카드 자체가 아래로 모프 확장되도록 카드 단위 애니메이션 구동
-    var morphExpanded by remember { mutableStateOf(false) }
-    val morphShadow = remember { Animatable(2f) }
+    // 일경도저(一镜到底) 주소창 모핑: 6dp Connected 주소창 -> 22dp 확장 Omnibox (닫기 시 역방향 모핑)
+    val morphScope = rememberCoroutineScope()
+    val morphProgress = remember { Animatable(0f) }
+    var isClosingMorph by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        morphExpanded = true
-        morphShadow.animateTo(14f, animationSpec = EgoMotion.morphSpring())
+        morphProgress.animateTo(1f, animationSpec = EgoMotion.morphSpring())
     }
+    fun dismissWithMorph() {
+        if (isClosingMorph) return
+        isClosingMorph = true
+        morphScope.launch {
+            morphProgress.animateTo(0f, animationSpec = EgoMotion.responsiveSpring())
+            onDismiss()
+        }
+    }
+    val mp = morphProgress.value.coerceIn(0f, 1f)
+    val cornerDp = (6f + 16f * mp).dp
+    val shadowDp = (1f + 13f * mp).dp
 
-    // 전체 반투명 검정 배경 제거 — 투명 바깥 터치 감지 + 커진 검색창의 깔끔한 그림자만 적용
     Box(
         modifier = Modifier
             .fillMaxSize()
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
-            ) { onDismiss() },
+            ) { dismissWithMorph() },
         contentAlignment = if (hasAnchor) Alignment.TopStart else Alignment.TopCenter
     ) {
         Surface(
@@ -157,16 +171,21 @@ fun ChromeOmniboxOverlay(
                     .widthIn(max = 580.dp)
                     .fillMaxWidth()
             })
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(22.dp))
+                .animateContentSize(animationSpec = EgoMotion.morphIntSizeSpring)
+                .graphicsLayer {
+                    scaleX = 0.985f + 0.015f * mp
+                    alpha = (0.35f + 0.65f * mp).coerceIn(0f, 1f)
+                }
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(cornerDp))
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() }
                 ) {},
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(cornerDp),
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            shadowElevation = morphShadow.value.dp
+            shadowElevation = shadowDp
         ) {
-            Column(modifier = Modifier.padding(bottom = if (morphExpanded) 10.dp else 0.dp)) {
+            Column(modifier = Modifier.padding(bottom = if (mp > 0.25f) 10.dp else 0.dp)) {
                 // 1) 상단 검색 / URL 입력 바
                 Row(
                     modifier = Modifier
@@ -196,7 +215,7 @@ fun ChromeOmniboxOverlay(
                             onGo = {
                                 if (query.isNotBlank()) {
                                     onNavigate(query)
-                                    onDismiss()
+                                    dismissWithMorph()
                                 }
                             }
                         ),
@@ -307,7 +326,7 @@ fun ChromeOmniboxOverlay(
                                     .width(56.dp)
                                     .clickable {
                                         onNavigate(bm.url)
-                                        onDismiss()
+                                        dismissWithMorph()
                                     }
                             ) {
                                 Box(
@@ -340,7 +359,7 @@ fun ChromeOmniboxOverlay(
                                 .fillMaxWidth()
                                 .clickable {
                                     onNavigate(sug)
-                                    onDismiss()
+                                    dismissWithMorph()
                                 }
                                 .padding(horizontal = 16.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -387,7 +406,7 @@ fun ChromeOmniboxOverlay(
                                     .fillMaxWidth()
                                     .clickable {
                                         onNavigate(term)
-                                        onDismiss()
+                                        dismissWithMorph()
                                     }
                                     .padding(horizontal = 16.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
