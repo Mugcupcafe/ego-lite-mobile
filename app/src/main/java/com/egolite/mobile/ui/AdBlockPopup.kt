@@ -143,7 +143,8 @@ fun AdBlockControlDialog(
                         captureLayer.record { this@drawWithContent.drawContent() }
                         drawLayer(captureLayer)
                     }
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                    .harmonyRimGlow(enabled = true, cornerRadius = 24.dp, glowColor = MaterialTheme.colorScheme.primary)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
                     .clickable(
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() }
