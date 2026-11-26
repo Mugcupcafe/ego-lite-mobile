@@ -308,24 +308,34 @@ object EgoWebViewFactory {
 
         // 파일 다운로드 (HTTP/HTTPS + blob:/data: URI 모두 지원)
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-            val guessedName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            val cleanName = DownloadCenter.resolveCleanFileName(url, contentDisposition, mimeType)
             when {
                 url.startsWith("data:", ignoreCase = true) -> {
-                    BrowserActivityBridge.saveBase64Download(context, url, guessedName, mimeType)
+                    BrowserActivityBridge.saveBase64Download(context, url, cleanName, mimeType, webView.url.orEmpty())
                 }
                 url.startsWith("blob:", ignoreCase = true) -> {
                     val safeUrlJs = JSONObject.quote(url)
-                    val safeNameJs = JSONObject.quote(guessedName)
+                    val safeNameJs = JSONObject.quote(cleanName)
                     val safeMimeJs = JSONObject.quote(mimeType ?: "application/octet-stream")
                     val js = """
                         (function() {
+                            var anchorName = '';
+                            try {
+                                var anchors = document.querySelectorAll('a[download]');
+                                for (var i = 0; i < anchors.length; i++) {
+                                    if (anchors[i].href === $safeUrlJs && anchors[i].getAttribute('download')) {
+                                        anchorName = anchors[i].getAttribute('download');
+                                        break;
+                                    }
+                                }
+                            } catch (e) {}
                             fetch($safeUrlJs)
                                 .then(function(r) { return r.blob(); })
                                 .then(function(b) {
                                     var reader = new FileReader();
                                     reader.onloadend = function() {
                                         if (window.__egoBlobDownload && reader.result) {
-                                            window.__egoBlobDownload.onBlobDownloaded(String(reader.result), $safeNameJs, b.type || $safeMimeJs);
+                                            window.__egoBlobDownload.onBlobDownloaded(String(reader.result), anchorName || $safeNameJs, b.type || $safeMimeJs);
                                         }
                                     };
                                     reader.readAsDataURL(b);
