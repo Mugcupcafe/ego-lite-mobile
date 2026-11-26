@@ -786,7 +786,7 @@ object EgoWebViewFactory {
                 // 네이티브 isLightTheme=false + Chromium Algorithmic Darkening 활성:
                 // light-only 메타 차단 해제 후, ROM/WebView에서 prefers-color-scheme: dark가 미동작이면 자동 스마트 폴백
                 webView.evaluateJavascript(UNLOCK_NATIVE_DARK_JS) { result ->
-                    if (result == ""NEED_FALLBACK"") {
+                    if (result?.trim('"') == "NEED_FALLBACK") {
                         runCatching { webView.evaluateJavascript(APPLY_DARK_CSS_JS, null) }
                     }
                 }
