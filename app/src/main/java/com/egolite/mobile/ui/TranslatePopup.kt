@@ -129,6 +129,7 @@ fun ChromeStyleTranslatePopup(
                     capsuleCaptureLayer.record { this@drawWithContent.drawContent() }
                     drawLayer(capsuleCaptureLayer)
                 }
+                .harmonyRimGlow(enabled = true, cornerRadius = 22.dp, glowColor = MaterialTheme.colorScheme.primary)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
         ) {
             Row(
@@ -499,6 +500,7 @@ fun TranslateSettingsPopupDialog(
                             drawLayer(captureLayer)
                         }
                         .heightIn(max = 500.dp)
+                        .harmonyRimGlow(enabled = true, cornerRadius = 24.dp, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(24.dp))
                         .clickable(
                             indication = null,
