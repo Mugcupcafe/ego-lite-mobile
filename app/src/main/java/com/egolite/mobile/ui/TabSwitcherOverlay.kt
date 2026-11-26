@@ -3,6 +3,7 @@ package com.egolite.mobile.ui
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -68,6 +69,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -135,6 +137,24 @@ fun ChromeTabSwitcherOverlay(
     val activeTabVanishBursts = remember { mutableStateListOf<DustVanishRequest>() }
     val pendingTabCloseByBurstId = remember { mutableMapOf<Long, Pair<String, String>>() }
     val tabCardRootRects = remember { mutableMapOf<String, Rect>() }
+    var overlayRootRect by remember { mutableStateOf<Rect?>(null) }
+    var morphingTarget by remember { mutableStateOf<Triple<String, String, Rect>?>(null) }
+    val morphExpandAnim = remember { Animatable(0f) }
+
+    fun selectTabWithGeometryMorph(spaceId: String, tabId: String) {
+        val cardRect = tabCardRootRects[tabId]
+        val fullRect = overlayRootRect
+        if (cardRect == null || fullRect == null || cardRect.width <= 10f || morphingTarget != null) {
+            onSelectSpaceAndTab(spaceId, tabId)
+            return
+        }
+        morphingTarget = Triple(spaceId, tabId, cardRect)
+        scope.launch {
+            morphExpandAnim.snapTo(0f)
+            morphExpandAnim.animateTo(1f, animationSpec = EgoMotion.morphSpring())
+            onSelectSpaceAndTab(spaceId, tabId)
+        }
+    }
     var overlayOriginRoot by remember { mutableStateOf(Offset.Zero) }
 
 
@@ -249,6 +269,7 @@ fun ChromeTabSwitcherOverlay(
             .fillMaxSize()
             .onGloballyPositioned { coords ->
                 val b = coords.boundsInRoot()
+                overlayRootRect = b
                 overlayOriginRoot = Offset(b.left, b.top)
             },
         color = bgColor
@@ -617,7 +638,7 @@ fun ChromeTabSwitcherOverlay(
                                     if (selectionMode) {
                                         selectedTabIds = if (isPicked) selectedTabIds - tab.id else selectedTabIds + tab.id
                                     } else {
-                                        onSelectSpaceAndTab(personalSpace.id, tab.id)
+                                        selectTabWithGeometryMorph(personalSpace.id, tab.id)
                                     }
                                 },
                                 onClose = { triggerTabVanishClose(personalSpace.id, tab.id, activeCardBorder) }
@@ -869,6 +890,41 @@ fun ChromeTabSwitcherOverlay(
                     hoveredMenuIndex = -1
                 }
             )
+            // 일경도저(一镜到底) 탭 카드 -> 전체 화면 웹뷰 연속 모핑 오버레이
+            morphingTarget?.let { (_, mTabId, fromRect) ->
+                val fullRect = overlayRootRect
+                if (fullRect != null) {
+                    val p = morphExpandAnim.value.coerceIn(0f, 1f)
+                    val curLeft = (fromRect.left - fullRect.left) * (1f - p)
+                    val curTop = (fromRect.top - fullRect.top) * (1f - p)
+                    val curW = fromRect.width + (fullRect.width - fromRect.width) * p
+                    val curH = fromRect.height + (fullRect.height - fromRect.height) * p
+                    val curCorner = (20f * (1f - p)).coerceAtLeast(0f).dp
+                    val densityLocal = androidx.compose.ui.platform.LocalDensity.current
+                    val bmp = thumbnails[mTabId]
+
+                    Surface(
+                        shape = RoundedCornerShape(curCorner),
+                        color = MaterialTheme.colorScheme.surface,
+                        shadowElevation = (12f * (1f - p)).dp,
+                        modifier = Modifier
+                            .offset { IntOffset(curLeft.toInt(), curTop.toInt()) }
+                            .width(with(densityLocal) { curW.toDp() })
+                            .height(with(densityLocal) { curH.toDp() })
+                            .zIndex(90f)
+                    ) {
+                        if (bmp != null && !bmp.isRecycled) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                }
+            }
+
             if (activeTabVanishBursts.isNotEmpty()) {
                 ParticleDisintegrationOverlay(
                     bursts = activeTabVanishBursts,
