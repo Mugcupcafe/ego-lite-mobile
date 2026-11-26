@@ -204,9 +204,18 @@ object EgoWebViewFactory {
                 var style = document.createElement('style');
                 style.id = 'ego-dark-mode-css';
                 style.textContent =
-                    'html { height: auto !important; min-height: 100% !important; background-color: #131314 !important; filter: invert(0.92) hue-rotate(180deg) !important; } ' +
-                    'body { height: auto !important; min-height: 100% !important; background-color: #ffffff !important; } ' +
-                    'img, video, picture, canvas, iframe, [style*="background-image"] { filter: invert(1) hue-rotate(180deg) !important; }';
+                    ':root { color-scheme: dark !important; } ' +
+                    'html, body { background-color: #1E1F24 !important; background-image: none !important; color: #E3E3E8 !important; } ' +
+                    'header, nav, main, article, section, aside, footer, div, ul, ol, li, dl, dt, dd, ' +
+                    'table, thead, tbody, tfoot, tr, th, td, blockquote, pre, code, form, fieldset, details, summary, p, span { ' +
+                    '  background-color: transparent !important; border-color: #2E3138 !important; ' +
+                    '} ' +
+                    'body, p, li, td, th, dd, dt, span, div, article, section, blockquote, pre, code { color: #D8DAE0 !important; } ' +
+                    'h1, h2, h3, h4, h5, h6, strong, b, th { color: #F1F3F4 !important; } ' +
+                    'a, a * { color: #8AB4F8 !important; } ' +
+                    'a:visited, a:visited * { color: #C58AF9 !important; } ' +
+                    'pre, code, blockquote { background-color: #1E1F24 !important; } ' +
+                    'input, textarea, select, button { background-color: #292C33 !important; color: #E3E3E8 !important; border-color: #3C4049 !important; }';
                 head.appendChild(style);
             } catch (e) {}
         })();
