@@ -185,6 +185,7 @@ data class BrowserPreferences(
     val showFindInPageButton: Boolean = false,
     val showDesktopSiteButton: Boolean = false,
     val showReaderModeButton: Boolean = false,
+    val toolbarButtonOrder: List<String> = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE"),
     val homepageEnabled: Boolean = true,
     val homepageUrl: String = "ego://newtab",
     val maxAiSpaces: Int = 5,
