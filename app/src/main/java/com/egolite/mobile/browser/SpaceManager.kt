@@ -397,7 +397,7 @@ object SpaceManager {
 
     fun createTab(spaceId: String, initialUrl: String = "ego://newtab", incognito: Boolean = false, selectImmediately: Boolean = true): BrowserTab {
         val currentActive = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId
-        val tabTitle = when { initialUrl == "ego://downloads" -> "다운로드"; incognito -> "시크릿 탭"; else -> "새 탭" }
+        val tabTitle = when { initialUrl == "ego://downloads" -> "다운로드"; initialUrl == "ego://history" -> "방문 기록"; incognito -> "시크릿 탭"; else -> "새 탭" }
         val tab = BrowserTab(title = tabTitle, url = initialUrl, parentTabId = currentActive, isIncognito = incognito)
         _spaces.update { list ->
             list.map { space ->
@@ -601,6 +601,21 @@ object SpaceManager {
         }
     }
 
+    fun openHistoryTab(spaceId: String) {
+        val sp = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        val existing = sp.tabs.firstOrNull { it.url == "ego://history" }
+        if (existing != null) {
+            selectTab(spaceId, existing.id)
+        } else {
+            createTab(spaceId, initialUrl = "ego://history", selectImmediately = true)
+        }
+    }
+
+    fun removeHistoryItem(id: String) {
+        _history.update { prev -> prev.filterNot { it.id == id } }
+        persistSessionState()
+    }
+
     fun getActiveWebView(spaceId: String): WebView? {
         val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return null
         return webViews[tabId]
@@ -686,6 +701,10 @@ object SpaceManager {
     fun findNextInPage(spaceId: String, forward: Boolean) {
         val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return
         mainHandler.post { webViews[tabId]?.findNext(forward) }
+    }
+
+    fun clearHistory() {
+        _history.value = emptyList()
     }
 
     fun clearHistoryAndCache() {
