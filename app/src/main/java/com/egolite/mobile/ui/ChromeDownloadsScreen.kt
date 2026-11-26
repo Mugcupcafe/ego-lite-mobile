@@ -336,7 +336,7 @@ fun ChromeDuplicateDownloadDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.clickable {
                         if (prompt.existingUri.isNotBlank()) {
-                            DownloadCenter.openFile(context, prompt.existingUri, prompt.mimeType)
+                            DownloadCenter.openFile(context, prompt.existingUri, prompt.mimeType, prompt.fileName, forceChooser = true)
                             onDismiss()
                         }
                     }
@@ -752,10 +752,10 @@ fun ChromeDownloadsScreen(
                                                     lightboxAnim.animateTo(1f, animationSpec = EgoMotion.morphSpring())
                                                 }
                                             } else {
-                                                DownloadCenter.openFile(context, rec.contentUri, rec.mimeType)
+                                                DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true)
                                             }
                                         },
-                                        onOpen = { DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
+                                        onOpen = { DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true) },
                                         onShare = { DownloadCenter.shareFile(context, rec) },
                                         onDeleteWithSnapshot = { snap -> triggerDeleteWithDust(rec, snap) },
                                         modifier = Modifier.weight(1f)
@@ -773,7 +773,7 @@ fun ChromeDownloadsScreen(
                                 record = rec,
                                 isVanishing = rec.id in vanishingIds,
                                 modifier = Modifier.animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f)),
-                                onOpen = { DownloadCenter.openFile(context, rec.contentUri, rec.mimeType) },
+                                onOpen = { DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true) },
                                 onShare = { DownloadCenter.shareFile(context, rec) },
                                 onDeleteWithSnapshot = { snap -> triggerDeleteWithDust(rec, snap) }
                             )
@@ -858,7 +858,7 @@ fun ChromeDownloadsScreen(
                                             modifier = Modifier.weight(1f)
                                         )
                                         TextButton(onClick = {
-                                            DownloadCenter.openFile(context, rec.contentUri, rec.mimeType)
+                                            DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true)
                                         }) {
                                             Text("열기", color = Color(0xFFA8C7FA), fontSize = 13.sp)
                                         }
