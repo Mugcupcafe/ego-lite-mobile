@@ -17,6 +17,8 @@ import android.webkit.RenderProcessGoneDetail
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
+import android.webkit.JavascriptInterface
+import java.util.concurrent.ConcurrentHashMap
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -38,6 +40,59 @@ import java.io.File
 import java.io.FileInputStream
 
 object EgoWebViewFactory {
+
+    private val innerScrolledTabs = ConcurrentHashMap<String, Boolean>()
+
+    fun isInnerScrolled(tabId: String): Boolean = innerScrolledTabs[tabId] == true
+
+    fun setInnerScrolled(tabId: String, scrolled: Boolean) {
+        innerScrolledTabs[tabId] = scrolled
+    }
+
+    private const val INNER_SCROLL_GUARD_JS = """
+        (function() {
+            if (window.__egoScrollGuardInstalled) return;
+            window.__egoScrollGuardInstalled = true;
+            function checkInnerScroll(target) {
+                var scrolled = (window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0) > 2;
+                var el = target && target.nodeType === 1 ? target : null;
+                while (!scrolled && el && el !== document && el !== document.documentElement) {
+                    if (el.scrollTop > 2 && el.scrollHeight > el.clientHeight + 2) {
+                        scrolled = true;
+                        break;
+                    }
+                    el = el.parentElement;
+                }
+                try {
+                    if (window.EgoScrollBridge && window.EgoScrollBridge.setInnerScrolled) {
+                        window.EgoScrollBridge.setInnerScrolled(scrolled);
+                    }
+                } catch (e) {}
+            }
+            document.addEventListener('touchstart', function(e) { checkInnerScroll(e.target); }, { passive: true, capture: true });
+            document.addEventListener('scroll', function(e) { checkInnerScroll(e.target); }, { passive: true, capture: true });
+            function checkMedia() {
+                try {
+                    var list = document.querySelectorAll('video, audio');
+                    var playing = false;
+                    for (var i = 0; i < list.length; i++) {
+                        var m = list[i];
+                        if (window.__egoTabMuted === true && !m.muted) { m.muted = true; }
+                        if (!m.paused && !m.ended && m.readyState > 1) { playing = true; }
+                    }
+                    if (window.EgoScrollBridge && window.EgoScrollBridge.setMediaPlaying) {
+                        window.EgoScrollBridge.setMediaPlaying(playing);
+                    }
+                } catch (e) {}
+            }
+            document.addEventListener('play', checkMedia, true);
+            document.addEventListener('playing', checkMedia, true);
+            document.addEventListener('pause', checkMedia, true);
+            document.addEventListener('ended', checkMedia, true);
+            document.addEventListener('volumechange', checkMedia, true);
+            setInterval(checkMedia, 2500);
+        })();
+    """
 
     private fun buildRealMobileChromeUa(context: Context): String {
         val raw = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrDefault("")
@@ -157,6 +212,20 @@ object EgoWebViewFactory {
         onRenderProcessCrashed: () -> Unit = {}
     ): WebView {
         val webView = WebView(context)
+        webView.addJavascriptInterface(
+            object {
+                @JavascriptInterface
+                fun setInnerScrolled(scrolled: Boolean) {
+                    innerScrolledTabs[tabId] = scrolled
+                }
+
+                @JavascriptInterface
+                fun setMediaPlaying(playing: Boolean) {
+                    SpaceManager.setTabAudioPlaying(tabId, playing)
+                }
+            },
+            "EgoScrollBridge"
+        )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             runCatching { webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false) }
         }
@@ -345,6 +414,8 @@ object EgoWebViewFactory {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                innerScrolledTabs[tabId] = false
+                SpaceManager.setTabAudioPlaying(tabId, false)
                 if (!url.isNullOrBlank()) {
                     currentPageHost = AdBlockEngine.extractHost(url)
                     onPageStarted(url)
@@ -368,6 +439,7 @@ object EgoWebViewFactory {
                             }
                             applyDarkMode(view, darkModeProvider())
                             applyWebFont(view, webFontProvider())
+                            view.evaluateJavascript(INNER_SCROLL_GUARD_JS, null)
                         }
                     }
                     onPageFinished(
@@ -513,9 +585,12 @@ object EgoWebViewFactory {
 
     fun applyDarkMode(webView: WebView, enabled: Boolean) {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            // 크로미움 네이티브 Algorithmic Darkening 단독 사용 (CSS invert 중첩으로 인한 이중 반전·회색 뭉개짐 방지)
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, enabled)
+            webView.evaluateJavascript(REMOVE_DARK_CSS_JS, null)
+        } else {
+            webView.evaluateJavascript(if (enabled) APPLY_DARK_CSS_JS else REMOVE_DARK_CSS_JS, null)
         }
-        webView.evaluateJavascript(if (enabled) APPLY_DARK_CSS_JS else REMOVE_DARK_CSS_JS, null)
     }
 
     fun applyDesktopMode(webView: WebView, desktop: Boolean) {
@@ -672,8 +747,12 @@ object EgoWebViewFactory {
             val th = (webView.height * scale).toInt().coerceIn(160, 520)
             val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.RGB_565)
             val canvas = Canvas(bmp)
+            canvas.save()
             canvas.scale(tw.toFloat() / webView.width.toFloat(), th.toFloat() / webView.height.toFloat())
+            // 스크롤된 페이지(scrollY > 0)도 캔버스 원점(0,0)에 정확히 맞춰 캡처되도록 오프셋 보정
+            canvas.translate(-webView.scrollX.toFloat(), -webView.scrollY.toFloat())
             webView.draw(canvas)
+            canvas.restore()
             bmp
         }.getOrNull()
     }
