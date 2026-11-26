@@ -331,12 +331,20 @@ object EgoWebViewFactory {
                         (function() {
                             var anchorName = '';
                             try {
-                                var anchors = document.querySelectorAll('a[download]');
-                                for (var i = 0; i < anchors.length; i++) {
-                                    if (anchors[i].href === $safeUrlJs && anchors[i].getAttribute('download')) {
-                                        anchorName = anchors[i].getAttribute('download');
-                                        break;
+                                if (window.__egoBlobNames && window.__egoBlobNames[$safeUrlJs]) {
+                                    anchorName = window.__egoBlobNames[$safeUrlJs];
+                                }
+                                if (!anchorName) {
+                                    var anchors = document.querySelectorAll('a[download]');
+                                    for (var i = 0; i < anchors.length; i++) {
+                                        if (anchors[i].href === $safeUrlJs && anchors[i].getAttribute('download')) {
+                                            anchorName = anchors[i].getAttribute('download');
+                                            break;
+                                        }
                                     }
+                                }
+                                if (!anchorName && window.__egoLastDownloadName && (Date.now() - (window.__egoLastDownloadTs || 0)) < 4000) {
+                                    anchorName = window.__egoLastDownloadName;
                                 }
                             } catch (e) {}
                             fetch($safeUrlJs)
@@ -521,6 +529,17 @@ object EgoWebViewFactory {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                // React/SPA 오프-DOM <a download="..."> blob 다운로드 파일명 캡처 훅 (Codemagic/GitHub 등)
+                view?.evaluateJavascript(
+                    "(function(){if(window.__egoDlHooked)return;window.__egoDlHooked=true;window.__egoBlobNames={};" +
+                    "var origClick=HTMLAnchorElement.prototype.click;" +
+                    "HTMLAnchorElement.prototype.click=function(){" +
+                    "try{var dn=this.getAttribute('download')||this.download||'';if(dn){if(this.href)window.__egoBlobNames[this.href]=dn;window.__egoLastDownloadName=dn;window.__egoLastDownloadTs=Date.now();}}catch(e){}" +
+                    "return origClick.apply(this,arguments);};" +
+                    "document.addEventListener('click',function(ev){try{var a=ev.target&&ev.target.closest?ev.target.closest('a[download]'):null;if(a){var dn=a.getAttribute('download')||a.download||'';if(dn){if(a.href)window.__egoBlobNames[a.href]=dn;window.__egoLastDownloadName=dn;window.__egoLastDownloadTs=Date.now();}}}catch(e){}},true);" +
+                    "})();",
+                    null
+                )
                 if (view != null) {
                     val finalUrl = url ?: view.url.orEmpty()
                     currentPageHost = AdBlockEngine.extractHost(finalUrl)
