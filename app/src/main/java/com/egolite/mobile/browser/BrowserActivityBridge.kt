@@ -47,6 +47,13 @@ object BrowserActivityBridge {
     private val _fullscreenVideo = MutableStateFlow(FullscreenVideoState())
     val fullscreenVideo: StateFlow<FullscreenVideoState> = _fullscreenVideo.asStateFlow()
 
+    private val _isInPip = MutableStateFlow(false)
+    val isInPip: StateFlow<Boolean> = _isInPip.asStateFlow()
+
+    fun setInPictureInPictureMode(inPip: Boolean) {
+        _isInPip.value = inPip
+    }
+
     private val _longPressTarget = MutableStateFlow<LongPressTarget?>(null)
     val longPressTarget: StateFlow<LongPressTarget?> = _longPressTarget.asStateFlow()
 
