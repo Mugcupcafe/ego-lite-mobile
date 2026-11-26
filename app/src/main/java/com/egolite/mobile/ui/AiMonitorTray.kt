@@ -438,24 +438,24 @@ fun AiLiveMonitorTray(
                                 onClick = onCreateAiSpace,
                                 modifier = Modifier.size(32.dp).pressBounceScale()
                             ) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.Add,
                                     contentDescription = "새 AI 공간",
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(18.dp)
-                                )
+                                , symbolSize = 18.dp)
                             }
                         }
                         IconButton(
                             onClick = onCollapse,
                             modifier = Modifier.size(32.dp).pressBounceScale()
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                                 contentDescription = "AI 모니터 접기",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
-                            )
+                            , symbolSize = 20.dp)
                         }
                     }
                 }
@@ -532,12 +532,12 @@ fun AiLiveMonitorTray(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(3.dp)
                                 ) {
-                                    Icon(
+                                    EgoIcon(
                                         imageVector = Icons.Default.Add,
                                         contentDescription = "AI Space 추가",
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(14.dp)
-                                    )
+                                    , symbolSize = 14.dp)
                                     Text(
                                         text = "새 AI 공간",
                                         fontSize = 11.sp,
@@ -552,12 +552,12 @@ fun AiLiveMonitorTray(
                             onClick = onCollapse,
                             modifier = Modifier.size(32.dp).pressBounceScale()
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.KeyboardArrowUp,
                                 contentDescription = "AI 모니터 접기",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
-                            )
+                            , symbolSize = 20.dp)
                         }
                     }
                 }
@@ -880,12 +880,12 @@ private fun MonitorSpaceCard(
                         verticalArrangement = Arrangement.Center,
                         modifier = Modifier.padding(12.dp)
                     ) {
-                        Icon(
+                        EgoIcon(
                             imageVector = if (isPersonal) Icons.Default.Person else Icons.Default.AutoAwesome,
                             contentDescription = null,
                             tint = spaceColor.copy(alpha = 0.72f),
                             modifier = Modifier.size(24.dp)
-                        )
+                        , symbolSize = 24.dp)
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = if (isPersonal) "새 탭" else "대기 중",
@@ -987,12 +987,12 @@ private fun MonitorSpaceCard(
                     .clickable { onClose() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
+                EgoIcon(
                     imageVector = Icons.Default.Close,
                     contentDescription = "AI 스페이스 닫기",
                     tint = Color.White,
                     modifier = Modifier.size(14.dp)
-                )
+                , symbolSize = 14.dp)
             }
         }
 
@@ -1075,12 +1075,12 @@ private fun NewAiSpaceDropZoneCard(
             verticalArrangement = Arrangement.spacedBy(5.dp),
             modifier = Modifier.padding(14.dp)
         ) {
-            Icon(
+            EgoIcon(
                 imageVector = Icons.Default.Add,
                 contentDescription = "새 AI 스페이스에 생성",
                 tint = accent,
                 modifier = Modifier.size(22.dp)
-            )
+            , symbolSize = 22.dp)
             Text(
                 text = "새 AI 스페이스에 생성",
                 fontSize = 12.5.sp,
@@ -1169,12 +1169,12 @@ private fun EmptyAiMonitorCard(
                 modifier = Modifier.size(38.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "새 AI 스페이스",
                         tint = accent,
                         modifier = Modifier.size(20.dp)
-                    )
+                    , symbolSize = 20.dp)
                 }
             }
             Text(
@@ -1228,12 +1228,12 @@ private fun MonitorDeleteDropZone(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Icon(
+                EgoIcon(
                     imageVector = Icons.Default.DeleteOutline,
                     contentDescription = "삭제",
                     tint = if (isHovered) Color.White else EgoDangerRed,
                     modifier = Modifier.size(18.dp)
-                )
+                , symbolSize = 18.dp)
                 Text(
                     text = if (isHovered) "놓아서 스페이스 삭제" else "여기로 끌어다 삭제",
                     fontSize = 12.5.sp,
