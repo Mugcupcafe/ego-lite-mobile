@@ -1,5 +1,9 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.mutableFloatStateOf
+import kotlinx.coroutines.delay
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -155,7 +159,6 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
@@ -242,9 +245,7 @@ fun BrowserScreen() {
     var newSpaceDropBounds by remember { mutableStateOf<Rect?>(null) }
     var personalCapsuleBounds by remember { mutableStateOf<Rect?>(null) }
     var rootBoxBounds by remember { mutableStateOf<Rect?>(null) }
-    val haptic = LocalHapticFeedback.current
-    val density = LocalDensity.current
-    val statusBarTopPx = WindowInsets.statusBars.getTop(density).toFloat().coerceAtLeast(with(density) { 28.dp.toPx() })
+    // statusBarTopPx는 아래 density 선언 이후 초기화 (rootBoxTopPx 우선 사용)
     var returningSpaceId by remember { mutableStateOf<String?>(null) }
     var showMcpDrawer by remember { mutableStateOf(false) }
     var showChromeSettings by remember { mutableStateOf(false) }
@@ -275,6 +276,7 @@ fun BrowserScreen() {
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val statusBarTopPx = with(density) { 28.dp.toPx() }
 
     val systemDark = isSystemInDarkTheme()
     val isEffectiveDark = when (prefs.themeMode) {
@@ -927,7 +929,7 @@ fun BrowserScreen() {
                                                                 "$spName(작업 중)에 백그라운드 탭으로 추가됨"
                                                             }
                                                             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                                            if (serverState.connectionState == McpConnectionState.CONNECTED) {
+                                                            if (runtimeState.connectionState == McpConnectionState.CONNECTED) {
                                                                 val dropInfo = Triple(dropSpaceId, res.first.id, res.first.title)
                                                                 recentDropPromptChip = dropInfo
                                                                 scope.launch {
@@ -948,7 +950,7 @@ fun BrowserScreen() {
                                                                 "${created.name}에 첫 페이지로 생성됨",
                                                                 Toast.LENGTH_SHORT
                                                             ).show()
-                                                            if (serverState.connectionState == McpConnectionState.CONNECTED) {
+                                                            if (runtimeState.connectionState == McpConnectionState.CONNECTED) {
                                                                 val firstTab = created.tabs.first()
                                                                 val dropInfo = Triple(created.id, firstTab.id, firstTab.title)
                                                                 recentDropPromptChip = dropInfo
@@ -1191,7 +1193,7 @@ fun BrowserScreen() {
 
                 // MCP 연결 시에만 주소창과 광고차단 사이에 아이콘 전용 AI 명령 버튼 표시
                 AnimatedVisibility(
-                    visible = serverState.connectionState == McpConnectionState.CONNECTED,
+                    visible = runtimeState.connectionState == McpConnectionState.CONNECTED,
                     enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.78f, animationSpec = EgoMotion.bouncySpring()),
                     exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.78f, animationSpec = tween(140))
                 ) {
@@ -1560,7 +1562,7 @@ fun BrowserScreen() {
                     spaces = spaces,
                     activeSpace = activeSpace
                 )
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = activeTab.url == NEW_TAB_URL,
                     enter = fadeIn(tween(180)),
                     exit = fadeOut(tween(140))
@@ -1703,7 +1705,7 @@ fun BrowserScreen() {
 
         // 탭 드롭 직후 3.5초 미니 칩 (누르면 방금 넘긴 탭이 자동 고정된 AI 명령 팝업 오픈)
         AnimatedVisibility(
-            visible = recentDropPromptChip != null && !showAiCommandPopup && serverState.connectionState == McpConnectionState.CONNECTED,
+            visible = recentDropPromptChip != null && !showAiCommandPopup && runtimeState.connectionState == McpConnectionState.CONNECTED,
             enter = fadeIn(tween(180)) + slideInVertically(initialOffsetY = { it / 2 }),
             exit = fadeOut(tween(160)) + slideOutVertically(targetOffsetY = { it / 2 }),
             modifier = Modifier
