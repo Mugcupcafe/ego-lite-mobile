@@ -1,5 +1,6 @@
 package com.egolite.mobile.browser
 
+import android.util.LruCache
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -13,7 +14,8 @@ import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 
 object FaviconCache {
-    private val memoryCache = ConcurrentHashMap<String, Bitmap>()
+    // 메모리 최적화: 최대 120개 파비콘만 RAM에 유지 (초과 시 자동 LRU 정리)
+    private val memoryCache = LruCache<String, Bitmap>(120)
     private val failedHosts = ConcurrentHashMap<String, Long>()
 
     private const val UA =
@@ -31,13 +33,13 @@ object FaviconCache {
     fun getMemoryCached(url: String?): Bitmap? {
         val host = extractHost(url)
         if (host.isBlank()) return null
-        return memoryCache[host] ?: memoryCache[rootDomainOf(host)]
+        return memoryCache.get(host) ?: memoryCache.get(rootDomainOf(host))
     }
 
     fun putIcon(context: Context, url: String?, bitmap: Bitmap?) {
         val host = extractHost(url)
         if (host.isBlank() || bitmap == null || bitmap.width < 8 || bitmap.height < 8) return
-        memoryCache[host] = bitmap
+        memoryCache.put(host, bitmap)
         failedHosts.remove(host)
         saveToDisk(context, host, bitmap)
     }
@@ -93,9 +95,9 @@ object FaviconCache {
     suspend fun loadFavicon(context: Context, url: String?): Bitmap? {
         val host = extractHost(url)
         if (host.isBlank()) return null
-        memoryCache[host]?.let { return it }
+        memoryCache.get(host)?.let { return it }
         val root = rootDomainOf(host)
-        memoryCache[root]?.let { return it }
+        memoryCache.get(root)?.let { return it }
 
         // 최근 2분 이내 실패한 호스트는 과도한 재요청 방지
         val lastFail = failedHosts[host]
@@ -111,7 +113,7 @@ object FaviconCache {
                 if (file.exists() && file.length() > 80L) {
                     val decoded = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
                     if (decoded != null && decoded.width >= 16) {
-                        memoryCache[host] = decoded
+                        memoryCache.put(host, decoded)
                         return@withContext decoded
                     }
                 }
@@ -139,7 +141,7 @@ object FaviconCache {
             }
 
             if (fetched != null) {
-                memoryCache[host] = fetched
+                memoryCache.put(host, fetched)
                 failedHosts.remove(host)
                 saveToDisk(context, host, fetched)
             } else {
