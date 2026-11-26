@@ -1,18 +1,5 @@
 package com.egolite.mobile.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.border
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.heightIn
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -20,62 +7,83 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.egolite.mobile.browser.EgoWebViewFactory
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.mcp.OAuth21Manager
 import com.egolite.mobile.model.McpConnectionState
-import androidx.compose.material3.Slider
-import com.egolite.mobile.model.SearchEngine
-import com.egolite.mobile.model.TranslationEngine
 import com.egolite.mobile.model.TunnelProvider
 import com.egolite.mobile.tunnel.EgoForegroundService
 
 @Composable
-fun McpSettingsDrawer(onDismiss: () -> Unit) {
+fun McpSettingsDrawer(
+    onDismiss: (VanishSnapshot) -> Unit
+) {
     val context = LocalContext.current
     val runtimeState by EgoForegroundService.runtimeState.collectAsState()
     val tunnelSettings by EgoForegroundService.currentTunnelSettings.collectAsState()
@@ -86,21 +94,29 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
         runtimeState.connectionState == McpConnectionState.STARTING
 
     var cardVisible by remember { mutableStateOf(false) }
+    var cardRect by remember { mutableStateOf<Rect?>(null) }
+    val captureLayer = rememberGraphicsLayer()
+    val captureScope = rememberCoroutineScope()
+    fun dismissWithCapture(touchRoot: Offset?) {
+        captureScope.launch {
+            val bmp = runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+            onDismiss(VanishSnapshot(rect = cardRect, touchRoot = touchRoot, bitmap = bmp))
+        }
+    }
+    var showLogs by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { cardVisible = true }
 
-    // 전체 반투명 검정 배경 제거 + 카드 자체만 버튼 우상단 기준 깔끔하게 모프 (그림자 왜곡 방지)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) { onDismiss() }
+            .pointerInput(Unit) {
+                detectTapGestures { offset -> dismissWithCapture(offset) }
+            }
     ) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 50.dp, end = 96.dp)
+                .padding(top = 50.dp, end = 92.dp)
         ) {
             AnimatedVisibility(
                 visible = cardVisible,
@@ -117,175 +133,259 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
             ) {
                 Surface(
                     modifier = Modifier
-                        .width(368.dp)
-                        .heightIn(max = 540.dp)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(24.dp))
+                        .width(336.dp)
+                        .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                        .drawWithContent {
+                            captureLayer.record { this@drawWithContent.drawContent() }
+                            drawLayer(captureLayer)
+                        }
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() }
                         ) {},
                     shape = RoundedCornerShape(24.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                    shadowElevation = 14.dp
+                    shadowElevation = 14.dp,
+                    tonalElevation = 4.dp
                 ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("MCP · 터널 · 브라우저 설정", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    IconButton(onClick = onDismiss) {
-                        EgoIcon(Icons.Default.Close, contentDescription = "닫기")
-                    }
-                }
-
-                // MCP Server + HTTPS Tunnel Master Control
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("MCP 서버 & HTTPS 터널", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                        Text(
-                            text = runtimeState.statusMessage,
-                            fontSize = 12.sp,
-                            color = if (runtimeState.connectionState == McpConnectionState.CONNECTED) EgoEmerald else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = isRunning,
-                        onCheckedChange = { enable ->
-                            if (enable) EgoForegroundService.startService(context)
-                            else EgoForegroundService.stopService(context)
-                        }
-                    )
-                }
-
-                if (runtimeState.publicHttpsUrl.isNotBlank()) {
-                    CopyableField(
-                        label = "외부 HTTPS MCP 주소 (Gemini / Muse 입력용)",
-                        value = runtimeState.publicHttpsUrl,
-                        onCopy = { copyText(context, "MCP 주소", runtimeState.publicHttpsUrl) }
-                    )
-                }
-
-                CopyableField(
-                    label = "Muse용 Bearer 토큰",
-                    value = tunnelSettings.bearerToken,
-                    onCopy = { copyText(context, "Bearer 토큰", tunnelSettings.bearerToken) },
-                    trailingExtra = {
-                        IconButton(onClick = {
-                            val newTok = OAuth21Manager.rotateBearerToken()
-                            EgoForegroundService.updateTunnelSettings { it.copy(bearerToken = newTok) }
-                        }) {
-                            EgoIcon(Icons.Default.Refresh, contentDescription = "토큰 재발급")
-                        }
-                    }
-                )
-
-                HorizontalDivider()
-
-                // 터널 프로바이더 선택
-                Text("터널 방식", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = tunnelSettings.provider == TunnelProvider.CLOUDFLARE,
-                        onClick = { EgoForegroundService.updateTunnelSettings { it.copy(provider = TunnelProvider.CLOUDFLARE) } }
-                    )
-                    Text("Cloudflare", fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(16.dp))
-                    RadioButton(
-                        selected = tunnelSettings.provider == TunnelProvider.NGROK,
-                        onClick = { EgoForegroundService.updateTunnelSettings { it.copy(provider = TunnelProvider.NGROK) } }
-                    )
-                    Text("ngrok", fontSize = 14.sp)
-                }
-
-                if (tunnelSettings.provider == TunnelProvider.CLOUDFLARE) {
-                    OutlinedTextField(
-                        value = tunnelSettings.cloudflareToken,
-                        onValueChange = { v -> EgoForegroundService.updateTunnelSettings { it.copy(cloudflareToken = v) } },
-                        label = { Text("Cloudflare Named Tunnel 토큰 (비우면 무료 Quick Tunnel)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                } else {
-                    OutlinedTextField(
-                        value = tunnelSettings.ngrokAuthToken,
-                        onValueChange = { v -> EgoForegroundService.updateTunnelSettings { it.copy(ngrokAuthToken = v) } },
-                        label = { Text("ngrok Authtoken") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = tunnelSettings.ngrokDomain,
-                        onValueChange = { v -> EgoForegroundService.updateTunnelSettings { it.copy(ngrokDomain = v) } },
-                        label = { Text("ngrok 고정 도메인 (선택)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                HorizontalDivider()
-
-                OutlinedTextField(
-                    value = prefs.firecrawlApiKey,
-                    onValueChange = { v -> SpaceManager.updatePreferences { it.copy(firecrawlApiKey = v) } },
-                    label = { Text("Firecrawl API 키 (선택 · 미입력 시 로컬 Markdown 사용)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedButton(
-                    onClick = {
-                        runCatching {
-                            val intent = Intent(
-                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                                Uri.parse("package:${context.packageName}")
-                            )
-                            context.startActivity(intent)
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("배터리 최적화 제외 설정 (MagicOS 백그라운드 유지)")
-                }
-
-                HorizontalDivider()
-
-                Text("시스템 WebView 엔진", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Text(
-                    text = chromiumVersion,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                if (runtimeState.recentLogs.isNotEmpty()) {
-                    Text("최근 MCP · 터널 로그", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.background,
-                        modifier = Modifier.fillMaxWidth()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = runtimeState.recentLogs.takeLast(10).joinToString("\n"),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(10.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        // 1) 광고 차단 · 번역 설정과 동일한 컴팩트 헤더 (15.sp Bold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            EgoIcon(
+                                imageVector = Icons.Default.Hub,
+                                contentDescription = null,
+                                tint = if (runtimeState.connectionState == McpConnectionState.CONNECTED) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(19.dp),
+                                filled = runtimeState.connectionState == McpConnectionState.CONNECTED,
+                                symbolSize = 19.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "MCP · 터널 설정",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .clickable { dismissWithCapture(cardRect?.let { Offset(it.right - 24f, it.top + 24f) }) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                EgoIcon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "닫기",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                    symbolSize = 18.dp
+                                )
+                            }
+                        }
+
+                        // 2) MCP 서버 & HTTPS 터널 마스터 토글 (광고 차단 스위치 행과 동일 밀도)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "MCP 서버 & HTTPS 터널",
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = runtimeState.statusMessage,
+                                    fontSize = 11.sp,
+                                    color = if (runtimeState.connectionState == McpConnectionState.CONNECTED) EgoEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Switch(
+                                checked = isRunning,
+                                onCheckedChange = { enable ->
+                                    if (enable) EgoForegroundService.startService(context)
+                                    else EgoForegroundService.stopService(context)
+                                },
+                                modifier = Modifier.scale(0.86f)
+                            )
+                        }
+
+                        // 3) 외부 HTTPS 주소 (연결 시 한 줄 캡슐)
+                        if (runtimeState.publicHttpsUrl.isNotBlank()) {
+                            CompactCopyPill(
+                                prefix = "URL",
+                                value = runtimeState.publicHttpsUrl,
+                                onCopy = { copyText(context, "MCP 주소", runtimeState.publicHttpsUrl) }
+                            )
+                        }
+
+                        // 4) Bearer 토큰 (한 줄 컴팩트 캡슐 + 재발급/복사)
+                        CompactCopyPill(
+                            prefix = "토큰",
+                            value = tunnelSettings.bearerToken,
+                            onCopy = { copyText(context, "Bearer 토큰", tunnelSettings.bearerToken) },
+                            onRefresh = {
+                                val newTok = OAuth21Manager.rotateBearerToken()
+                                EgoForegroundService.updateTunnelSettings { it.copy(bearerToken = newTok) }
+                            }
                         )
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+
+                        // 5) 터널 방식 (한 줄 세그먼트 칩)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "터널 방식",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(
+                                    TunnelProvider.CLOUDFLARE to "Cloudflare",
+                                    TunnelProvider.NGROK to "ngrok"
+                                ).forEach { (provider, label) ->
+                                    val sel = tunnelSettings.provider == provider
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .clickable {
+                                                EgoForegroundService.updateTunnelSettings { it.copy(provider = provider) }
+                                            }
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal,
+                                            color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // 6) 컴팩트 단선 입력 필 (광고 차단 입력 바 스타일 통일)
+                        if (tunnelSettings.provider == TunnelProvider.CLOUDFLARE) {
+                            CompactMcpInputPill(
+                                value = tunnelSettings.cloudflareToken,
+                                placeholder = "Cloudflare 토큰 (비우면 무료 Quick)",
+                                onValueChange = { v -> EgoForegroundService.updateTunnelSettings { it.copy(cloudflareToken = v) } }
+                            )
+                        } else {
+                            CompactMcpInputPill(
+                                value = tunnelSettings.ngrokAuthToken,
+                                placeholder = "ngrok Authtoken 입력",
+                                onValueChange = { v -> EgoForegroundService.updateTunnelSettings { it.copy(ngrokAuthToken = v) } }
+                            )
+                            CompactMcpInputPill(
+                                value = tunnelSettings.ngrokDomain,
+                                placeholder = "ngrok 고정 도메인 (선택)",
+                                onValueChange = { v -> EgoForegroundService.updateTunnelSettings { it.copy(ngrokDomain = v) } }
+                            )
+                        }
+
+                        CompactMcpInputPill(
+                            value = prefs.firecrawlApiKey,
+                            placeholder = "Firecrawl API 키 (선택 · 미입력 시 로컬)",
+                            onValueChange = { v -> SpaceManager.updatePreferences { it.copy(firecrawlApiKey = v) } }
+                        )
+
+                        // 7) 하단 한 줄 액션 칩 (배터리 최적화 제외 + 로그 토글 + 엔진 버전)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        runCatching {
+                                            val intent = Intent(
+                                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                                Uri.parse("package:${context.packageName}")
+                                            )
+                                            context.startActivity(intent)
+                                        }
+                                    }
+                            ) {
+                                Text(
+                                    text = "배터리 최적화 제외",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                )
+                            }
+                            if (runtimeState.recentLogs.isNotEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (showLogs) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { showLogs = !showLogs }
+                                ) {
+                                    Text(
+                                        text = if (showLogs) "로그 닫기" else "로그(${runtimeState.recentLogs.size})",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (showLogs) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = chromiumVersion.substringBefore(" "),
+                                fontSize = 10.5.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+
+                        if (showLogs && runtimeState.recentLogs.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = runtimeState.recentLogs.takeLast(5).joinToString("\n"),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 14.sp,
+                                    modifier = Modifier.padding(8.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
-                }
-            }
                 }
             }
         }
@@ -293,56 +393,112 @@ fun McpSettingsDrawer(onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun SettingToggleRow(
-    title: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(title, fontSize = 14.sp)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-@Composable
-private fun CopyableField(
-    label: String,
+private fun CompactCopyPill(
+    prefix: String,
     value: String,
     onCopy: () -> Unit,
-    trailingExtra: (@Composable () -> Unit)? = null
+    onRefresh: (() -> Unit)? = null
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.background,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(start = 10.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = prefix,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = value,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.5.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (onRefresh != null) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onRefresh),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = value,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    modifier = Modifier.weight(1f)
+                EgoIcon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "토큰 재발급",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                    symbolSize = 16.dp
                 )
-                trailingExtra?.invoke()
-                IconButton(onClick = onCopy) {
-                    EgoIcon(Icons.Default.ContentCopy, contentDescription = "복사")
-                }
             }
+        }
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onCopy),
+            contentAlignment = Alignment.Center
+        ) {
+            EgoIcon(
+                imageVector = Icons.Default.ContentCopy,
+                contentDescription = "복사",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(15.dp),
+                symbolSize = 15.dp
+            )
         }
     }
 }
 
-private fun copyText(context: Context, label: String, text: String) {
+@Composable
+private fun CompactMcpInputPill(
+    value: String,
+    placeholder: String,
+    onValueChange: (String) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (value.isEmpty()) {
+            Text(
+                text = placeholder,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+private fun copyText(context: Context, label: String, value: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    cm.setPrimaryClip(ClipData.newPlainText(label, text))
+    cm.setPrimaryClip(ClipData.newPlainText(label, value))
     Toast.makeText(context, "$label 복사됨", Toast.LENGTH_SHORT).show()
 }
