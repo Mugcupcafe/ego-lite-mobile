@@ -60,6 +60,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import com.egolite.mobile.model.CardVanishStyle
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -126,6 +129,51 @@ fun ChromeTabSwitcherOverlay(
     var hoveredMenuIndex by remember { mutableIntStateOf(-1) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val prefs by SpaceManager.preferences.collectAsState()
+    val vanishingTabIds = remember { mutableStateListOf<String>() }
+    val activeTabVanishBursts = remember { mutableStateListOf<DustVanishRequest>() }
+    val pendingTabCloseByBurstId = remember { mutableMapOf<Long, Pair<String, String>>() }
+    val tabCardRootRects = remember { mutableMapOf<String, Rect>() }
+    var overlayOriginRoot by remember { mutableStateOf(Offset.Zero) }
+
+    fun triggerTabVanishClose(spaceId: String, tabId: String, accentColor: Color) {
+        if (tabId in vanishingTabIds) return
+        val style = prefs.cardVanishStyle
+        val rootRect = tabCardRootRects[tabId]
+        if (style == CardVanishStyle.OFF || rootRect == null || rootRect.width <= 10f || rootRect.height <= 10f) {
+            onCloseTab(spaceId, tabId)
+            return
+        }
+        val localRect = Rect(
+            left = rootRect.left - overlayOriginRoot.x,
+            top = rootRect.top - overlayOriginRoot.y,
+            right = rootRect.right - overlayOriginRoot.x,
+            bottom = rootRect.bottom - overlayOriginRoot.y
+        )
+        vanishingTabIds.add(tabId)
+        val burstId = System.nanoTime()
+        pendingTabCloseByBurstId[burstId] = spaceId to tabId
+        activeTabVanishBursts.add(
+            DustVanishRequest(
+                id = burstId,
+                rect = localRect,
+                accentColor = accentColor,
+                thumbnail = thumbnails[tabId],
+                style = style,
+                particleCount = prefs.vanishParticleCount,
+                durationMs = prefs.vanishDurationMs
+            )
+        )
+    }
+
+    fun finishTabVanishBurst(burstId: Long) {
+        activeTabVanishBursts.removeAll { it.id == burstId }
+        val target = pendingTabCloseByBurstId.remove(burstId)
+        if (target != null) {
+            vanishingTabIds.remove(target.second)
+            onCloseTab(target.first, target.second)
+        }
+    }
 
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
@@ -181,7 +229,12 @@ fun ChromeTabSwitcherOverlay(
     val activeCardBorder = if (darkTheme) Color(0xFFA8C7FA) else Color(0xFF1A73E8)
 
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coords ->
+                val b = coords.boundsInRoot()
+                overlayOriginRoot = Offset(b.left, b.top)
+            },
         color = bgColor
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -526,6 +579,10 @@ fun ChromeTabSwitcherOverlay(
                                 selectionMode = selectionMode,
                                 isSelectedForBatch = isPicked,
                                 modifier = Modifier
+                                    .animateItem()
+                                    .onGloballyPositioned { coords ->
+                                        tabCardRootRects[tab.id] = coords.boundsInRoot()
+                                    }
                                     .zIndex(if (isDragging) 12f else 0f)
                                     .graphicsLayer {
                                         if (isDragging) {
@@ -534,7 +591,11 @@ fun ChromeTabSwitcherOverlay(
                                         }
                                         scaleX = cardScale
                                         scaleY = cardScale
-                                        alpha = if (isDragging) 0.94f else 1f
+                                        alpha = when {
+                                            tab.id in vanishingTabIds -> 0f
+                                            isDragging -> 0.94f
+                                            else -> 1f
+                                        }
                                     },
                                 onClick = {
                                     if (selectionMode) {
@@ -543,7 +604,7 @@ fun ChromeTabSwitcherOverlay(
                                         onSelectSpaceAndTab(personalSpace.id, tab.id)
                                     }
                                 },
-                                onClose = { onCloseTab(personalSpace.id, tab.id) }
+                                onClose = { triggerTabVanishClose(personalSpace.id, tab.id, activeCardBorder) }
                             )
                         }
                     }
@@ -755,8 +816,15 @@ fun ChromeTabSwitcherOverlay(
                                                             darkTheme = darkTheme,
                                                             selectionMode = false,
                                                             isSelectedForBatch = false,
+                                                            modifier = Modifier
+                                                                .onGloballyPositioned { coords ->
+                                                                    tabCardRootRects[tab.id] = coords.boundsInRoot()
+                                                                }
+                                                                .graphicsLayer {
+                                                                    alpha = if (tab.id in vanishingTabIds) 0f else 1f
+                                                                },
                                                             onClick = { onSelectSpaceAndTab(aiSpace.id, tab.id) },
-                                                            onClose = { onCloseTab(aiSpace.id, tab.id) }
+                                                            onClose = { triggerTabVanishClose(aiSpace.id, tab.id, spaceAccent) }
                                                         )
                                                     }
                                                 }
@@ -785,6 +853,12 @@ fun ChromeTabSwitcherOverlay(
                     hoveredMenuIndex = -1
                 }
             )
+            if (activeTabVanishBursts.isNotEmpty()) {
+                ParticleDisintegrationOverlay(
+                    bursts = activeTabVanishBursts,
+                    onBurstFinished = { bid -> finishTabVanishBurst(bid) }
+                )
+            }
         }
     }
 }
