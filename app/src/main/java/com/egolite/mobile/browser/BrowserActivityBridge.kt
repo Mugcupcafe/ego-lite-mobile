@@ -1,5 +1,12 @@
 package com.egolite.mobile.browser
 
+import android.content.ContentValues
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import android.util.Base64
+import java.io.File
 import android.app.DownloadManager
 import android.content.Context
 import android.net.Uri
@@ -103,6 +110,58 @@ object BrowserActivityBridge {
             Toast.makeText(context, "다운로드 시작: $fileName", Toast.LENGTH_SHORT).show()
         }.onFailure {
             Toast.makeText(context, "다운로드 실패: ${it.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * blob: / data: URI(Codemagic, GitHub, ChatGPT 등)의 Base64 데이터를 Downloads 폴더에 직접 저장
+     */
+    fun saveBase64Download(
+        context: Context,
+        dataUrl: String,
+        suggestedName: String,
+        mimeType: String? = null
+    ) {
+        val mainHandler = Handler(Looper.getMainLooper())
+        runCatching {
+            val commaIdx = dataUrl.indexOf(',')
+            val header = if (commaIdx > 0) dataUrl.substring(0, commaIdx) else ""
+            val base64Body = if (commaIdx > 0) dataUrl.substring(commaIdx + 1) else dataUrl
+            val detectedMime = mimeType?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
+                ?: Regex("data:([^;]+);").find(header)?.groupValues?.getOrNull(1)
+                ?: "application/octet-stream"
+            val bytes = Base64.decode(base64Body, Base64.DEFAULT)
+            val safeName = suggestedName
+                .ifBlank { "download_${System.currentTimeMillis()}" }
+                .replace(Regex("""[\\/:*?"<>|]"""), "_")
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, safeName)
+                    put(MediaStore.Downloads.MIME_TYPE, detectedMime)
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("MediaStore 파일 생성 실패")
+                resolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                if (!dir.exists()) dir.mkdirs()
+                File(dir, safeName).writeBytes(bytes)
+            }
+            mainHandler.post {
+                Toast.makeText(context, "다운로드 완료: $safeName", Toast.LENGTH_SHORT).show()
+            }
+        }.onFailure { err ->
+            mainHandler.post {
+                Toast.makeText(context, "Blob 다운로드 실패: ${err.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
