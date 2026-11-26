@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -62,6 +63,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import com.egolite.mobile.model.CardVanishStyle
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.collectAsState
@@ -89,6 +91,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.egolite.mobile.browser.SpaceManager
+import kotlinx.coroutines.launch
 import com.egolite.mobile.model.AiSpaceStatus
 import com.egolite.mobile.model.BookmarkItem
 import com.egolite.mobile.model.BrowserSpace
@@ -139,6 +142,7 @@ fun ChromeTabSwitcherOverlay(
     val tabCardRootRects = remember { mutableMapOf<String, Rect>() }
     var overlayRootRect by remember { mutableStateOf<Rect?>(null) }
     var morphingTarget by remember { mutableStateOf<Triple<String, String, Rect>?>(null) }
+    val scope = rememberCoroutineScope()
     val morphExpandAnim = remember { Animatable(0f) }
 
     fun selectTabWithGeometryMorph(spaceId: String, tabId: String) {
