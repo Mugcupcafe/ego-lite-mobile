@@ -1,5 +1,6 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -117,14 +118,17 @@ fun ChromeOmniboxOverlay(
 
     val hasAnchor = anchorWidthPx > 120f
     val startDp = with(density) { anchorLeftPx.coerceAtLeast(0f).toDp() }
-    val topDp = with(density) { (anchorTopPx - 4f).coerceAtLeast(0f).toDp() }
+    val topDp = with(density) { anchorTopPx.coerceAtLeast(0f).toDp() }
     val widthDp = with(density) { anchorWidthPx.coerceAtLeast(320f).toDp() }
 
+    // 전체 반투명 검정 배경 제거 — 투명 바깥 터치 감지 + 커진 검색창의 다층 그림자만 강조
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .clickable { onDismiss() },
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { onDismiss() },
         contentAlignment = if (hasAnchor) Alignment.TopStart else Alignment.TopCenter
     ) {
         Surface(
