@@ -158,8 +158,23 @@ data class LongPressTarget(
 )
 
 @Serializable
+enum class ThemeColorPreset(val label: String, val subtitle: String, val isSystem: Boolean = false) {
+    CHROME_SLATE("크롬 톤 슬레이트", "딥 그레이 바탕 + 블루 슬레이트 툴바 · 선택 탭", false),
+    SYSTEM_DYNAMIC("시스템 색상 따르기", "기기 바탕화면 Material You 동적 색상 연동", true),
+    CHROME_NEUTRAL("크롬 밝은 회색", "크롬 다크 회색 바탕 + 뉴트럴 밝은 회색 그룹", false),
+    CHROME_CLASSIC("크롬 오리지널", "크롬 기본 다크 회색 바탕 + 차분한 카드 톤", false),
+    OCEAN_BLUE("오션 블루", "딥 네이비 바탕 + 시원한 오션 블루 포인트", false),
+    FOREST_EMERALD("포레스트 에메랄드", "딥 포레스트 바탕 + 에메랄드 그린 포인트", false),
+    ROYAL_LAVENDER("로열 라벤더", "딥 플럼 바탕 + 라벤더 바이올렛 포인트", false),
+    SUNSET_AMBER("선셋 앰버", "다크 에스프레소 바탕 + 따뜻한 앰버 포인트", false),
+    ROSE_CRIMSON("로즈 크림슨", "딥 와인 바탕 + 소프트 로즈 포인트", false),
+    OLED_MIDNIGHT("OLED 퓨어 블랙", "완전한 블랙 바탕 + 다크 슬레이트 그룹", false)
+}
+
+@Serializable
 enum class CardVanishStyle(val label: String, val description: String) {
-    HARMONY_DUST("하모니OS 초미세 먼지 (기본값)", "카드 경계가 침식되며 초미세 먼지로 흩어지는 무손실 소멸"),
+    HARMONY_DUST("초미세 먼지 (기본값)", "카드 경계가 침식되며 초미세 먼지로 흩어지는 무손실 소멸"),
+    HARMONY_GPU_SHADER("하모니OS GPU 실픽셀 셰이더", "실제 UI 픽셀 캡처 · 터치 기준 사방 노이즈 침식 · 충격파 · 빛 가산 입자"),
     LIGHT_PARTICLES("가벼운 입자 분산", "약 250개 입자로 빠르게 흩어지는 저부하 소멸 (560ms)"),
     SCALE_FADE("기본 축소 페이드", "먼지 효과 없이 깔끔하게 축소되며 사라짐"),
     OFF("즉시 삭제 (애니메이션 없음)", "지연 없이 즉시 닫기")
@@ -170,6 +185,7 @@ data class BrowserPreferences(
     val adBlockEnabled: Boolean = true,
     val darkModeEnabled: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val themeColorPreset: ThemeColorPreset = ThemeColorPreset.CHROME_SLATE,
     val darkenWebsitesWhenPossible: Boolean = true,
     val desktopModeEnabled: Boolean = true,
     val showBookmarkBar: Boolean = false,
@@ -195,6 +211,7 @@ data class BrowserPreferences(
     val cardVanishStyle: CardVanishStyle = CardVanishStyle.HARMONY_DUST,
     val vanishParticleCount: Int = 1800,
     val vanishDurationMs: Int = 1300,
+    val vanishMaxFps: Int = 60,
     val tabWidthMode: TabWidthMode = TabWidthMode.DYNAMIC,
     val manualTabWidthDp: Int = 180,
     val aiSpaceRetentionDays: Int = 7,
