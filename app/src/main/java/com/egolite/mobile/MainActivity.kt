@@ -7,6 +7,7 @@ import android.app.RemoteAction
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.IntentFilter
+import android.app.UiModeManager
 import android.content.res.Configuration
 import android.graphics.drawable.Icon
 import android.util.Rational
@@ -31,6 +32,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.egolite.mobile.browser.BrowserActivityBridge
 import com.egolite.mobile.browser.SpaceManager
+import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.model.ThemeMode
 import com.egolite.mobile.model.WebFontMode
 import com.egolite.mobile.ui.BrowserScreen
@@ -169,6 +171,7 @@ class MainActivity : ComponentActivity() {
         )
         WindowCompat.setDecorFitsSystemWindows(window, true)
         SpaceManager.init(applicationContext)
+        GoogleAccountManager.init(applicationContext)
         requestNotificationPermissionIfNeeded()
 
         BrowserActivityBridge.launchFilePicker = { mimeTypes -> filePickerLauncher.launch(mimeTypes) }
@@ -213,7 +216,18 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.DARK -> true
                 ThemeMode.LIGHT -> false
             }
-            LaunchedEffect(isDark) {
+            LaunchedEffect(prefs.themeMode, isDark, prefs.darkenWebsitesWhenPossible) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    runCatching {
+                        val uiModeManager = getSystemService(UiModeManager::class.java)
+                        val mode = when (prefs.themeMode) {
+                            ThemeMode.DARK -> UiModeManager.MODE_NIGHT_YES
+                            ThemeMode.LIGHT -> UiModeManager.MODE_NIGHT_NO
+                            ThemeMode.SYSTEM -> UiModeManager.MODE_NIGHT_AUTO
+                        }
+                        uiModeManager?.setApplicationNightMode(mode)
+                    }
+                }
                 SpaceManager.syncWebViewsDarkMode(isDark)
             }
             SideEffect {
