@@ -318,14 +318,14 @@ fun ExpandedSpaceSlideBar(
                             }
                             if (isAi && spaces.count { it.type == SpaceType.AI } > 1) {
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "공간 닫기",
                                     modifier = Modifier
                                         .size(16.dp)
                                         .clickable { onCloseAiSpace(space.id) },
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                , symbolSize = 16.dp)
                             }
                         }
                     }
@@ -341,12 +341,12 @@ fun ExpandedSpaceSlideBar(
                                 .clickable { onCreateAiSpace() },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
+                            EgoIcon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = "AI Space 추가",
                                 modifier = Modifier.size(18.dp),
                                 tint = MaterialTheme.colorScheme.onSurface
-                            )
+                            , symbolSize = 18.dp)
                         }
                     }
                 }
