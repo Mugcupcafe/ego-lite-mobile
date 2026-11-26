@@ -197,7 +197,7 @@ fun ChromeSettingsScreen(
                     modifier = Modifier.padding(bottom = 14.dp)
                 ) {
                     IconButton(onClick = onDismiss) {
-                        Icon(
+                        EgoIcon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "설정 닫기",
                             tint = MaterialTheme.colorScheme.onSurface
@@ -288,12 +288,12 @@ fun ChromeSettingsScreen(
                                     .background(MaterialTheme.colorScheme.primaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
+                                EgoIcon(
                                     Icons.Default.Hub,
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
+                                , symbolSize = 18.dp)
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                         }
@@ -333,12 +333,12 @@ fun ChromeSettingsScreen(
                         .padding(horizontal = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
+                    EgoIcon(
                         Icons.Default.Search,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
-                    )
+                    , symbolSize = 20.dp)
                     Spacer(modifier = Modifier.width(12.dp))
                     BasicTextField(
                         value = searchQuery,
@@ -385,12 +385,12 @@ fun ChromeSettingsScreen(
                                         .clickable { showThemeSubpage = false }
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
                                 )
-                                Icon(
+                                EgoIcon(
                                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(22.dp)
-                                )
+                                , symbolSize = 22.dp)
                                 Text(
                                     text = "테마",
                                     fontSize = 24.sp,
@@ -576,7 +576,7 @@ fun ChromeSettingsScreen(
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
-                                                Icon(
+                                                EgoIcon(
                                                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                                     contentDescription = null,
                                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
@@ -750,7 +750,7 @@ fun ChromeSettingsScreen(
                                         Text("Ego Lite Mobile을 기본 브라우저로 설정", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                                         Text("외부 앱에서 웹 링크를 열 때 Ego Lite Mobile이 바로 실행됩니다.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         OutlinedButton(onClick = { openSystemDefaultBrowserSettings(context) }) {
-                                            Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            EgoIcon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text("기본 브라우저 설정 열기")
                                         }
@@ -1004,7 +1004,7 @@ fun ChromeSettingsScreen(
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
-                                                Icon(
+                                                EgoIcon(
                                                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                                     contentDescription = "테마 설정 열기",
                                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1388,7 +1388,7 @@ fun ChromeSettingsScreen(
                                                     .padding(horizontal = 20.dp, vertical = 14.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Icon(Icons.Default.FontDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                EgoIcon(Icons.Default.FontDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 20.dp)
                                                 Spacer(modifier = Modifier.width(14.dp))
                                                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                                     Text(mode.label, fontSize = 16.sp, fontWeight = FontWeight.Normal)
@@ -1418,7 +1418,7 @@ fun ChromeSettingsScreen(
                                             horizontalArrangement = Arrangement.End
                                         ) {
                                             OutlinedButton(onClick = { BrowserActivityBridge.launchFontPicker?.invoke() }) {
-                                                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                EgoIcon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp), symbolSize = 16.dp)
                                                 Spacer(modifier = Modifier.width(6.dp))
                                                 Text("커스텀 폰트 (.ttf / .otf) 파일 추가")
                                             }
@@ -1632,7 +1632,7 @@ fun ChromeSettingsScreen(
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             IconButton(onClick = {
                                                 SpaceManager.updatePreferences { it.copy(textZoom = (it.textZoom - 5).coerceAtLeast(75)) }
-                                            }) { Icon(Icons.Default.Remove, contentDescription = "축소") }
+                                            }) { EgoIcon(Icons.Default.Remove, contentDescription = "축소") }
                                             Slider(
                                                 value = prefs.textZoom.toFloat(),
                                                 onValueChange = { v -> SpaceManager.updatePreferences { it.copy(textZoom = v.toInt()) } },
@@ -1642,7 +1642,7 @@ fun ChromeSettingsScreen(
                                             )
                                             IconButton(onClick = {
                                                 SpaceManager.updatePreferences { it.copy(textZoom = (it.textZoom + 5).coerceAtMost(150)) }
-                                            }) { Icon(Icons.Default.Add, contentDescription = "확대") }
+                                            }) { EgoIcon(Icons.Default.Add, contentDescription = "확대") }
                                         }
                                     }
                                 }
@@ -1923,7 +1923,7 @@ private fun SearchEngineRow(
                         color = badgeColor
                     )
                 } else {
-                    Icon(Icons.Default.Public, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    EgoIcon(Icons.Default.Public, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 16.dp)
                 }
             }
         }
@@ -1975,7 +1975,7 @@ private fun SitePermissionRow(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        EgoIcon(icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 22.dp)
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, fontSize = 16.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
