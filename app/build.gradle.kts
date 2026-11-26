@@ -13,8 +13,8 @@ android {
         applicationId = "com.egolite.mobile"
         minSdk = 29
         targetSdk = 35
-        versionCode = 61
-        versionName = "0.4.51"
+        versionCode = 67
+        versionName = "0.4.57"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -44,7 +44,7 @@ android {
         debug {
             signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-v0.4.51"
+            versionNameSuffix = "-v0.4.52"
         }
     }
 
@@ -106,4 +106,7 @@ dependencies {
     // On-device Offline Translation (Google ML Kit)
     implementation("com.google.mlkit:translate:17.0.3")
     implementation("com.google.mlkit:language-id:17.0.6")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 }
