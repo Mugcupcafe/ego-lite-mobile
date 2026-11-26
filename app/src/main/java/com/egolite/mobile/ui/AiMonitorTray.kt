@@ -218,7 +218,8 @@ fun AiLiveMonitorTray(
                 thumbnail = thumbnails[space.id],
                 style = style,
                 particleCount = prefs.vanishParticleCount,
-                durationMs = prefs.vanishDurationMs
+                durationMs = prefs.vanishDurationMs,
+                maxFps = prefs.vanishMaxFps
             )
         )
     }
@@ -267,7 +268,7 @@ fun AiLiveMonitorTray(
                 // 전체 높이 스크롤 리스트 (드래그 중 리스트 변경 없이 인접 카드만 부드럽게 비켜주기 -> 튕김 완전 제거)
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(top = 56.dp, bottom = 72.dp, start = 13.dp, end = 13.dp),
+                    contentPadding = PaddingValues(top = 56.dp, bottom = 56.dp, start = 13.dp, end = 13.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
