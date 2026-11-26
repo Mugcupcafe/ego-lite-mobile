@@ -48,6 +48,11 @@ enum class MonitorPosition(val label: String) {
     LEFT("좌측")
 }
 
+enum class TabWidthMode(val label: String) {
+    DYNAMIC("동적 조절 (이름 길이 맞춤)"),
+    MANUAL("수동 조절 (고정 너비)")
+}
+
 enum class EqualizerMorphStyle(val label: String, val description: String) {
     DOTS_SLASH(
         "A안 · 3점 안착 + 컷아웃 사선",
@@ -157,6 +162,8 @@ data class BrowserPreferences(
     val monitorPosPortrait: MonitorPosition = MonitorPosition.TOP,
     val monitorPosLandscape: MonitorPosition = MonitorPosition.LEFT,
     val equalizerMorphStyle: EqualizerMorphStyle = EqualizerMorphStyle.DOTS_SLASH,
+    val tabWidthMode: TabWidthMode = TabWidthMode.DYNAMIC,
+    val manualTabWidthDp: Int = 180,
     val inactiveTabDays: Int = 21,
     val translationEngine: TranslationEngine = TranslationEngine.ONLINE_GOOGLE,
     val offerTranslate: Boolean = true,
