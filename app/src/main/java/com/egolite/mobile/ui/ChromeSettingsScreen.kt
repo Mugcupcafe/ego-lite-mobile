@@ -1,6 +1,9 @@
 package com.egolite.mobile.ui
 
 import com.egolite.mobile.model.TabWidthMode
+import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.horizontalScroll
 import kotlin.math.roundToInt
 import com.egolite.mobile.model.EqualizerMorphStyle
 import android.app.DownloadManager
@@ -60,7 +63,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -71,7 +73,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.LaunchedEffect
@@ -86,6 +87,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -94,6 +96,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.app.Activity
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.layout.ContentScale
+import com.egolite.mobile.account.GoogleAccountManager
+import kotlinx.coroutines.launch
 import com.egolite.mobile.BuildConfig
 import com.egolite.mobile.CrashLogger
 import com.egolite.mobile.browser.AdBlockEngine
@@ -105,14 +112,16 @@ import com.egolite.mobile.browser.TranslationManager
 import com.egolite.mobile.model.McpConnectionState
 import com.egolite.mobile.model.MonitorPosition
 import com.egolite.mobile.model.SearchEngine
+import com.egolite.mobile.model.CardVanishStyle
 import com.egolite.mobile.model.ThemeMode
 import com.egolite.mobile.model.TranslationEngine
 import com.egolite.mobile.model.WebFontMode
 import com.egolite.mobile.tunnel.EgoForegroundService
 import java.util.Locale
 
-private enum class SettingsCategory(val title: String, val section: String) {
-    PROFILE("ego(lite) 서비스", "내 서비스 설정"),
+enum class SettingsCategory(val title: String, val section: String) {
+    ACCOUNT("Google 계정", "내 Google 서비스 설정"),
+    PROFILE("ego(lite) 서비스", "내 Google 서비스 설정"),
     SEARCH_ENGINE("검색엔진", "기본설정"),
     PRIVACY("개인 정보 보호 및 보안", "기본설정"),
     SAFETY("안전 확인", "기본설정"),
@@ -130,7 +139,10 @@ private enum class SettingsCategory(val title: String, val section: String) {
 
 @Composable
 fun ChromeSettingsScreen(
+    initialCategory: SettingsCategory = SettingsCategory.ACCOUNT,
     onOpenMcpDrawer: () -> Unit,
+    onOpenGoogleSignInTab: () -> Unit = {},
+    onExtractGoogleProfile: ((Boolean, String) -> Unit) -> Unit = { cb -> cb(false, "브라우저 탭을 확인해 주세요.") },
     onDismiss: () -> Unit
 ) {
     var showThemeSubpage by remember { mutableStateOf(false) }
@@ -145,12 +157,15 @@ fun ChromeSettingsScreen(
     }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val prefs by SpaceManager.preferences.collectAsState()
     val runtimeState by EgoForegroundService.runtimeState.collectAsState()
     val adBlockState by AdBlockEngine.state.collectAsState()
+    val googleAccount by GoogleAccountManager.state.collectAsState()
+    val googleAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
     val chromiumVersion = remember { EgoWebViewFactory.getCurrentChromiumVersion(context) }
 
-    var selectedCategory by remember { mutableStateOf(SettingsCategory.SEARCH_ENGINE) }
+    var selectedCategory by remember(initialCategory) { mutableStateOf(initialCategory) }
     var searchQuery by remember { mutableStateOf("") }
 
     val visibleCategories = remember(searchQuery) {
@@ -158,28 +173,43 @@ fun ChromeSettingsScreen(
         else SettingsCategory.entries.filter { it.title.contains(searchQuery, ignoreCase = true) }
     }
 
+    val isDarkCanvas = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val settingsCanvasColor = if (isDarkCanvas) Color(0xFF131314) else Color(0xFFECEEF5)
+    val settingsCardColor = if (isDarkCanvas) Color(0xFF1F2024) else Color(0xFFFFFFFF)
+    val selectedNavColor = if (isDarkCanvas) Color(0xFF28354E) else Color(0xFFDCE5F9)
+
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
+        color = settingsCanvasColor
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
-            // 좌측 페인 (크롬 태블릿 1:1 카테고리 목록)
+            // 좌측 페인 (Chrome Material 3 Expressive 2-패널, 가운데 구분선 없음)
             Column(
                 modifier = Modifier
-                    .width(280.dp)
+                    .width(292.dp)
                     .fillMaxHeight()
-                    .background(MaterialTheme.colorScheme.background)
+                    .background(settingsCanvasColor)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 12.dp)
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(bottom = 12.dp)
+                    modifier = Modifier.padding(bottom = 14.dp)
                 ) {
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "설정 닫기")
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "설정 닫기",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
-                    Text("설정", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "설정",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
 
                 var lastSection = ""
@@ -188,15 +218,20 @@ fun ChromeSettingsScreen(
                         lastSection = cat.section
                         Text(
                             text = cat.section,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 14.dp, top = 14.dp, bottom = 6.dp)
+                            modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 6.dp)
                         )
                     }
 
                     val selected = selectedCategory == cat
+                    val displayTitle = when (cat) {
+                        SettingsCategory.ACCOUNT -> if (googleAccount.isSignedIn) googleAccount.displayName.ifBlank { "Google 계정" } else "Google 로그인"
+                        else -> cat.title
+                    }
                     val subtitle = when (cat) {
+                        SettingsCategory.ACCOUNT -> if (googleAccount.isSignedIn) googleAccount.email else "프로필 및 자체 동기화 설정"
                         SettingsCategory.SEARCH_ENGINE -> prefs.searchEngine.label
                         SettingsCategory.HOMEPAGE -> if (prefs.homepageEnabled) "사용" else "사용 안 함"
                         SettingsCategory.APPEARANCE -> prefs.themeMode.label
@@ -208,45 +243,71 @@ fun ChromeSettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(
-                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                                else Color.Transparent
-                            )
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (selected) selectedNavColor else Color.Transparent)
                             .clickable {
                                 if (cat == SettingsCategory.DEFAULT_BROWSER) {
-                                    // 요구사항 4: 기본 브라우저 클릭 시 즉시 시스템 기본 브라우저 설정 진입
                                     openSystemDefaultBrowserSettings(context)
                                 }
                                 selectedCategory = cat
                                 showThemeSubpage = false
                             }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (cat == SettingsCategory.PROFILE) {
+                        if (cat == SettingsCategory.ACCOUNT) {
+                            if (googleAccount.isSignedIn && googleAvatar != null) {
+                                Image(
+                                    bitmap = googleAvatar!!.asImageBitmap(),
+                                    contentDescription = "Google 프로필 사진",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(36.dp).clip(CircleShape)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = if (googleAccount.isSignedIn) googleAccount.displayName.take(1).uppercase().ifBlank { "G" } else "G",
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                        } else if (cat == SettingsCategory.PROFILE) {
                             Box(
                                 modifier = Modifier
-                                    .size(30.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
-                                    .background(EgoCobalt.copy(alpha = 0.18f)),
+                                    .background(MaterialTheme.colorScheme.primaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.Hub, contentDescription = null, modifier = Modifier.size(16.dp), tint = EgoCobalt)
+                                Icon(
+                                    Icons.Default.Hub,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
                         }
-                        Column {
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                text = cat.title,
-                                fontSize = 14.sp,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                text = displayTitle,
+                                fontSize = 15.sp,
+                                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             if (subtitle != null) {
                                 Text(
                                     text = subtitle,
-                                    fontSize = 12.sp,
+                                    fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -255,42 +316,45 @@ fun ChromeSettingsScreen(
                 }
             }
 
-            VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-            // 우측 페인 (상단 검색 바 + 크롬 스타일 Crossfade 전환)
+            // 우측 페인 (M3 Expressive 검색 알약 바 + 개별 세그먼트 카드 그룹)
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(horizontal = 24.dp, vertical = 14.dp)
+                    .padding(start = 16.dp, end = 28.dp, top = 14.dp, bottom = 14.dp)
             ) {
-                // 상단 설정 검색 바 (크롬 태블릿 1:1)
+                // 상단 설정 검색 바 (M3 Expressive 화이트 필)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(44.dp)
+                        .height(48.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(horizontal = 16.dp),
+                        .background(settingsCardColor)
+                        .padding(horizontal = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
                     BasicTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
                         singleLine = true,
-                        textStyle = TextStyle(fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface),
+                        textStyle = TextStyle(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         modifier = Modifier.weight(1f),
                         decorationBox = { inner ->
-                            if (searchQuery.isEmpty()) Text("설정 검색", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (searchQuery.isEmpty()) Text("설정 검색", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             inner()
                         }
                     )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 // 우측 페인 페이드인/페이드아웃 (Crossfade)
                 Crossfade(
@@ -303,17 +367,18 @@ fun ChromeSettingsScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         if (category == SettingsCategory.APPEARANCE && showThemeSubpage) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(bottom = 4.dp)
                             ) {
                                 Text(
                                     text = "디자인",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Normal,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
@@ -324,22 +389,265 @@ fun ChromeSettingsScreen(
                                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                                 Text(
                                     text = "테마",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Normal,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                         } else {
-                            Text(category.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = category.title,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
                         }
 
                         when (category) {
+                            SettingsCategory.ACCOUNT -> {
+                                var clientIdInput by remember(googleAccount.oauthWebClientId) {
+                                    mutableStateOf(googleAccount.oauthWebClientId)
+                                }
+                                var showOAuthAdvanced by remember { mutableStateOf(false) }
+                                var statusMessage by remember { mutableStateOf<String?>(null) }
+
+                                // 상단 중앙 프로필 헤더 (Chrome M3 Expressive 1:1)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 10.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (googleAccount.isSignedIn && googleAvatar != null) {
+                                        Image(
+                                            bitmap = googleAvatar!!.asImageBitmap(),
+                                            contentDescription = "Google 프로필 사진",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(72.dp)
+                                                .clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(72.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = if (googleAccount.isSignedIn) googleAccount.displayName.take(1).uppercase().ifBlank { "G" } else "G",
+                                                fontSize = 28.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = if (googleAccount.isSignedIn) googleAccount.displayName.ifBlank { "Google 계정" } else "로그인되지 않음",
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = if (googleAccount.isSignedIn) googleAccount.email else "Google 계정으로 로그인해 프로필 사진과 자체 동기화 설정을 관리하세요",
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (!statusMessage.isNullOrBlank()) {
+                                        Text(
+                                            text = statusMessage!!,
+                                            fontSize = 12.5.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+
+                                // 로그인 / 세션 연동 액션 카드
+                                M3SettingsGroup(settingsCardColor) {
+                                    if (!googleAccount.isSignedIn) {
+                                        item {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Text("Google 계정 로그인", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                Text(
+                                                    "Android Credential Manager 정식 로그인 또는 브라우저에 로그인된 Google 세션에서 프로필과 사진을 바로 연동할 수 있습니다.",
+                                                    fontSize = 13.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                    Button(onClick = {
+                                                        val act = context as? Activity
+                                                        if (act == null) {
+                                                            statusMessage = "Activity 컨텍스트를 확인할 수 없습니다."
+                                                        } else if (clientIdInput.isBlank()) {
+                                                            showOAuthAdvanced = true
+                                                            statusMessage = "Web Client ID를 입력하거나 오른쪽 '브라우저 세션 연동'을 눌러주세요."
+                                                        } else {
+                                                            GoogleAccountManager.updateOAuthWebClientId(clientIdInput)
+                                                            scope.launch {
+                                                                val res = GoogleAccountManager.signInWithCredentialManager(act, clientIdInput)
+                                                                res.onSuccess {
+                                                                    statusMessage = "Google 로그인 완료 (${it.email})"
+                                                                }.onFailure { err ->
+                                                                    statusMessage = err.message ?: "로그인에 실패했습니다."
+                                                                }
+                                                            }
+                                                        }
+                                                    }) {
+                                                        Text("Google 계정으로 로그인")
+                                                    }
+                                                    OutlinedButton(onClick = {
+                                                        onExtractGoogleProfile { ok, msg ->
+                                                            statusMessage = msg
+                                                            if (!ok) {
+                                                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    }) {
+                                                        Text("브라우저 세션 연동")
+                                                    }
+                                                }
+                                                TextButton(onClick = {
+                                                    onDismiss()
+                                                    onOpenGoogleSignInTab()
+                                                }) {
+                                                    Text("새 탭에서 Google 로그인 페이지 열기")
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        item {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("연동 방식", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                    Text(
+                                                        text = if (googleAccount.authMode == "CREDENTIAL_MANAGER") "Android Google 로그인 (Credential Manager)" else "브라우저 Google 세션 프로필 연동",
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                OutlinedButton(onClick = {
+                                                    scope.launch {
+                                                        GoogleAccountManager.signOut(context as? Activity)
+                                                        statusMessage = "로그아웃되었습니다."
+                                                    }
+                                                }) {
+                                                    Text("로그아웃")
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    item {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { showOAuthAdvanced = !showOAuthAdvanced }
+                                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("Google Cloud OAuth Web Client ID", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                    Text(
+                                                        text = if (clientIdInput.isBlank()) "미설정 (정식 Credential Manager 로그인 시 입력)" else clientIdInput.take(28) + "...",
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            if (showOAuthAdvanced) {
+                                                OutlinedTextField(
+                                                    value = clientIdInput,
+                                                    onValueChange = { clientIdInput = it },
+                                                    singleLine = true,
+                                                    placeholder = { Text("xxxx.apps.googleusercontent.com", fontSize = 13.sp) },
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                                    Button(onClick = {
+                                                        GoogleAccountManager.updateOAuthWebClientId(clientIdInput)
+                                                        Toast.makeText(context, "Web Client ID 저장됨", Toast.LENGTH_SHORT).show()
+                                                    }) {
+                                                        Text("저장")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Text(
+                                    text = "내 Google 계정에서 (자체 동기화 항목)",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 4.dp, top = 6.dp)
+                                )
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "방문 기록 및 탭",
+                                            subtitle = null,
+                                            checked = googleAccount.syncHistoryAndTabs,
+                                            onCheckedChange = { GoogleAccountManager.updateSyncOptions(historyAndTabs = it) }
+                                        )
+                                    }
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "북마크",
+                                            subtitle = null,
+                                            checked = googleAccount.syncBookmarks,
+                                            onCheckedChange = { GoogleAccountManager.updateSyncOptions(bookmarks = it) }
+                                        )
+                                    }
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "설정",
+                                            subtitle = null,
+                                            checked = googleAccount.syncSettings,
+                                            onCheckedChange = { GoogleAccountManager.updateSyncOptions(settings = it) }
+                                        )
+                                    }
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "AI 스페이스",
+                                            subtitle = "생성한 AI 스페이스와 탭 보관",
+                                            checked = googleAccount.syncAiSpaces,
+                                            onCheckedChange = { GoogleAccountManager.updateSyncOptions(aiSpaces = it) }
+                                        )
+                                    }
+                                }
+                            }
+
                             SettingsCategory.PROFILE -> {
-                                ChromeGroupCard {
+                                ChromeGroupCard(cardColor = settingsCardColor) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(16.dp),
                                         verticalAlignment = Alignment.CenterVertically,
@@ -361,15 +669,16 @@ fun ChromeSettingsScreen(
 
                             SettingsCategory.SEARCH_ENGINE -> {
                                 // 첨부 18008.jpg 크롬 검색엔진 1:1 카드 + 파비콘 아이콘
-                                ChromeGroupCard {
+                                M3SettingsGroup(settingsCardColor) {
                                     val primaries = SearchEngine.entries.filter { it.isPrimary }
-                                    primaries.forEachIndexed { idx, engine ->
-                                        SearchEngineRow(
-                                            engine = engine,
-                                            selected = prefs.searchEngine == engine,
-                                            onSelect = { SpaceManager.updatePreferences { it.copy(searchEngine = engine) } }
-                                        )
-                                        if (idx < primaries.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                    primaries.forEach { engine ->
+                                        item {
+                                            SearchEngineRow(
+                                                engine = engine,
+                                                selected = prefs.searchEngine == engine,
+                                                onSelect = { SpaceManager.updatePreferences { it.copy(searchEngine = engine) } }
+                                            )
+                                        }
                                     }
                                 }
                                 Text(
@@ -379,51 +688,55 @@ fun ChromeSettingsScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(top = 6.dp, start = 4.dp)
                                 )
-                                ChromeGroupCard {
+                                M3SettingsGroup(settingsCardColor) {
                                     val recents = SearchEngine.entries.filterNot { it.isPrimary }
-                                    recents.forEachIndexed { idx, engine ->
-                                        SearchEngineRow(
-                                            engine = engine,
-                                            selected = prefs.searchEngine == engine,
-                                            onSelect = { SpaceManager.updatePreferences { it.copy(searchEngine = engine) } }
-                                        )
-                                        if (idx < recents.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                    recents.forEach { engine ->
+                                        item {
+                                            SearchEngineRow(
+                                                engine = engine,
+                                                selected = prefs.searchEngine == engine,
+                                                onSelect = { SpaceManager.updatePreferences { it.copy(searchEngine = engine) } }
+                                            )
+                                        }
                                     }
                                 }
                             }
 
                             SettingsCategory.PRIVACY -> {
-                                ChromeGroupCard {
-                                    ChromeSwitchItem(
-                                        title = "광고 및 트래커 차단",
-                                        subtitle = "누적 ${adBlockState.totalBlockedCount}건 차단됨",
-                                        checked = adBlockState.globalEnabled,
-                                        onCheckedChange = { enabled ->
-                                            AdBlockEngine.setGlobalEnabled(enabled)
-                                            SpaceManager.updatePreferences { it.copy(adBlockEnabled = enabled) }
-                                        }
-                                    )
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                SpaceManager.clearHistoryAndCache()
-                                                Toast.makeText(context, "방문 기록 및 캐시가 삭제되었습니다", Toast.LENGTH_SHORT).show()
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "광고 및 트래커 차단",
+                                            subtitle = "누적 ${adBlockState.totalBlockedCount}건 차단됨",
+                                            checked = adBlockState.globalEnabled,
+                                            onCheckedChange = { enabled ->
+                                                AdBlockEngine.setGlobalEnabled(enabled)
+                                                SpaceManager.updatePreferences { it.copy(adBlockEnabled = enabled) }
                                             }
-                                            .padding(16.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text("인터넷 사용 기록 삭제", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                            Text("방문 기록, 캐시된 이미지 및 파일 삭제", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        )
+                                    }
+                                    item {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    SpaceManager.clearHistoryAndCache()
+                                                    Toast.makeText(context, "방문 기록 및 캐시가 삭제되었습니다", Toast.LENGTH_SHORT).show()
+                                                }
+                                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text("인터넷 사용 기록 삭제", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                Text("방문 기록, 캐시된 이미지 및 파일 삭제", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
                                         }
                                     }
                                 }
                             }
 
                             SettingsCategory.SAFETY -> {
-                                ChromeGroupCard {
+                                ChromeGroupCard(cardColor = settingsCardColor) {
                                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("안전 확인 완료", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = EgoEmerald)
                                         Text("Google Safe Browsing(WebView 기본 보호) 및 광고/트래커 차단이 활성화되어 있습니다.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -432,7 +745,7 @@ fun ChromeSettingsScreen(
                             }
 
                             SettingsCategory.DEFAULT_BROWSER -> {
-                                ChromeGroupCard {
+                                ChromeGroupCard(cardColor = settingsCardColor) {
                                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("Ego Lite Mobile을 기본 브라우저로 설정", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                                         Text("외부 앱에서 웹 링크를 열 때 Ego Lite Mobile이 바로 실행됩니다.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -447,49 +760,53 @@ fun ChromeSettingsScreen(
 
                             SettingsCategory.TABS -> {
                                 // 첨부 18012.jpg 탭 및 탭 그룹 1:1
-                                ChromeGroupCard {
-                                    val dayOptions = listOf(0 to "안 함", 7 to "7일 동안 비활성 상태인 경우", 14 to "14일 동안 비활성 상태인 경우", 21 to "21일 동안 비활성 상태인 경우")
-                                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Text("비활성 섹션으로 이동", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                        Text(
-                                            text = dayOptions.firstOrNull { it.first == prefs.inactiveTabDays }?.second ?: "21일 동안 비활성 상태인 경우",
-                                            fontSize = 12.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            listOf(0, 7, 14, 21).forEach { days ->
-                                                val sel = prefs.inactiveTabDays == days
-                                                Surface(
-                                                    shape = CircleShape,
-                                                    color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
-                                                    modifier = Modifier.clickable { SpaceManager.updatePreferences { it.copy(inactiveTabDays = days) } }
-                                                ) {
-                                                    Text(
-                                                        text = if (days == 0) "안 함" else "${days}일",
-                                                        fontSize = 12.sp,
-                                                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
-                                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                                    )
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        val dayOptions = listOf(0 to "안 함", 7 to "7일 동안 비활성 상태인 경우", 14 to "14일 동안 비활성 상태인 경우", 21 to "21일 동안 비활성 상태인 경우")
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text("비활성 섹션으로 이동", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Text(
+                                                text = dayOptions.firstOrNull { it.first == prefs.inactiveTabDays }?.second ?: "21일 동안 비활성 상태인 경우",
+                                                fontSize = 13.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                listOf(0, 7, 14, 21).forEach { days ->
+                                                    val sel = prefs.inactiveTabDays == days
+                                                    Surface(
+                                                        shape = CircleShape,
+                                                        color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                        modifier = Modifier.clickable { SpaceManager.updatePreferences { it.copy(inactiveTabDays = days) } }
+                                                    ) {
+                                                        Text(
+                                                            text = if (days == 0) "안 함" else "${days}일",
+                                                            fontSize = 13.sp,
+                                                            fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
+                                                            color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text("동시 활성 AI Space 최대 개수: ${prefs.maxAiSpaces}개", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                        Slider(
-                                            value = prefs.maxAiSpaces.toFloat(),
-                                            onValueChange = { v -> SpaceManager.updatePreferences { it.copy(maxAiSpaces = v.toInt()) } },
-                                            valueRange = 1f..8f,
-                                            steps = 6
-                                        )
+                                    item {
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+                                            Text("동시 활성 AI Space 최대 개수: ${prefs.maxAiSpaces}개", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Slider(
+                                                value = prefs.maxAiSpaces.toFloat(),
+                                                onValueChange = { v -> SpaceManager.updatePreferences { it.copy(maxAiSpaces = v.toInt()) } },
+                                                valueRange = 1f..8f,
+                                                steps = 6
+                                            )
+                                        }
                                     }
                                 }
                             }
 
                             SettingsCategory.HOMEPAGE -> {
                                 // 첨부 18013.jpg 홈페이지 1:1
-                                ChromeGroupCard {
+                                ChromeGroupCard(cardColor = settingsCardColor) {
                                     ChromeSwitchItem(
                                         title = "사용",
                                         subtitle = null,
@@ -498,45 +815,48 @@ fun ChromeSettingsScreen(
                                     )
                                 }
                                 Text("페이지 열기", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
-                                ChromeGroupCard {
+                                M3SettingsGroup(settingsCardColor) {
                                     val isDefaultHome = prefs.homepageUrl == NEW_TAB_URL
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable { SpaceManager.updatePreferences { it.copy(homepageUrl = NEW_TAB_URL) } }
-                                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        RadioButton(selected = isDefaultHome, onClick = { SpaceManager.updatePreferences { it.copy(homepageUrl = NEW_TAB_URL) } })
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text("Ego Lite 홈페이지 (새 탭)", fontSize = 14.sp)
+                                    item {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { SpaceManager.updatePreferences { it.copy(homepageUrl = NEW_TAB_URL) } }
+                                                .padding(horizontal = 20.dp, vertical = 14.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(selected = isDefaultHome, onClick = { SpaceManager.updatePreferences { it.copy(homepageUrl = NEW_TAB_URL) } })
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text("Ego Lite 홈페이지 (새 탭)", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                        }
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    var customHome by remember(prefs.homepageUrl) {
-                                        mutableStateOf(if (isDefaultHome) "" else prefs.homepageUrl)
-                                    }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        RadioButton(
-                                            selected = !isDefaultHome,
-                                            onClick = {
-                                                val target = customHome.ifBlank { "https://www.google.com" }
-                                                SpaceManager.updatePreferences { it.copy(homepageUrl = target) }
-                                            }
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        OutlinedTextField(
-                                            value = customHome,
-                                            onValueChange = { v ->
-                                                customHome = v
-                                                if (v.isNotBlank()) SpaceManager.updatePreferences { it.copy(homepageUrl = v) }
-                                            },
-                                            placeholder = { Text("맞춤 웹 주소 입력", fontSize = 13.sp) },
-                                            singleLine = true,
-                                            modifier = Modifier.weight(1f)
-                                        )
+                                    item {
+                                        var customHome by remember(prefs.homepageUrl) {
+                                            mutableStateOf(if (isDefaultHome) "" else prefs.homepageUrl)
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(
+                                                selected = !isDefaultHome,
+                                                onClick = {
+                                                    val target = customHome.ifBlank { "https://www.google.com" }
+                                                    SpaceManager.updatePreferences { it.copy(homepageUrl = target) }
+                                                }
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            OutlinedTextField(
+                                                value = customHome,
+                                                onValueChange = { v ->
+                                                    customHome = v
+                                                    if (v.isNotBlank()) SpaceManager.updatePreferences { it.copy(homepageUrl = v) }
+                                                },
+                                                placeholder = { Text("맞춤 웹 주소 입력", fontSize = 14.sp) },
+                                                singleLine = true,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -572,7 +892,7 @@ fun ChromeSettingsScreen(
                                     }
 
                                     // 1. 시스템 기본값 카드
-                                    ChromeGroupCard {
+                                    ChromeGroupCard(cardColor = settingsCardColor) {
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -630,76 +950,181 @@ fun ChromeSettingsScreen(
                                     }
 
                                     // 2. 밝게 / 어둡게 라디오 그룹 카드
-                                    ChromeGroupCard {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { selectTheme(ThemeMode.LIGHT) }
-                                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            RadioButton(
-                                                selected = prefs.themeMode == ThemeMode.LIGHT,
-                                                onClick = { selectTheme(ThemeMode.LIGHT) }
-                                            )
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Text("밝게", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    M3SettingsGroup(settingsCardColor) {
+                                        item {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { selectTheme(ThemeMode.LIGHT) }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                RadioButton(
+                                                    selected = prefs.themeMode == ThemeMode.LIGHT,
+                                                    onClick = { selectTheme(ThemeMode.LIGHT) }
+                                                )
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Text("밝게", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            }
                                         }
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { selectTheme(ThemeMode.DARK) }
-                                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            RadioButton(
-                                                selected = prefs.themeMode == ThemeMode.DARK,
-                                                onClick = { selectTheme(ThemeMode.DARK) }
-                                            )
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Text("어둡게", fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                        item {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { selectTheme(ThemeMode.DARK) }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                RadioButton(
+                                                    selected = prefs.themeMode == ThemeMode.DARK,
+                                                    onClick = { selectTheme(ThemeMode.DARK) }
+                                                )
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Text("어둡게", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            }
                                         }
                                     }
                                 } else {
                                     // 크롬 태블릿 1:1 디자인 상위 화면 (테마 탭 시 디자인 > 테마 진입)
-                                    ChromeGroupCard {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { showThemeSubpage = true }
-                                                .padding(16.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text("테마", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                                Text(
-                                                    text = prefs.themeMode.label,
-                                                    fontSize = 12.5.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    M3SettingsGroup(settingsCardColor) {
+                                        item {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { showThemeSubpage = true }
+                                                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text("테마", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                    Text(
+                                                        text = prefs.themeMode.label,
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                    contentDescription = "테마 설정 열기",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                                contentDescription = "테마 설정 열기",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "툴바 바로가기 (홈 버튼 표시)",
+                                                subtitle = "주소창 왼쪽에 홈 버튼 표시",
+                                                checked = prefs.showHomeButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showHomeButton = c) } }
                                             )
                                         }
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                        ChromeSwitchItem(
-                                            title = "툴바 바로가기 (홈 버튼 표시)",
-                                            subtitle = "주소창 왼쪽에 홈 버튼 표시",
-                                            checked = prefs.showHomeButton,
-                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showHomeButton = c) } }
-                                        )
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                        ChromeSwitchItem(
-                                            title = "북마크바 표시",
-                                            subtitle = "주소창 아래에 북마크 바 표시",
-                                            checked = prefs.showBookmarkBar,
-                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showBookmarkBar = c) } }
-                                        )
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "북마크바 표시",
+                                                subtitle = "주소창 아래에 북마크 바 표시",
+                                                checked = prefs.showBookmarkBar,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showBookmarkBar = c) } }
+                                            )
+                                        }
+                                    }
+
+                                    Text(
+                                        text = "주소창 툴바 버튼 커스텀",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                                    )
+                                    M3SettingsGroup(settingsCardColor) {
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "MCP 상태 배지",
+                                                subtitle = "MCP 연결 끊김 경고 배지 표시",
+                                                checked = prefs.showMcpBadgeButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showMcpBadgeButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "AI 명령 버튼",
+                                                subtitle = "MCP 연결 시 AI 명령 팝업 아이콘 표시",
+                                                checked = prefs.showAiCommandButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showAiCommandButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "광고 차단 방패",
+                                                subtitle = "현재 사이트 광고 차단 ON/OFF 및 카운터",
+                                                checked = prefs.showAdBlockButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showAdBlockButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "자동 번역",
+                                                subtitle = "원탭 페이지 번역 및 길게 눌러 번역 설정",
+                                                checked = prefs.showTranslateButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showTranslateButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "다크모드 빠른 전환",
+                                                subtitle = "주간 / 야간 테마 원탭 전환",
+                                                checked = prefs.showDarkModeButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showDarkModeButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "Google 프로필 아바타",
+                                                subtitle = "주소창 우측에 구글 프로필 사진 표시 (탭하여 계정 설정)",
+                                                checked = prefs.showProfileAvatarButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showProfileAvatarButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "새 탭 바로 열기 (+)",
+                                                subtitle = "주소창 옆에서 즉시 새 탭 생성",
+                                                checked = prefs.showNewTabToolbarButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showNewTabToolbarButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "현재 페이지 공유",
+                                                subtitle = "현재 웹페이지 링크를 다른 앱으로 바로 공유",
+                                                checked = prefs.showShareButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showShareButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "페이지 내 찾기",
+                                                subtitle = "현재 페이지 본문 텍스트 검색 바 열기",
+                                                checked = prefs.showFindInPageButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showFindInPageButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "데스크톱 / 모바일 사이트 전환",
+                                                subtitle = "PC 화면과 모바일 화면 즉시 전환",
+                                                checked = prefs.showDesktopSiteButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showDesktopSiteButton = c) } }
+                                            )
+                                        }
+                                        item {
+                                            ChromeSwitchItem(
+                                                title = "리더(간단히 보기) 모드",
+                                                subtitle = "기사 본문만 깔끔하게 추출해 읽기",
+                                                checked = prefs.showReaderModeButton,
+                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showReaderModeButton = c) } }
+                                            )
+                                        }
                                     }
                                 }
 
@@ -713,63 +1138,157 @@ fun ChromeSettingsScreen(
                                     }
                                 }
                                 Text(
+                                    text = "카드 삭제 애니메이션 (AI 모니터 · 전체 탭 보기)",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                                )
+                                M3SettingsGroup(settingsCardColor) {
+                                    CardVanishStyle.entries.forEach { style ->
+                                        item {
+                                            val sel = prefs.cardVanishStyle == style
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { SpaceManager.updatePreferences { it.copy(cardVanishStyle = style) } }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(style.label, fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                    Text(style.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                                RadioButton(
+                                                    selected = sel,
+                                                    onClick = { SpaceManager.updatePreferences { it.copy(cardVanishStyle = style) } }
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (prefs.cardVanishStyle == CardVanishStyle.HARMONY_DUST) {
+                                        item {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Text("먼지 입자 밀도", fontSize = 15.sp, fontWeight = FontWeight.Normal)
+                                                Row(
+                                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    listOf(1000, 1800, 2500, 3000).forEach { cnt ->
+                                                        val sel = prefs.vanishParticleCount == cnt
+                                                        Surface(
+                                                            shape = CircleShape,
+                                                            color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                            modifier = Modifier.clickable {
+                                                                SpaceManager.updatePreferences { it.copy(vanishParticleCount = cnt) }
+                                                            }
+                                                        ) {
+                                                            Text(
+                                                                text = "${cnt}개",
+                                                                fontSize = 13.sp,
+                                                                fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
+                                                                color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        item {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text("소멸 애니메이션 속도", fontSize = 15.sp, fontWeight = FontWeight.Normal)
+                                                    Text(
+                                                        "${prefs.vanishDurationMs} ms",
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                                Slider(
+                                                    value = prefs.vanishDurationMs.toFloat().coerceIn(600f, 1800f),
+                                                    onValueChange = { v ->
+                                                        val snapped = ((v / 100f).roundToInt() * 100).coerceIn(600, 1800)
+                                                        SpaceManager.updatePreferences { it.copy(vanishDurationMs = snapped) }
+                                                    },
+                                                    valueRange = 600f..1800f
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Text(
                                     "탭 오디오 이퀄라이저 모핑",
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(top = 6.dp, start = 4.dp)
                                 )
-                                ChromeGroupCard {
-                                    EqualizerMorphStyle.entries.forEachIndexed { idx, style ->
-                                        val selected = prefs.equalizerMorphStyle == style
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    SpaceManager.updatePreferences { it.copy(equalizerMorphStyle = style) }
-                                                }
-                                                .padding(horizontal = 16.dp, vertical = 11.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Surface(
-                                                shape = RoundedCornerShape(10.dp),
-                                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                modifier = Modifier.size(34.dp)
+                                M3SettingsGroup(settingsCardColor) {
+                                    EqualizerMorphStyle.entries.forEach { style ->
+                                        item {
+                                            val selected = prefs.equalizerMorphStyle == style
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        SpaceManager.updatePreferences { it.copy(equalizerMorphStyle = style) }
+                                                    }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Box(contentAlignment = Alignment.Center) {
-                                                    TabEqualizerIcon(
-                                                        isPlaying = true,
-                                                        isMuted = eqPreviewMuted,
-                                                        activeColor = MaterialTheme.colorScheme.primary,
-                                                        mutedColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        cutoutBgColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                        morphStyle = style,
-                                                        onClick = { eqPreviewMuted = !eqPreviewMuted }
+                                                Surface(
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                    modifier = Modifier.size(36.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        TabEqualizerIcon(
+                                                            isPlaying = true,
+                                                            isMuted = eqPreviewMuted,
+                                                            activeColor = MaterialTheme.colorScheme.primary,
+                                                            mutedColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            cutoutBgColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                            morphStyle = style,
+                                                            onClick = { eqPreviewMuted = !eqPreviewMuted }
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(14.dp))
+                                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(
+                                                        style.label,
+                                                        fontSize = 16.sp,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                    Text(
+                                                        style.description,
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
-                                            }
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    style.label,
-                                                    fontSize = 14.sp,
-                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                                                )
-                                                Text(
-                                                    style.description,
-                                                    fontSize = 11.5.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                RadioButton(
+                                                    selected = selected,
+                                                    onClick = {
+                                                        SpaceManager.updatePreferences { it.copy(equalizerMorphStyle = style) }
+                                                    }
                                                 )
                                             }
-                                            RadioButton(
-                                                selected = selected,
-                                                onClick = {
-                                                    SpaceManager.updatePreferences { it.copy(equalizerMorphStyle = style) }
-                                                }
-                                            )
-                                        }
-                                        if (idx < EqualizerMorphStyle.entries.lastIndex) {
-                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                                         }
                                     }
                                 }
@@ -782,129 +1301,127 @@ fun ChromeSettingsScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(top = 6.dp, start = 4.dp)
                                 )
-                                ChromeGroupCard {
-                                    TabWidthMode.entries.forEachIndexed { idx, mode ->
-                                        val selected = prefs.tabWidthMode == mode
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    SpaceManager.updatePreferences { it.copy(tabWidthMode = mode) }
+                                M3SettingsGroup(settingsCardColor) {
+                                    TabWidthMode.entries.forEach { mode ->
+                                        item {
+                                            val selected = prefs.tabWidthMode == mode
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        SpaceManager.updatePreferences { it.copy(tabWidthMode = mode) }
+                                                    }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(mode.label, fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                    Text(
+                                                        if (mode == TabWidthMode.DYNAMIC) {
+                                                            "Google·NAVER 등 짧은 탭은 콤팩트하게, 긴 제목은 끝이 흐릿하게 표시"
+                                                        } else {
+                                                            "모든 탭을 지정한 너비(${prefs.manualTabWidthDp}dp)로 균일하게 표시"
+                                                        },
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
                                                 }
-                                                .padding(horizontal = 16.dp, vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    mode.label,
-                                                    fontSize = 14.sp,
-                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                                                )
-                                                Text(
-                                                    if (mode == TabWidthMode.DYNAMIC) {
-                                                        "Google·NAVER 등 짧은 탭은 콤팩트하게, 긴 제목은 끝이 흐릿하게 표시"
-                                                    } else {
-                                                        "모든 탭을 지정한 너비(${prefs.manualTabWidthDp}dp)로 균일하게 표시"
-                                                    },
-                                                    fontSize = 11.5.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                RadioButton(
+                                                    selected = selected,
+                                                    onClick = {
+                                                        SpaceManager.updatePreferences { it.copy(tabWidthMode = mode) }
+                                                    }
                                                 )
                                             }
-                                            RadioButton(
-                                                selected = selected,
-                                                onClick = {
-                                                    SpaceManager.updatePreferences { it.copy(tabWidthMode = mode) }
-                                                }
-                                            )
-                                        }
-                                        if (idx < TabWidthMode.entries.lastIndex) {
-                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                                         }
                                     }
                                     if (prefs.tabWidthMode == TabWidthMode.MANUAL) {
-                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 16.dp, vertical = 10.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                        item {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp)
                                             ) {
-                                                Text("수동 탭 너비", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                                                Text(
-                                                    "${prefs.manualTabWidthDp} dp",
-                                                    fontSize = 13.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.primary
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text("수동 탭 너비", fontSize = 15.sp, fontWeight = FontWeight.Normal)
+                                                    Text(
+                                                        "${prefs.manualTabWidthDp} dp",
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                                Slider(
+                                                    value = prefs.manualTabWidthDp.toFloat().coerceIn(110f, 240f),
+                                                    onValueChange = { v ->
+                                                        val snapped = (v / 5f).roundToInt() * 5
+                                                        SpaceManager.updatePreferences { it.copy(manualTabWidthDp = snapped.coerceIn(110, 240)) }
+                                                    },
+                                                    valueRange = 110f..240f
                                                 )
                                             }
-                                            Slider(
-                                                value = prefs.manualTabWidthDp.toFloat().coerceIn(110f, 240f),
-                                                onValueChange = { v ->
-                                                    val snapped = (v / 5f).roundToInt() * 5
-                                                    SpaceManager.updatePreferences { it.copy(manualTabWidthDp = snapped.coerceIn(110, 240)) }
-                                                },
-                                                valueRange = 110f..240f
-                                            )
                                         }
                                     }
                                 }
 
                                 // 웹페이지 폰트 & 커스텀 .ttf 추가 섹션
                                 Text("웹페이지 폰트", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp, start = 4.dp))
-                                ChromeGroupCard {
-                                    WebFontMode.entries.forEachIndexed { idx, mode ->
-                                        val selected = prefs.webFontMode == mode
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable {
-                                                    if (mode == WebFontMode.CUSTOM_TTF && prefs.customFontPath.isBlank()) {
-                                                        BrowserActivityBridge.launchFontPicker?.invoke()
-                                                    } else {
-                                                        SpaceManager.updatePreferences { it.copy(webFontMode = mode) }
-                                                        SpaceManager.reload(SpaceManager.getActiveSpace().id)
+                                M3SettingsGroup(settingsCardColor) {
+                                    WebFontMode.entries.forEach { mode ->
+                                        item {
+                                            val selected = prefs.webFontMode == mode
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        if (mode == WebFontMode.CUSTOM_TTF && prefs.customFontPath.isBlank()) {
+                                                            BrowserActivityBridge.launchFontPicker?.invoke()
+                                                        } else {
+                                                            SpaceManager.updatePreferences { it.copy(webFontMode = mode) }
+                                                            SpaceManager.reload(SpaceManager.getActiveSpace().id)
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(Icons.Default.FontDownload, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Spacer(modifier = Modifier.width(14.dp))
+                                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(mode.label, fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                    if (mode == WebFontMode.CUSTOM_TTF && prefs.customFontName.isNotBlank()) {
+                                                        Text("적용 파일: ${prefs.customFontName}", fontSize = 13.sp, color = EgoEmerald)
+                                                    } else if (mode == WebFontMode.SYSTEM_FONT) {
+                                                        Text("웹폰트 차단 후 기기 시스템 폰트로 렌더링", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                                     }
                                                 }
-                                                .padding(horizontal = 16.dp, vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(Icons.Default.FontDownload, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Spacer(modifier = Modifier.width(12.dp))
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(mode.label, fontSize = 14.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
-                                                if (mode == WebFontMode.CUSTOM_TTF && prefs.customFontName.isNotBlank()) {
-                                                    Text("적용 파일: ${prefs.customFontName}", fontSize = 11.sp, color = EgoEmerald)
-                                                } else if (mode == WebFontMode.SYSTEM_FONT) {
-                                                    Text("웹폰트 차단 후 기기 시스템 폰트로 렌더링", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                }
+                                                RadioButton(
+                                                    selected = selected,
+                                                    onClick = {
+                                                        if (mode == WebFontMode.CUSTOM_TTF && prefs.customFontPath.isBlank()) {
+                                                            BrowserActivityBridge.launchFontPicker?.invoke()
+                                                        } else {
+                                                            SpaceManager.updatePreferences { it.copy(webFontMode = mode) }
+                                                            SpaceManager.reload(SpaceManager.getActiveSpace().id)
+                                                        }
+                                                    }
+                                                )
                                             }
-                                            RadioButton(
-                                                selected = selected,
-                                                onClick = {
-                                                    if (mode == WebFontMode.CUSTOM_TTF && prefs.customFontPath.isBlank()) {
-                                                        BrowserActivityBridge.launchFontPicker?.invoke()
-                                                    } else {
-                                                        SpaceManager.updatePreferences { it.copy(webFontMode = mode) }
-                                                        SpaceManager.reload(SpaceManager.getActiveSpace().id)
-                                                    }
-                                                }
-                                            )
                                         }
-                                        if (idx < WebFontMode.entries.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                        horizontalArrangement = Arrangement.End
-                                    ) {
-                                        OutlinedButton(onClick = { BrowserActivityBridge.launchFontPicker?.invoke() }) {
-                                            Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("커스텀 폰트 (.ttf / .otf) 파일 추가")
+                                    item {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                                            horizontalArrangement = Arrangement.End
+                                        ) {
+                                            OutlinedButton(onClick = { BrowserActivityBridge.launchFontPicker?.invoke() }) {
+                                                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("커스텀 폰트 (.ttf / .otf) 파일 추가")
+                                            }
                                         }
                                     }
                                 }
@@ -915,6 +1432,115 @@ fun ChromeSettingsScreen(
                             }
 
                             SettingsCategory.AI_MONITOR -> {
+                                val retentionPresets = listOf(
+                                    1 to "1일",
+                                    3 to "3일",
+                                    5 to "5일",
+                                    7 to "7일",
+                                    30 to "30일",
+                                    0 to "무제한"
+                                )
+                                val presetValues = retentionPresets.map { it.first }.toSet()
+                                var showCustomDays by remember(prefs.aiSpaceRetentionDays) {
+                                    mutableStateOf(prefs.aiSpaceRetentionDays !in presetValues)
+                                }
+                                var customDaysText by remember(prefs.aiSpaceRetentionDays) {
+                                    mutableStateOf(
+                                        if (prefs.aiSpaceRetentionDays > 0) prefs.aiSpaceRetentionDays.toString() else "14"
+                                    )
+                                }
+
+                                Text(
+                                    text = "AI 스페이스 저장 기간",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(start = 4.dp)
+                                )
+                                ChromeGroupCard(cardColor = settingsCardColor) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = if (prefs.aiSpaceRetentionDays == 0) {
+                                                "앱을 종료해도 생성한 AI 스페이스가 무제한 유지됩니다."
+                                            } else {
+                                                "앱 재시작 시 생성한 AI 스페이스를 최대 ${prefs.aiSpaceRetentionDays}일간 자동 복원합니다."
+                                            },
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                                        ) {
+                                            retentionPresets.forEach { (days, label) ->
+                                                val sel = !showCustomDays && prefs.aiSpaceRetentionDays == days
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                    modifier = Modifier
+                                                        .clip(CircleShape)
+                                                        .clickable {
+                                                            showCustomDays = false
+                                                            SpaceManager.updatePreferences { it.copy(aiSpaceRetentionDays = days) }
+                                                        }
+                                                ) {
+                                                    Text(
+                                                        text = label,
+                                                        fontSize = 12.5.sp,
+                                                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                                                        color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp)
+                                                    )
+                                                }
+                                            }
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = if (showCustomDays) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                modifier = Modifier
+                                                    .clip(CircleShape)
+                                                    .clickable { showCustomDays = true }
+                                            ) {
+                                                Text(
+                                                    text = "커스텀",
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = if (showCustomDays) FontWeight.Bold else FontWeight.Medium,
+                                                    color = if (showCustomDays) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp)
+                                                )
+                                            }
+                                        }
+                                        if (showCustomDays) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = customDaysText,
+                                                    onValueChange = { txt -> customDaysText = txt.filter { it.isDigit() }.take(3) },
+                                                    singleLine = true,
+                                                    label = { Text("보관 일수 (일)") },
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Button(
+                                                    onClick = {
+                                                        val parsed = customDaysText.toIntOrNull()?.coerceIn(1, 365) ?: 7
+                                                        SpaceManager.updatePreferences { it.copy(aiSpaceRetentionDays = parsed) }
+                                                    }
+                                                ) {
+                                                    Text("적용")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 Text(
                                     text = "세로 모드 위치",
                                     fontSize = 13.sp,
@@ -922,36 +1548,35 @@ fun ChromeSettingsScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(start = 4.dp)
                                 )
-                                ChromeGroupCard {
-                                    MonitorPosition.entries.forEachIndexed { idx, pos ->
-                                        val sel = prefs.monitorPosPortrait == pos
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { SpaceManager.updatePreferences { it.copy(monitorPosPortrait = pos) } }
-                                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            RadioButton(
-                                                selected = sel,
-                                                onClick = { SpaceManager.updatePreferences { it.copy(monitorPosPortrait = pos) } }
-                                            )
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Column {
-                                                Text(
-                                                    text = if (pos == MonitorPosition.TOP) "상단 (기본값)" else "좌측 사이드바",
-                                                    fontSize = 15.sp,
-                                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                                M3SettingsGroup(settingsCardColor) {
+                                    MonitorPosition.entries.forEach { pos ->
+                                        item {
+                                            val sel = prefs.monitorPosPortrait == pos
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { SpaceManager.updatePreferences { it.copy(monitorPosPortrait = pos) } }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                RadioButton(
+                                                    selected = sel,
+                                                    onClick = { SpaceManager.updatePreferences { it.copy(monitorPosPortrait = pos) } }
                                                 )
-                                                Text(
-                                                    text = if (pos == MonitorPosition.TOP) "세로 화면에서 탭 바 위로 확장됩니다." else "세로 화면에서도 왼쪽 사이드바로 확장됩니다.",
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(
+                                                        text = if (pos == MonitorPosition.TOP) "상단 (기본값)" else "좌측 사이드바",
+                                                        fontSize = 16.sp,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                    Text(
+                                                        text = if (pos == MonitorPosition.TOP) "세로 화면에서 탭 바 위로 확장됩니다." else "세로 화면에서도 왼쪽 사이드바로 확장됩니다.",
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
                                             }
-                                        }
-                                        if (idx < MonitorPosition.entries.lastIndex) {
-                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                                         }
                                     }
                                 }
@@ -963,36 +1588,35 @@ fun ChromeSettingsScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(top = 6.dp, start = 4.dp)
                                 )
-                                ChromeGroupCard {
-                                    MonitorPosition.entries.forEachIndexed { idx, pos ->
-                                        val sel = prefs.monitorPosLandscape == pos
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clickable { SpaceManager.updatePreferences { it.copy(monitorPosLandscape = pos) } }
-                                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            RadioButton(
-                                                selected = sel,
-                                                onClick = { SpaceManager.updatePreferences { it.copy(monitorPosLandscape = pos) } }
-                                            )
-                                            Spacer(modifier = Modifier.width(10.dp))
-                                            Column {
-                                                Text(
-                                                    text = if (pos == MonitorPosition.LEFT) "좌측 사이드바 (기본값)" else "상단",
-                                                    fontSize = 15.sp,
-                                                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                                M3SettingsGroup(settingsCardColor) {
+                                    MonitorPosition.entries.forEach { pos ->
+                                        item {
+                                            val sel = prefs.monitorPosLandscape == pos
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable { SpaceManager.updatePreferences { it.copy(monitorPosLandscape = pos) } }
+                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                RadioButton(
+                                                    selected = sel,
+                                                    onClick = { SpaceManager.updatePreferences { it.copy(monitorPosLandscape = pos) } }
                                                 )
-                                                Text(
-                                                    text = if (pos == MonitorPosition.LEFT) "가로 화면에서 왼쪽 사이드바로 확장됩니다." else "가로 화면에서도 탭 바 위로 확장됩니다.",
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                    Text(
+                                                        text = if (pos == MonitorPosition.LEFT) "좌측 사이드바 (기본값)" else "상단",
+                                                        fontSize = 16.sp,
+                                                        fontWeight = FontWeight.Normal
+                                                    )
+                                                    Text(
+                                                        text = if (pos == MonitorPosition.LEFT) "가로 화면에서 왼쪽 사이드바로 확장됩니다." else "가로 화면에서도 탭 바 위로 확장됩니다.",
+                                                        fontSize = 13.sp,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
                                             }
-                                        }
-                                        if (idx < MonitorPosition.entries.lastIndex) {
-                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                                         }
                                     }
                                 }
@@ -1000,7 +1624,7 @@ fun ChromeSettingsScreen(
 
                             SettingsCategory.ACCESSIBILITY -> {
                                 // 첨부 18015.jpg 접근성 1:1 (확대/축소 슬라이더 + 오즈의 마법사 미리보기 카드 + 토글 3종)
-                                ChromeGroupCard {
+                                ChromeGroupCard(cardColor = settingsCardColor) {
                                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("기본 확대/축소", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                         Text("방문하는 모든 사이트에서 텍스트 및 이미지를 확대 또는 축소합니다.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1023,7 +1647,7 @@ fun ChromeSettingsScreen(
                                     }
                                 }
                                 // 실시간 미리보기 카드 (오즈의 마법사)
-                                ChromeGroupCard {
+                                ChromeGroupCard(cardColor = settingsCardColor) {
                                     val scale = prefs.textZoom / 100f
                                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("미리보기", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1036,85 +1660,88 @@ fun ChromeSettingsScreen(
                                         )
                                     }
                                 }
-                                ChromeGroupCard {
-                                    ChromeSwitchItem(
-                                        title = "기본 메뉴에 확대/축소 옵션 표시",
-                                        subtitle = "여러 사이트의 확대/축소 맞춤설정이 더 쉬워집니다.",
-                                        checked = prefs.showZoomInMenu,
-                                        onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showZoomInMenu = c) } }
-                                    )
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    ChromeSwitchItem(
-                                        title = "확대/축소 강제 사용",
-                                        subtitle = "웹사이트의 확대 방지 요청 무시",
-                                        checked = prefs.forceEnableZoom,
-                                        onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(forceEnableZoom = c) } }
-                                    )
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    ChromeSwitchItem(
-                                        title = "웹페이지 간단히 보기",
-                                        subtitle = "기사를 간단히 보기로 표시할 수 있을 때 알림 받기",
-                                        checked = prefs.simplifiedViewPrompt,
-                                        onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(simplifiedViewPrompt = c) } }
-                                    )
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "기본 메뉴에 확대/축소 옵션 표시",
+                                            subtitle = "여러 사이트의 확대/축소 맞춤설정이 더 쉬워집니다.",
+                                            checked = prefs.showZoomInMenu,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showZoomInMenu = c) } }
+                                        )
+                                    }
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "확대/축소 강제 사용",
+                                            subtitle = "웹사이트의 확대 방지 요청 무시",
+                                            checked = prefs.forceEnableZoom,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(forceEnableZoom = c) } }
+                                        )
+                                    }
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "웹페이지 간단히 보기",
+                                            subtitle = "기사를 간단히 보기로 표시할 수 있을 때 알림 받기",
+                                            checked = prefs.simplifiedViewPrompt,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(simplifiedViewPrompt = c) } }
+                                        )
+                                    }
                                 }
                             }
 
                             SettingsCategory.SITE_SETTINGS -> {
                                 // 첨부 18016.jpg 사이트 설정 1:1
                                 Text("권한", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
-                                ChromeGroupCard {
-                                    SitePermissionRow(Icons.Default.LocationOn, "위치", prefs.allowLocation) { c -> SpaceManager.updatePreferences { it.copy(allowLocation = c) } }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    SitePermissionRow(Icons.Default.CameraAlt, "카메라", prefs.allowCamera) { c -> SpaceManager.updatePreferences { it.copy(allowCamera = c) } }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    SitePermissionRow(Icons.Default.Mic, "마이크", prefs.allowMic) { c -> SpaceManager.updatePreferences { it.copy(allowMic = c) } }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    SitePermissionRow(Icons.Default.OpenInNew, "팝업 및 리디렉션 (본인인증)", prefs.allowPopups) { c -> SpaceManager.updatePreferences { it.copy(allowPopups = c) } }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    SitePermissionRow(Icons.Default.Code, "JavaScript", prefs.allowJavaScript) { c -> SpaceManager.updatePreferences { it.copy(allowJavaScript = c) } }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    SitePermissionRow(Icons.Default.Cookie, "타사 쿠키 허용", prefs.allowThirdPartyCookies) { c -> SpaceManager.updatePreferences { it.copy(allowThirdPartyCookies = c) } }
+                                M3SettingsGroup(settingsCardColor) {
+                                    item { SitePermissionRow(Icons.Default.LocationOn, "위치", prefs.allowLocation) { c -> SpaceManager.updatePreferences { it.copy(allowLocation = c) } } }
+                                    item { SitePermissionRow(Icons.Default.CameraAlt, "카메라", prefs.allowCamera) { c -> SpaceManager.updatePreferences { it.copy(allowCamera = c) } } }
+                                    item { SitePermissionRow(Icons.Default.Mic, "마이크", prefs.allowMic) { c -> SpaceManager.updatePreferences { it.copy(allowMic = c) } } }
+                                    item { SitePermissionRow(Icons.Default.OpenInNew, "팝업 및 리디렉션 (본인인증)", prefs.allowPopups) { c -> SpaceManager.updatePreferences { it.copy(allowPopups = c) } } }
+                                    item { SitePermissionRow(Icons.Default.Code, "JavaScript", prefs.allowJavaScript) { c -> SpaceManager.updatePreferences { it.copy(allowJavaScript = c) } } }
+                                    item { SitePermissionRow(Icons.Default.Cookie, "타사 쿠키 허용", prefs.allowThirdPartyCookies) { c -> SpaceManager.updatePreferences { it.copy(allowThirdPartyCookies = c) } } }
                                 }
                             }
 
                             SettingsCategory.LANGUAGES -> {
                                 // 첨부 18017.jpg 언어 1:1
-                                ChromeGroupCard {
+                                ChromeGroupCard(cardColor = settingsCardColor) {
                                     Column(modifier = Modifier.padding(16.dp)) {
                                         Text("기기의 현재 언어", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                         Text("${Locale.getDefault().displayLanguage} (${Locale.getDefault().displayCountry})", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
                                 Text("번역 설정", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp))
-                                ChromeGroupCard {
-                                    ChromeSwitchItem(
-                                        title = "다른 언어로 된 페이지를 번역하는 옵션 제공",
-                                        subtitle = null,
-                                        checked = prefs.offerTranslate,
-                                        onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(offerTranslate = c) } }
-                                    )
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text("번역 엔진", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            RadioButton(
-                                                selected = prefs.translationEngine == TranslationEngine.ONLINE_GOOGLE,
-                                                onClick = { SpaceManager.updatePreferences { it.copy(translationEngine = TranslationEngine.ONLINE_GOOGLE) } }
-                                            )
-                                            Text("온라인 (Google)", fontSize = 13.sp)
-                                            Spacer(modifier = Modifier.width(16.dp))
-                                            RadioButton(
-                                                selected = prefs.translationEngine == TranslationEngine.OFFLINE_MLKIT,
-                                                onClick = { SpaceManager.updatePreferences { it.copy(translationEngine = TranslationEngine.OFFLINE_MLKIT) } }
-                                            )
-                                            Text("온디바이스 오프라인 (ML Kit)", fontSize = 13.sp)
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "다른 언어로 된 페이지를 번역하는 옵션 제공",
+                                            subtitle = null,
+                                            checked = prefs.offerTranslate,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(offerTranslate = c) } }
+                                        )
+                                    }
+                                    item {
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text("번역 엔진", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                RadioButton(
+                                                    selected = prefs.translationEngine == TranslationEngine.ONLINE_GOOGLE,
+                                                    onClick = { SpaceManager.updatePreferences { it.copy(translationEngine = TranslationEngine.ONLINE_GOOGLE) } }
+                                                )
+                                                Text("온라인 (Google)", fontSize = 14.sp)
+                                                Spacer(modifier = Modifier.width(16.dp))
+                                                RadioButton(
+                                                    selected = prefs.translationEngine == TranslationEngine.OFFLINE_MLKIT,
+                                                    onClick = { SpaceManager.updatePreferences { it.copy(translationEngine = TranslationEngine.OFFLINE_MLKIT) } }
+                                                )
+                                                Text("온디바이스 오프라인 (ML Kit)", fontSize = 14.sp)
+                                            }
                                         }
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text("번역 도착어", fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                        Text(TranslationManager.labelFor(prefs.defaultTranslateTarget), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    item {
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("번역 도착어", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Text(TranslationManager.labelFor(prefs.defaultTranslateTarget), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
                                 }
                             }
@@ -1122,47 +1749,54 @@ fun ChromeSettingsScreen(
                             SettingsCategory.DOWNLOADS -> {
                                 // 첨부 18018.jpg 다운로드 1:1
                                 val downloadDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
-                                ChromeGroupCard {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                runCatching { context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) }
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    runCatching { context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) }
+                                                }
+                                                .padding(horizontal = 20.dp, vertical = 16.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                                Text("다운로드 위치", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                                Text("다운로드 $downloadDir", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
-                                            .padding(16.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text("다운로드 위치", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                            Text("다운로드 $downloadDir", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    ChromeSwitchItem(
-                                        title = "파일 저장 위치 묻기",
-                                        subtitle = "다운로드 시작 전 알림 표시",
-                                        checked = prefs.askDownloadLocation,
-                                        onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(askDownloadLocation = c) } }
-                                    )
+                                    item {
+                                        ChromeSwitchItem(
+                                            title = "파일 저장 위치 묻기",
+                                            subtitle = "다운로드 시작 전 알림 표시",
+                                            checked = prefs.askDownloadLocation,
+                                            onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(askDownloadLocation = c) } }
+                                        )
+                                    }
                                 }
                             }
 
                             SettingsCategory.ABOUT -> {
                                 // 첨부 18019.jpg 정보 1:1
-                                ChromeGroupCard {
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text("애플리케이션 버전", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                        Text("Ego Lite Mobile ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE}) · $chromiumVersion", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                M3SettingsGroup(settingsCardColor) {
+                                    item {
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("애플리케이션 버전", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Text("Ego Lite Mobile ${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE}) · $chromiumVersion", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text("운영체제", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                        Text("Android ${Build.VERSION.RELEASE}; ${Build.MODEL} Build/${Build.ID}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    item {
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("운영체제", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Text("Android ${Build.VERSION.RELEASE}; ${Build.MODEL} Build/${Build.ID}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text("법적 정보", fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                        Text("Ego Lite Mobile Open Project · Android System WebView / Ktor / ML Kit", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    item {
+                                        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text("법적 정보", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Text("Ego Lite Mobile Open Project · Android System WebView / Ktor / ML Kit", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
                                 }
                                 val lastCrash = remember { CrashLogger.readLastCrash(context) }
@@ -1184,12 +1818,53 @@ fun ChromeSettingsScreen(
     }
 }
 
+private class M3SettingsGroupScope {
+    val items = mutableListOf<@Composable () -> Unit>()
+    fun item(content: @Composable () -> Unit) {
+        items.add(content)
+    }
+}
+
 @Composable
-private fun ChromeGroupCard(content: @Composable ColumnScope.() -> Unit) {
+private fun M3SettingsGroup(
+    cardColor: Color,
+    block: M3SettingsGroupScope.() -> Unit
+) {
+    val scope = M3SettingsGroupScope().apply(block)
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        scope.items.forEachIndexed { idx, itemContent ->
+            val shape = when {
+                scope.items.size == 1 -> RoundedCornerShape(20.dp)
+                idx == 0 -> RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 4.dp, bottomEnd = 4.dp)
+                idx == scope.items.lastIndex -> RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp, bottomStart = 20.dp, bottomEnd = 20.dp)
+                else -> RoundedCornerShape(4.dp)
+            }
+            Surface(
+                shape = shape,
+                color = cardColor,
+                tonalElevation = 0.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    itemContent()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChromeGroupCard(
+    cardColor: Color = MaterialTheme.colorScheme.surfaceContainerLowest,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
+        shape = RoundedCornerShape(20.dp),
+        color = cardColor,
+        tonalElevation = 0.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.fillMaxWidth(), content = content)
@@ -1223,7 +1898,7 @@ private fun SearchEngineRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onSelect() }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (iconBitmap != null) {
@@ -1253,9 +1928,9 @@ private fun SearchEngineRow(
             }
         }
         Spacer(modifier = Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(engine.label, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
-            Text(engine.domain, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(engine.label, fontSize = 16.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
+            Text(engine.domain, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         RadioButton(selected = selected, onClick = onSelect)
     }
@@ -1272,15 +1947,16 @@ private fun ChromeSwitchItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
             if (!subtitle.isNullOrBlank()) {
-                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(subtitle, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        Spacer(modifier = Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
@@ -1296,19 +1972,20 @@ private fun SitePermissionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggle(!allowed) }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(modifier = Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
             Text(
                 text = if (allowed) "허용됨" else "허용되지 않음",
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        Spacer(modifier = Modifier.width(12.dp))
         Switch(checked = allowed, onCheckedChange = onToggle)
     }
 }
