@@ -208,7 +208,7 @@ fun ChromeNewTabPage(
                     .widthIn(max = 640.dp)
                     .fillMaxWidth()
                     .height(52.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    // M3 Tonal Search Pill (외곽선 제거, 톤+그림자 분리)
                     .clip(CircleShape)
                     .clickable { onOpenOmnibox() }
             ) {
@@ -244,7 +244,7 @@ fun ChromeNewTabPage(
                 shadowElevation = 1.dp,
                 modifier = Modifier
                     .widthIn(max = 880.dp)
-                    .border(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(24.dp))
+                    // M3 Tonal Shortcut Dock (외곽선 제거)
             ) {
                 FlowRow(
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
@@ -555,7 +555,7 @@ private fun ChromeDiscoverNewsCard(
         shadowElevation = 1.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .border(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+            // M3 Borderless Tonal Card
             .clip(RoundedCornerShape(20.dp))
             .clickable { onClick() }
     ) {
@@ -674,7 +674,7 @@ private fun ChromeDiscoverTrendCard(
         shadowElevation = 1.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .border(0.6.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+            // M3 Borderless Tonal Card
             .clip(RoundedCornerShape(20.dp))
             .clickable { onClick() }
     ) {
@@ -853,7 +853,7 @@ private fun DiscoverTabChip(
         shape = CircleShape,
         color = if (selected) accent.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface,
         modifier = Modifier
-            .border(1.dp, if (selected) accent else MaterialTheme.colorScheme.outlineVariant, CircleShape)
+            // M3 Tonal Filter Chip
             .clip(CircleShape)
             .clickable { onClick() }
     ) {
@@ -885,7 +885,7 @@ private fun EmptyFeedCard(message: String) {
         color = MaterialTheme.colorScheme.surface,
         modifier = Modifier
             .fillMaxWidth()
-            .border(0.8.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+            // M3 Tonal Tile
     ) {
         Text(
             text = message,
