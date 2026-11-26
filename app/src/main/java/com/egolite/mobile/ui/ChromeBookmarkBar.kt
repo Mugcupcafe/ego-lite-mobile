@@ -170,12 +170,12 @@ fun ChromeBookmarkBar(
                             .padding(horizontal = 4.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
+                        EgoIcon(
                             imageVector = Icons.Outlined.Folder,
                             contentDescription = folderName,
                             modifier = Modifier.size(16.dp),
                             tint = mutedIconColor
-                        )
+                        , symbolSize = 16.dp)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = folderName,
@@ -248,7 +248,7 @@ fun ChromeBookmarkBar(
                     ) {
                         DropdownMenuItem(
                             text = { Text("새 탭에서 열기") },
-                            leadingIcon = { Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            leadingIcon = { EgoIcon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp), symbolSize = 18.dp) },
                             onClick = {
                                 showItemMenu = false
                                 onOpenInNewTab(bm.url)
@@ -256,7 +256,7 @@ fun ChromeBookmarkBar(
                         )
                         DropdownMenuItem(
                             text = { Text("북마크 수정") },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            leadingIcon = { EgoIcon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp), symbolSize = 18.dp) },
                             onClick = {
                                 showItemMenu = false
                                 onEditBookmark(bm)
@@ -265,7 +265,7 @@ fun ChromeBookmarkBar(
                         if (idx > 0) {
                             DropdownMenuItem(
                                 text = { Text("왼쪽으로 이동") },
-                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                leadingIcon = { EgoIcon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp), symbolSize = 18.dp) },
                                 onClick = {
                                     showItemMenu = false
                                     onMoveBookmark(bm.id, -1)
@@ -275,7 +275,7 @@ fun ChromeBookmarkBar(
                         if (idx < barItems.lastIndex) {
                             DropdownMenuItem(
                                 text = { Text("오른쪽으로 이동") },
-                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                leadingIcon = { EgoIcon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(18.dp), symbolSize = 18.dp) },
                                 onClick = {
                                     showItemMenu = false
                                     onMoveBookmark(bm.id, 1)
@@ -285,7 +285,7 @@ fun ChromeBookmarkBar(
                         HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("삭제", color = EgoDangerRed) },
-                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = EgoDangerRed, modifier = Modifier.size(18.dp)) },
+                            leadingIcon = { EgoIcon(Icons.Default.Delete, contentDescription = null, tint = EgoDangerRed, modifier = Modifier.size(18.dp), symbolSize = 18.dp) },
                             onClick = {
                                 showItemMenu = false
                                 onDeleteBookmark(bm.id)
@@ -310,12 +310,12 @@ fun ChromeBookmarkBar(
                         .clickable { showOverflowMenu = !showOverflowMenu },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
+                    EgoIcon(
                         imageVector = Icons.Default.ChevronRight,
                         contentDescription = "숨겨진 북마크 펼치기",
                         modifier = Modifier.size(18.dp),
                         tint = activeIconColor
-                    )
+                    , symbolSize = 18.dp)
                 }
                 DropdownMenu(
                     expanded = showOverflowMenu,
@@ -328,12 +328,12 @@ fun ChromeBookmarkBar(
                         DropdownMenuItem(
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
+                                    EgoIcon(
                                         imageVector = Icons.Outlined.Folder,
                                         contentDescription = null,
                                         modifier = Modifier.size(18.dp),
                                         tint = mutedIconColor
-                                    )
+                                    , symbolSize = 18.dp)
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text(
                                         text = "$folderName (${folderBookmarks.size})",
@@ -387,12 +387,12 @@ fun ChromeBookmarkBar(
                 .padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
+            EgoIcon(
                 imageVector = Icons.Default.StarBorder,
                 contentDescription = null,
                 modifier = Modifier.size(16.dp),
                 tint = mutedIconColor
-            )
+            , symbolSize = 16.dp)
             Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = "모든 북마크",
