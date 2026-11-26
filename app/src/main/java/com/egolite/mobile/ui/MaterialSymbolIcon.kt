@@ -1,11 +1,17 @@
 package com.egolite.mobile.ui
 
 import android.content.Context
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -211,5 +217,57 @@ fun EgoIcon(
             modifier = modifier,
             tint = tint
         )
+    }
+}
+
+/**
+ * MCP 노드 허브(Material Symbols Rounded `hub`) 상태 아이콘.
+ * 미연결 시 색상에만 의존하지 않고 Material Symbols `*_off` 규격과 동일한
+ * 대각선 사선(배경 컷아웃 포함)으로 연결 끊김 상태를 직관적으로 표시합니다.
+ */
+@Composable
+fun McpHubStatusIcon(
+    disconnected: Boolean,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    tint: Color = LocalContentColor.current,
+    cutoutColor: Color = MaterialTheme.colorScheme.surface,
+    symbolSize: Dp = 22.dp
+) {
+    Box(
+        modifier = modifier.size(symbolSize),
+        contentAlignment = Alignment.Center
+    ) {
+        EgoIcon(
+            imageVector = Icons.Default.Hub,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(symbolSize),
+            tint = if (disconnected) tint.copy(alpha = 0.78f) else tint,
+            filled = !disconnected,
+            symbolSize = symbolSize
+        )
+        if (disconnected) {
+            Canvas(modifier = Modifier.size(symbolSize)) {
+                val w = size.width
+                val h = size.height
+                val start = Offset(w * 0.13f, h * 0.13f)
+                val end = Offset(w * 0.87f, h * 0.87f)
+                // 배경색 컷아웃 스트로크로 허브 노드와 사선을 선명하게 분리
+                drawLine(
+                    color = cutoutColor,
+                    start = start,
+                    end = end,
+                    strokeWidth = w * 0.18f,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = tint,
+                    start = start,
+                    end = end,
+                    strokeWidth = w * 0.088f,
+                    cap = StrokeCap.Round
+                )
+            }
+        }
     }
 }
