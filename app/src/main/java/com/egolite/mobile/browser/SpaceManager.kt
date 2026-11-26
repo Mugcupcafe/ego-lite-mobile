@@ -1,5 +1,6 @@
 package com.egolite.mobile.browser
 
+import com.egolite.mobile.model.PersistedAiSpace
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Handler
@@ -63,8 +64,8 @@ object SpaceManager {
     val history: StateFlow<List<BookmarkItem>> = _history.asStateFlow()
 
     private val initialPersonalTab = BrowserTab(title = "새 탭", url = "ego://newtab")
-    private val initialAiTab = BrowserTab(title = "AI Space 1", url = "https://www.google.com")
 
+    // 최초 실행 시 기본 AI 스페이스 없이 Personal만으로 시작 (저장된 AI 스페이스가 있으면 loadPersistedData에서 복원)
     private val _spaces = MutableStateFlow(
         listOf(
             BrowserSpace(
@@ -73,13 +74,6 @@ object SpaceManager {
                 type = SpaceType.PERSONAL,
                 tabs = listOf(initialPersonalTab),
                 activeTabId = initialPersonalTab.id
-            ),
-            BrowserSpace(
-                id = "ai-1",
-                name = "AI Space 1",
-                type = SpaceType.AI,
-                tabs = listOf(initialAiTab),
-                activeTabId = initialAiTab.id
             )
         )
     )
@@ -165,6 +159,39 @@ object SpaceManager {
         if (!::appContext.isInitialized) return
         val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
         sp.edit().putString("browser_prefs_json", jsonCodec.encodeToString(_preferences.value)).apply()
+
+        sp.getString("ai_spaces_json", null)?.let { raw ->
+            runCatching { jsonCodec.decodeFromString<List<PersistedAiSpace>>(raw) }.getOrNull()?.let { savedList ->
+                val retentionDays = _preferences.value.aiSpaceRetentionDays
+                val now = System.currentTimeMillis()
+                val maxAgeMs = if (retentionDays <= 0) Long.MAX_VALUE else retentionDays.toLong() * 86_400_000L
+                val validSpaces = savedList.filter { saved ->
+                    retentionDays <= 0 || (now - saved.lastUpdatedAtMs) <= maxAgeMs
+                }.map { saved ->
+                    val restoredTabs = saved.tabs.ifEmpty {
+                        listOf(PersistedTab(saved.name, "https://www.google.com"))
+                    }.map { BrowserTab(title = it.title, url = it.url) }
+                    val safeIdx = saved.activeTabIndex.coerceIn(0, restoredTabs.lastIndex)
+                    BrowserSpace(
+                        id = saved.id,
+                        name = saved.name,
+                        type = SpaceType.AI,
+                        tabs = restoredTabs,
+                        activeTabId = restoredTabs[safeIdx].id,
+                        accentColorHex = saved.accentColorHex
+                    )
+                }
+                if (validSpaces.isNotEmpty()) {
+                    _spaces.update { list ->
+                        val personalOnly = list.filter { it.type == SpaceType.PERSONAL }
+                        personalOnly + validSpaces
+                    }
+                }
+                if (validSpaces.size != savedList.size) {
+                    saveAiSpaces()
+                }
+            }
+        }
     }
 
     private fun savePersonalTabs() {
@@ -173,6 +200,27 @@ object SpaceManager {
         val toSave = personal.tabs.filterNot { it.isIncognito }.map { PersistedTab(it.title, it.url) }
         val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
         sp.edit().putString("personal_tabs_json", jsonCodec.encodeToString(toSave)).apply()
+    }
+
+    private fun saveAiSpaces() {
+        if (!::appContext.isInitialized) return
+        val now = System.currentTimeMillis()
+        val aiList = _spaces.value
+            .filter { it.type == SpaceType.AI }
+            .map { sp ->
+                val tabs = sp.tabs.filterNot { it.isIncognito }.map { PersistedTab(it.title, it.url) }
+                val activeIdx = sp.tabs.indexOfFirst { it.id == sp.activeTabId }.coerceAtLeast(0)
+                PersistedAiSpace(
+                    id = sp.id,
+                    name = sp.name,
+                    accentColorHex = sp.accentColorHex,
+                    tabs = tabs,
+                    activeTabIndex = activeIdx,
+                    lastUpdatedAtMs = now
+                )
+            }
+        val sp = appContext.getSharedPreferences("ego_lite_prefs", Context.MODE_PRIVATE)
+        sp.edit().putString("ai_spaces_json", jsonCodec.encodeToString(aiList)).apply()
     }
 
     private fun saveBookmarks() {
@@ -279,6 +327,7 @@ object SpaceManager {
             accentColorHex = colorHex
         )
         _spaces.update { it + newSpace }
+        saveAiSpaces()
         return newSpace
     }
 
@@ -306,7 +355,7 @@ object SpaceManager {
                 } else sp
             }
         }
-        if (targetSpaceId == "personal") savePersonalTabs()
+        if (targetSpaceId == "personal") savePersonalTabs() else saveAiSpaces()
         return Pair(newTab, activateNow)
     }
 
@@ -332,6 +381,7 @@ object SpaceManager {
             accentColorHex = colorHex
         )
         _spaces.update { it + newSpace }
+        saveAiSpaces()
         return newSpace
     }
 
@@ -342,6 +392,7 @@ object SpaceManager {
         if (_activeSpaceId.value == spaceId) {
             _activeSpaceId.value = "personal"
         }
+        saveAiSpaces()
     }
 
     fun createTab(spaceId: String, initialUrl: String = "ego://newtab", incognito: Boolean = false, selectImmediately: Boolean = true): BrowserTab {
@@ -354,7 +405,7 @@ object SpaceManager {
                 } else space
             }
         }
-        if (spaceId == "personal") savePersonalTabs()
+        if (spaceId == "personal") savePersonalTabs() else saveAiSpaces()
         return tab
     }
 
@@ -537,6 +588,11 @@ object SpaceManager {
     fun goForward(spaceId: String) {
         val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return
         mainHandler.post { webViews[tabId]?.goForward() }
+    }
+
+    fun getActiveWebView(spaceId: String): WebView? {
+        val tabId = _spaces.value.firstOrNull { it.id == spaceId }?.activeTabId ?: return null
+        return webViews[tabId]
     }
 
     fun reload(spaceId: String) {
