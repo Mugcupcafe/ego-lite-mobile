@@ -139,12 +139,12 @@ fun DragToSelectChromeMenuOverlay(
                                     .padding(start = 14.dp, end = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = item.icon,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
-                                )
+                                , symbolSize = 20.dp)
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Text(
                                     text = item.title,
@@ -162,12 +162,12 @@ fun DragToSelectChromeMenuOverlay(
                                         onClick = { item.onZoomOut?.invoke() },
                                         modifier = Modifier.size(32.dp)
                                     ) {
-                                        Icon(
+                                        EgoIcon(
                                             imageVector = Icons.Default.Remove,
                                             contentDescription = "글자 축소",
                                             tint = MaterialTheme.colorScheme.onSurface,
                                             modifier = Modifier.size(18.dp)
-                                        )
+                                        , symbolSize = 18.dp)
                                     }
                                     Text(
                                         text = "${item.zoomPercent}%",
@@ -183,12 +183,12 @@ fun DragToSelectChromeMenuOverlay(
                                         onClick = { item.onZoomIn?.invoke() },
                                         modifier = Modifier.size(32.dp)
                                     ) {
-                                        Icon(
+                                        EgoIcon(
                                             imageVector = Icons.Default.Add,
                                             contentDescription = "글자 확대",
                                             tint = MaterialTheme.colorScheme.onSurface,
                                             modifier = Modifier.size(18.dp)
-                                        )
+                                        , symbolSize = 18.dp)
                                     }
                                 }
                             }
@@ -205,12 +205,12 @@ fun DragToSelectChromeMenuOverlay(
                                     .padding(horizontal = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
+                                EgoIcon(
                                     imageVector = item.icon,
                                     contentDescription = null,
                                     tint = item.accentColor ?: if (isHovered) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(20.dp)
-                                )
+                                , symbolSize = 20.dp)
                                 Spacer(modifier = Modifier.width(14.dp))
                                 Text(
                                     text = item.title,
@@ -222,19 +222,19 @@ fun DragToSelectChromeMenuOverlay(
                                     modifier = Modifier.weight(1f)
                                 )
                                 if (item.isToggleCheckbox) {
-                                    Icon(
+                                    EgoIcon(
                                         imageVector = if (item.checked) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
                                         contentDescription = null,
                                         tint = if (item.checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
-                                    )
+                                    , symbolSize = 20.dp)
                                 } else if (item.checked) {
-                                    Icon(
+                                    EgoIcon(
                                         imageVector = Icons.Default.Check,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(18.dp)
-                                    )
+                                    , symbolSize = 18.dp)
                                 }
                             }
                         }
