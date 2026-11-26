@@ -1,5 +1,10 @@
 package com.egolite.mobile.ui
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.scaleIn
@@ -416,124 +421,172 @@ fun TranslateSettingsPopupDialog(
         "zh-CN" to "중국어(간체)",
         "es" to "스페인어"
     )
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+    var cardVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { cardVisible = true }
+
+    // 전체 반투명 검정 배경 없이, 번역 버튼을 덮으며 우상단에서 모프 확장되는 M3 팝업 카드
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { onDismiss() }
+    ) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 50.dp, end = 24.dp)
+        ) {
+            AnimatedVisibility(
+                visible = cardVisible,
+                enter = fadeIn(tween(130)) + scaleIn(
+                    initialScale = 0.72f,
+                    transformOrigin = TransformOrigin(1f, 0f),
+                    animationSpec = EgoMotion.smoothSpring()
+                ),
+                exit = fadeOut(tween(100)) + scaleOut(
+                    targetScale = 0.78f,
+                    transformOrigin = TransformOrigin(1f, 0f),
+                    animationSpec = tween(130)
+                )
             ) {
-                Icon(
-                    imageVector = Icons.Default.Translate,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-                Text("번역 설정", fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "번역 엔진",
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    listOf(
-                        TranslationEngine.ONLINE_GOOGLE to ("온라인 Google 번역" to "빠르고 자연스러운 실시간 번역"),
-                        TranslationEngine.OFFLINE_MLKIT to ("오프라인 ML Kit 번역" to "네트워크 없이 기기 내 자체 번역")
-                    ).forEach { (eng, labels) ->
-                        val sel = engine == eng
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    shadowElevation = 14.dp,
+                    modifier = Modifier
+                        .width(336.dp)
+                        .heightIn(max = 500.dp)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(24.dp))
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) {}
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Translate,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                                Text("번역 설정", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            }
+                            IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "닫기", modifier = Modifier.size(18.dp))
+                            }
+                        }
+
+                        Text(
+                            text = "번역 엔진",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            listOf(
+                                TranslationEngine.ONLINE_GOOGLE to ("온라인 Google 번역" to "빠르고 자연스러운 실시간 번역"),
+                                TranslationEngine.OFFLINE_MLKIT to ("오프라인 ML Kit 번역" to "네트워크 없이 기기 내 자체 번역")
+                            ).forEach { (eng, labels) ->
+                                val sel = engine == eng
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { onChangeEngine(eng) }
+                                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(selected = sel, onClick = { onChangeEngine(eng) })
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Column {
+                                        Text(labels.first, fontSize = 13.5.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal)
+                                        Text(labels.second, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+
+                        Text(
+                            text = "기본 번역 언어",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onChangeEngine(eng) }
-                                .padding(horizontal = 4.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            RadioButton(selected = sel, onClick = { onChangeEngine(eng) })
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Column {
-                                Text(labels.first, fontSize = 13.5.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal)
-                                Text(labels.second, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            quickLangs.forEach { (code, name) ->
+                                val sel = defaultTargetLang == code
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .clickable { onChangeDefaultTarget(code) }
+                                ) {
+                                    Text(
+                                        text = name,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("번역 제안 표시", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                                Text("외국어 페이지 방문 시 번역 안내", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = offerTranslate, onCheckedChange = onToggleOfferTranslate)
+                        }
+
+                        if (currentHost.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("이 사이트 항상 자동 번역", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                                    Text(currentHost, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(checked = alwaysTranslateSite, onCheckedChange = { onToggleAlwaysTranslateSite() })
                             }
                         }
                     }
                 }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                Text(
-                    text = "기본 번역 언어",
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    quickLangs.forEach { (code, name) ->
-                        val sel = defaultTargetLang == code
-                        Surface(
-                            shape = CircleShape,
-                            color = if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
-                            modifier = Modifier
-                                .border(
-                                    1.dp,
-                                    if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                    CircleShape
-                                )
-                                .clip(CircleShape)
-                                .clickable { onChangeDefaultTarget(code) }
-                        ) {
-                            Text(
-                                text = name,
-                                fontSize = 12.sp,
-                                fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
-                                color = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("번역 제안 표시", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
-                        Text("외국어 페이지 방문 시 번역 안내", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(checked = offerTranslate, onCheckedChange = onToggleOfferTranslate)
-                }
-
-                if (currentHost.isNotBlank()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("이 사이트 항상 자동 번역", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
-                            Text(currentHost, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Switch(checked = alwaysTranslateSite, onCheckedChange = { onToggleAlwaysTranslateSite() })
-                    }
-                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("닫기") }
         }
-    )
+    }
 }
