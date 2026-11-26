@@ -85,34 +85,45 @@ fun McpStatusCapsuleHud(
         }
     }
 
-    val infinite = rememberInfiniteTransition(label = "mcpCapsule")
-    val shimmerProgress by infinite.animateFloat(
-        initialValue = -0.4f,
-        targetValue = 1.4f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isThinking) 2400 else 1850, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmer"
-    )
-    val sparkleAlpha by infinite.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.38f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isThinking) 1050 else 650, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "sparkleAlpha"
-    )
-    val glowPulse by infinite.animateFloat(
-        initialValue = if (isThinking) 0.35f else 0.72f,
-        targetValue = if (isThinking) 0.72f else 0.92f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glowPulse"
-    )
+    // 발열 최적화: 캡슐이 보이고 실제 WORKING/THINKING 상태일 때만 무한 애니메이션 구동
+    val shouldAnimate = visible && (status == AiSpaceStatus.WORKING || status == AiSpaceStatus.THINKING)
+    val shimmerProgress: Float
+    val sparkleAlpha: Float
+    val glowPulse: Float
+    if (shouldAnimate) {
+        val infinite = rememberInfiniteTransition(label = "mcpCapsule")
+        shimmerProgress = infinite.animateFloat(
+            initialValue = -0.4f,
+            targetValue = 1.4f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = if (isThinking) 2400 else 1850, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "shimmer"
+        ).value
+        sparkleAlpha = infinite.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.38f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = if (isThinking) 1050 else 650, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "sparkleAlpha"
+        ).value
+        glowPulse = infinite.animateFloat(
+            initialValue = if (isThinking) 0.35f else 0.72f,
+            targetValue = if (isThinking) 0.72f else 0.92f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "glowPulse"
+        ).value
+    } else {
+        shimmerProgress = -0.4f
+        sparkleAlpha = 1f
+        glowPulse = 0.45f
+    }
 
     val capsuleBg = if (darkTheme) Color(0xFF101010) else Color(0xF5FFFFFF)
     val outerBezelBg = if (darkTheme) Color(0xAA050508) else Color(0x140F172A)
