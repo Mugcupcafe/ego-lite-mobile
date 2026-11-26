@@ -241,7 +241,7 @@ class MainActivity : ComponentActivity() {
                 controller.isAppearanceLightStatusBars = isLight
                 controller.isAppearanceLightNavigationBars = isLight
             }
-            EgoLiteTheme(darkTheme = isDark) {
+            EgoLiteTheme(darkTheme = isDark, colorPreset = prefs.themeColorPreset) {
                 BrowserScreen()
             }
         }
