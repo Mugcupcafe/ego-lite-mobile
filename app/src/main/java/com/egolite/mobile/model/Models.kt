@@ -233,6 +233,7 @@ data class BrowserPreferences(
     val sandSilverRatio: Float = 0.75f,
     val sandWindStrength: Float = 1.0f,
     val sandSwirlStrength: Float = 1.0f,
+    val rimGlowEnabled: Boolean = true,
     val tabWidthMode: TabWidthMode = TabWidthMode.DYNAMIC,
     val manualTabWidthDp: Int = 180,
     val aiSpaceRetentionDays: Int = 7,
