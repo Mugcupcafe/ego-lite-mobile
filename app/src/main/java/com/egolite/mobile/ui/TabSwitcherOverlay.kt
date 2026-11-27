@@ -260,13 +260,13 @@ fun ChromeTabSwitcherOverlay(
     }
 
     // 크롬 태블릿 1:1 다크/라이트 팔레트
-    val bgColor = if (darkTheme) Color(0xFF141518) else Color(0xFFF1F3F4)
-    val topBarBg = if (darkTheme) Color(0xFF141518) else Color(0xFFF1F3F4)
-    val pillTrackBg = if (darkTheme) Color(0xFF23252A) else Color(0xFFE0E3E7)
-    val pillActiveBg = if (darkTheme) Color(0xFF393D47) else Color(0xFFFFFFFF)
-    val addBtnBg = if (darkTheme) Color(0xFFC2D1F0) else Color(0xFFD3E3FD)
-    val addBtnTint = if (darkTheme) Color(0xFF182236) else Color(0xFF041E49)
-    val activeCardBorder = if (darkTheme) Color(0xFFA8C7FA) else Color(0xFF1A73E8)
+    val bgColor = LocalEgoChromeColors.current.backdropBg
+    val topBarBg = LocalEgoChromeColors.current.backdropBg
+    val pillTrackBg = LocalEgoChromeColors.current.unselectedTabBg
+    val pillActiveBg = LocalEgoChromeColors.current.groupSurface
+    val addBtnBg = MaterialTheme.colorScheme.primaryContainer
+    val addBtnTint = MaterialTheme.colorScheme.onPrimaryContainer
+    val activeCardBorder = MaterialTheme.colorScheme.primary
 
     Surface(
         modifier = Modifier
@@ -954,20 +954,20 @@ private fun ChromeTabThumbnailCard(
     onClose: () -> Unit
 ) {
     val cardBg = if (isActive) {
-        if (darkTheme) Color(0xFF2E3545) else Color(0xFFE8F0FE)
+        LocalEgoChromeColors.current.groupSurface
     } else {
-        if (darkTheme) Color(0xFF23252A) else Color(0xFFFFFFFF)
+        LocalEgoChromeColors.current.unselectedTabBg
     }
     val headerBg = if (isActive) {
-        if (darkTheme) Color(0xFF333C50) else Color(0xFFD2E3FC)
+        MaterialTheme.colorScheme.primaryContainer
     } else {
-        if (darkTheme) Color(0xFF292B31) else Color(0xFFF8F9FA)
+        LocalEgoChromeColors.current.settingsCardBg
     }
     val borderCol = when {
         isDragging -> accentBorder
         isSelectedForBatch -> accentBorder
         isActive -> accentBorder
-        else -> if (darkTheme) Color(0xFF34373F) else Color(0xFFDADCE0)
+        else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
     }
     val borderWidth = if (isActive || isSelectedForBatch || isDragging) 2.6.dp else 0.8.dp
 
@@ -1050,7 +1050,7 @@ private fun ChromeTabThumbnailCard(
                     .fillMaxSize()
                     .padding(start = 5.dp, end = 5.dp, bottom = 5.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(if (darkTheme) Color(0xFF1A1C20) else Color(0xFFF1F3F4)),
+                    .background(LocalEgoChromeColors.current.backdropBg),
                 contentAlignment = Alignment.Center
             ) {
                 if (thumbnail != null) {
