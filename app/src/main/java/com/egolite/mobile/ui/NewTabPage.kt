@@ -524,12 +524,14 @@ fun ChromeNewTabPage(
         // 크롬 1:1 뉴스 카드 ⋮ 하단 메뉴 시트 (첨부 5 동일)
         shortcutMenuTarget?.let { (bm, anchorRect) ->
             var menuCardRect by remember { mutableStateOf<Rect?>(null) }
+        var menuCardCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
             val menuLayer = rememberGraphicsLayer()
             fun dismissShortcutMenu(touchRoot: Offset? = null, afterDismiss: () -> Unit = {}) {
                 scope.launch {
                     val bmp = runCatching { menuLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
                     val origin = touchRoot ?: menuCardRect?.center
-                    onDustVanish(VanishSnapshot(rect = menuCardRect, touchRoot = origin, bitmap = bmp))
+                    val liveMenuRect = menuCardCoords?.takeIf { it.isAttached }?.boundsInRoot() ?: menuCardRect
+                onDustVanish(VanishSnapshot(rect = liveMenuRect, touchRoot = origin, bitmap = bmp))
                     shortcutMenuTarget = null
                     afterDismiss()
                 }
@@ -555,7 +557,7 @@ fun ChromeNewTabPage(
                         tonalElevation = 4.dp,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .onGloballyPositioned { coords -> menuCardRect = coords.boundsInRoot() }
+                            .onGloballyPositioned { coords -> menuCardCoords = coords; menuCardRect = coords.boundsInRoot() }
                             .drawWithContent {
                                 menuLayer.record { this@drawWithContent.drawContent() }
                                 drawLayer(menuLayer)
