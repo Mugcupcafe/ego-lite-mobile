@@ -295,6 +295,8 @@ fun BrowserScreen() {
     var returningSpaceId by remember { mutableStateOf<String?>(null) }
     var showMcpDrawer by remember { mutableStateOf(false) }
     var showChromeSettings by remember { mutableStateOf(false) }
+    var omniTabDragStep by remember { mutableStateOf<Int?>(null) }
+    val activeTabIdxNow = activeSpace.tabs.indexOfFirst { it.id == activeTab.id }.coerceAtLeast(0)
     val installedExtensions by ExtensionManager.extensions.collectAsState()
     var activeExtPopup by remember { mutableStateOf<InstalledExtension?>(null) }
     var managingExt by remember { mutableStateOf<InstalledExtension?>(null) }
@@ -1481,8 +1483,6 @@ fun BrowserScreen() {
                 animationSpec = EgoMotion.responsiveSpring(),
                 label = "omniToolbarElastic"
             )
-            var omniTabDragStep by remember { mutableStateOf<Int?>(null) }
-            val activeTabIdxNow = activeSpace.tabs.indexOfFirst { it.id == activeTab.id }.coerceAtLeast(0)
 
             // 2행: Material 3 Expressive Connected 3-그룹 툴바 (바깥 22dp · 인접 6dp, 3dp 간격, 선택 탭과 동일 색상)
             val toolbarChrome = LocalEgoChromeColors.current
