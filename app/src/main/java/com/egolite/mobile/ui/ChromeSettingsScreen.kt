@@ -1238,6 +1238,9 @@ fun ChromeSettingsScreen(
                                                 onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showReaderModeButton = c) } }
                                             )
                                         }
+                                        item {
+                                            ExtensionSettingsBottomSection()
+                                        }
                                     }
                                 }
 
@@ -1260,452 +1263,90 @@ fun ChromeSettingsScreen(
                                 M3SettingsGroup(settingsCardColor) {
                                     item {
                                         ChromeSwitchItem(
-                                            title = "터치 광학 테두리 발광 (Rim Light)",
-                                            subtitle = "툴바·설정 카드·팝업 터치 시 접촉 지점 테두리 광학 발광",
+                                            title = "광수지동 · 광선구륵 (Rim Light)",
+                                            subtitle = "상단 탭·툴바·설정 카드·팝업 터치 시 손가락 추적 광원 및 테두리 발광",
                                             checked = prefs.rimGlowEnabled,
                                             onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(rimGlowEnabled = c) } }
                                         )
                                     }
-                                }
-
-                                Text(
-                                    text = "카드 삭제 애니메이션 (AI 모니터 · 전체 탭 보기)",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(start = 4.dp, top = 8.dp)
-                                )
-                                M3SettingsGroup(settingsCardColor) {
-                                    CardVanishStyle.entries.forEach { style ->
-                                        item {
-                                            val sel = prefs.cardVanishStyle == style
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clickable { SpaceManager.updatePreferences { it.copy(cardVanishStyle = style) } }
-                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                                    Text(style.label, fontSize = 16.sp, fontWeight = FontWeight.Normal)
-                                                    Text(style.description, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                }
-                                                RadioButton(
-                                                    selected = sel,
-                                                    onClick = { SpaceManager.updatePreferences { it.copy(cardVanishStyle = style) } }
-                                                )
-                                            }
-                                        }
-                                    }
-                                    if (prefs.cardVanishStyle == CardVanishStyle.HARMONY_DUST || prefs.cardVanishStyle == CardVanishStyle.HARMONY_GPU_SHADER || prefs.cardVanishStyle == CardVanishStyle.HARMONY_7_SAND_WAVE) {
+                                    if (prefs.rimGlowEnabled) {
                                         item {
                                             Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                                    .padding(horizontal = 16.dp, vertical = 12.dp),
                                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
-                                                val curCount = prefs.vanishParticleCount.coerceIn(1000, 14000)
-                                                val isHighLoad = curCount > 4500
-                                                val isExtremeLoad = curCount > 8000
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Text("먼지 입자 밀도", fontSize = 15.sp, fontWeight = FontWeight.Normal)
                                                     Text(
-                                                        text = String.format(java.util.Locale.US, "%,d개", curCount),
+                                                        text = "광효과 강도",
                                                         fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                    Text(
+                                                        text = "${(prefs.rimGlowIntensity * 100).toInt()}%",
+                                                        fontSize = 13.sp,
                                                         fontWeight = FontWeight.SemiBold,
-                                                        color = when {
-                                                            isExtremeLoad -> EgoDangerRed
-                                                            isHighLoad -> Color(0xFFF59E0B)
-                                                            else -> MaterialTheme.colorScheme.primary
-                                                        }
+                                                        color = MaterialTheme.colorScheme.primary
                                                     )
                                                 }
-
                                                 Slider(
-                                                    value = curCount.toFloat(),
+                                                    value = prefs.rimGlowIntensity.coerceIn(0.5f, 2.5f),
                                                     onValueChange = { v ->
-                                                        val snapped = ((v / 500f).roundToInt() * 500).coerceIn(1000, 14000)
-                                                        SpaceManager.updatePreferences { it.copy(vanishParticleCount = snapped) }
+                                                        SpaceManager.updatePreferences { it.copy(rimGlowIntensity = v) }
                                                     },
-                                                    valueRange = 1000f..14000f
+                                                    valueRange = 0.5f..2.5f
                                                 )
-
-                                                // 드래그바 하단 권장 구간 표기 (1,000 ~ 권장 2,500~4,500 ~ 14,000)
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text("1,000", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                    Surface(
-                                                        shape = CircleShape,
-                                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-                                                    ) {
-                                                        Text(
-                                                            text = "★ 권장: 2,500 ~ 4,500개",
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                    Text("14,000", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                }
-
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .horizontalScroll(rememberScrollState()),
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
                                                     listOf(
-                                                        1800 to "1,800 · 절전",
-                                                        3500 to "3,500 · 권장",
-                                                        6000 to "6,000",
-                                                        10000 to "10,000",
-                                                        14000 to "14,000 · 최대"
-                                                    ).forEach { (cnt, lbl) ->
-                                                        val sel = curCount == cnt
+                                                        0.7f to "은은함",
+                                                        1.35f to "표준",
+                                                        1.85f to "선명함",
+                                                        2.4f to "최대"
+                                                    ).forEach { (valPreset, label) ->
+                                                        val sel = kotlin.math.abs(prefs.rimGlowIntensity - valPreset) < 0.14f
                                                         Surface(
-                                                            shape = CircleShape,
+                                                            shape = RoundedCornerShape(999.dp),
                                                             color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                            modifier = Modifier.clickable {
-                                                                SpaceManager.updatePreferences { it.copy(vanishParticleCount = cnt) }
-                                                            }
-                                                        ) {
-                                                            Text(
-                                                                text = lbl,
-                                                                fontSize = 12.sp,
-                                                                fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
-                                                                color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
-                                                            )
-                                                        }
-                                                    }
-                                                }
-
-                                                if (isHighLoad) {
-                                                    val warnTint = if (isExtremeLoad) EgoDangerRed else Color(0xFFF59E0B)
-                                                    Surface(
-                                                        shape = RoundedCornerShape(12.dp),
-                                                        color = warnTint.copy(alpha = 0.13f),
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .border(1.dp, warnTint.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-                                                    ) {
-                                                        Text(
-                                                            text = if (isExtremeLoad) {
-                                                                "⚠ 고부하 경고 (${String.format(java.util.Locale.US, "%,d", curCount)}개): 권장치를 크게 초과해 연속 삭제 시 발열·전력 소모 증가 및 프레임 저하가 발생할 수 있습니다. 60fps 제한을 함께 사용하세요."
-                                                            } else {
-                                                                "⚠ 권장 범위(4,500개) 초과: 입자 밀도가 높아져 소멸 순간 GPU/CPU 부하와 소비 전력이 다소 늘어날 수 있습니다."
-                                                            },
-                                                            fontSize = 11.5.sp,
-                                                            lineHeight = 16.sp,
-                                                            color = warnTint,
-                                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        item {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 20.dp, vertical = 14.dp)
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text("소멸 애니메이션 속도", fontSize = 15.sp, fontWeight = FontWeight.Normal)
-                                                    Text(
-                                                        "${prefs.vanishDurationMs} ms",
-                                                        fontSize = 14.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
-                                                Slider(
-                                                    value = prefs.vanishDurationMs.toFloat().coerceIn(600f, 2200f),
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v / 100f).roundToInt() * 100).coerceIn(600, 2200)
-                                                        SpaceManager.updatePreferences { it.copy(vanishDurationMs = snapped) }
-                                                    },
-                                                    valueRange = 600f..2200f
-                                                )
-                                            }
-                                        }
-                                        item {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                                            ) {
-                                                Text("먼지 애니메이션 프레임 상한", fontSize = 15.sp, fontWeight = FontWeight.Normal)
-                                                Row(
-                                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    listOf(
-                                                        60 to "60fps (절전 추천)",
-                                                        90 to "90fps (부드러움)",
-                                                        0 to "기기 최대 (120Hz+)"
-                                                    ).forEach { (fps, label) ->
-                                                        val sel = prefs.vanishMaxFps == fps
-                                                        Surface(
-                                                            shape = CircleShape,
-                                                            color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                            modifier = Modifier.clickable {
-                                                                SpaceManager.updatePreferences { it.copy(vanishMaxFps = fps) }
-                                                            }
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .clickable {
+                                                                    SpaceManager.updatePreferences { it.copy(rimGlowIntensity = valPreset) }
+                                                                }
                                                         ) {
                                                             Text(
                                                                 text = label,
-                                                                fontSize = 13.sp,
-                                                                fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
+                                                                fontSize = 11.5.sp,
+                                                                fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
                                                                 color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                                                                modifier = Modifier.padding(vertical = 6.dp),
+                                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                                             )
                                                         }
                                                     }
-                                                }
-                                            }
-                                        }
-                                        if (prefs.cardVanishStyle == CardVanishStyle.HARMONY_7_SAND_WAVE) {
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "모래 띠 밀도",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1fx", prefs.sandRibbonDensity),
-                                                    value = prefs.sandRibbonDensity.coerceIn(0.4f, 1.8f),
-                                                    range = 0.4f..1.8f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 10f).roundToInt() / 10f).coerceIn(0.4f, 1.8f)
-                                                        SpaceManager.updatePreferences { it.copy(sandRibbonDensity = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "은빛 반짝임 비율",
-                                                    valueLabel = "${(prefs.sandSilverRatio * 100f).roundToInt()}%",
-                                                    value = prefs.sandSilverRatio.coerceIn(0.15f, 0.95f),
-                                                    range = 0.15f..0.95f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 20f).roundToInt() / 20f).coerceIn(0.15f, 0.95f)
-                                                        SpaceManager.updatePreferences { it.copy(sandSilverRatio = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "바람 기류 세기",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1fx", prefs.sandWindStrength),
-                                                    value = prefs.sandWindStrength.coerceIn(0.3f, 2.0f),
-                                                    range = 0.3f..2.0f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 10f).roundToInt() / 10f).coerceIn(0.3f, 2.0f)
-                                                        SpaceManager.updatePreferences { it.copy(sandWindStrength = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "소용돌이 (Swirl)",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1fx", prefs.sandSwirlStrength),
-                                                    value = prefs.sandSwirlStrength.coerceIn(0f, 2.0f),
-                                                    range = 0f..2.0f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 10f).roundToInt() / 10f).coerceIn(0f, 2.0f)
-                                                        SpaceManager.updatePreferences { it.copy(sandSwirlStrength = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ChromeSwitchItem(
-                                                    title = "요소 크기 비례 속도 자동 보정",
-                                                    subtitle = "크기에 따라 구멍 1~3개 자동 분배 · 작은 탭은 더 경쾌하게 소멸",
-                                                    checked = prefs.vanishSizeAdaptiveDuration,
-                                                    onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(vanishSizeAdaptiveDuration = c) } }
-                                                )
-                                            }
-                                            item {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clickable {
-                                                            SpaceManager.updatePreferences {
-                                                                it.copy(
-                                                                    sandRibbonDensity = 1.0f,
-                                                                    sandSilverRatio = 0.75f,
-                                                                    sandWindStrength = 1.0f,
-                                                                    sandSwirlStrength = 1.0f,
-                                                                    vanishDurationMs = 1450,
-                                                                    vanishSizeAdaptiveDuration = true
-                                                                )
-                                                            }
-                                                        }
-                                                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                                                    horizontalArrangement = Arrangement.Center
-                                                ) {
-                                                    Text(
-                                                        text = "하모니OS 7 모래 파도 기본값으로 복원",
-                                                        fontSize = 13.5.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        if (prefs.cardVanishStyle == CardVanishStyle.HARMONY_GPU_SHADER) {
-                                            item {
-                                                Column(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                                ) {
-                                                    Text("침식 방향", fontSize = 15.sp, fontWeight = FontWeight.Normal)
-                                                    Row(
-                                                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                    ) {
-                                                        VanishDirection.entries.forEach { dir ->
-                                                            val sel = prefs.vanishDirection == dir
-                                                            Surface(
-                                                                shape = CircleShape,
-                                                                color = if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                                modifier = Modifier.clickable {
-                                                                    SpaceManager.updatePreferences { it.copy(vanishDirection = dir) }
-                                                                }
-                                                            ) {
-                                                                Text(
-                                                                    text = dir.label,
-                                                                    fontSize = 13.sp,
-                                                                    fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
-                                                                    color = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
-                                                                )
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "경계 발광 (Edge Glow)",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1fx", prefs.vanishEdgeGlow),
-                                                    value = prefs.vanishEdgeGlow.coerceIn(0f, 2f),
-                                                    range = 0f..2f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 10f).roundToInt() / 10f).coerceIn(0f, 2f)
-                                                        SpaceManager.updatePreferences { it.copy(vanishEdgeGlow = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "기류 소용돌이 (Curl Turbulence)",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1fx", prefs.vanishCurlStrength),
-                                                    value = prefs.vanishCurlStrength.coerceIn(0f, 2f),
-                                                    range = 0f..2f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 10f).roundToInt() / 10f).coerceIn(0f, 2f)
-                                                        SpaceManager.updatePreferences { it.copy(vanishCurlStrength = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "초기 충격파 왜곡 (Shockwave)",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1fx", prefs.vanishShockwaveStrength),
-                                                    value = prefs.vanishShockwaveStrength.coerceIn(0f, 2f),
-                                                    range = 0f..2f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 10f).roundToInt() / 10f).coerceIn(0f, 2f)
-                                                        SpaceManager.updatePreferences { it.copy(vanishShockwaveStrength = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "공기저항 감속 (Air Drag)",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1f", prefs.vanishAirDrag),
-                                                    value = prefs.vanishAirDrag.coerceIn(1.5f, 7.5f),
-                                                    range = 1.5f..7.5f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 2f).roundToInt() / 2f).coerceIn(1.5f, 7.5f)
-                                                        SpaceManager.updatePreferences { it.copy(vanishAirDrag = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ShaderTuningSliderRow(
-                                                    title = "Z축 원근 깊이감 (Z-Perspective)",
-                                                    valueLabel = String.format(java.util.Locale.US, "%.1fx", prefs.vanishZPerspective),
-                                                    value = prefs.vanishZPerspective.coerceIn(0f, 2f),
-                                                    range = 0f..2f,
-                                                    onValueChange = { v ->
-                                                        val snapped = ((v * 10f).roundToInt() / 10f).coerceIn(0f, 2f)
-                                                        SpaceManager.updatePreferences { it.copy(vanishZPerspective = snapped) }
-                                                    }
-                                                )
-                                            }
-                                            item {
-                                                ChromeSwitchItem(
-                                                    title = "광학 가산 블렌딩 (Additive Glow)",
-                                                    subtitle = "반짝이는 전경 입자에 빛 가산 합성 적용",
-                                                    checked = prefs.vanishAdditiveGlow,
-                                                    onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(vanishAdditiveGlow = c) } }
-                                                )
-                                            }
-                                            item {
-                                                ChromeSwitchItem(
-                                                    title = "요소 크기 비례 속도 자동 보정",
-                                                    subtitle = "작은 탭·알약은 큰 팝업보다 자연스럽게 약간 더 빠르게 소멸",
-                                                    checked = prefs.vanishSizeAdaptiveDuration,
-                                                    onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(vanishSizeAdaptiveDuration = c) } }
-                                                )
-                                            }
-                                            item {
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .clickable {
-                                                            SpaceManager.updatePreferences {
-                                                                it.copy(
-                                                                    vanishDirection = VanishDirection.TOUCH_RADIAL,
-                                                                    vanishEdgeGlow = 1.0f,
-                                                                    vanishCurlStrength = 1.0f,
-                                                                    vanishShockwaveStrength = 1.0f,
-                                                                    vanishAirDrag = 4.2f,
-                                                                    vanishAdditiveGlow = true,
-                                                                    vanishZPerspective = 1.0f,
-                                                                    vanishSizeAdaptiveDuration = true
-                                                                )
-                                                            }
-                                                        }
-                                                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                                                    horizontalArrangement = Arrangement.Center
-                                                ) {
-                                                    Text(
-                                                        text = "GPU 셰이더 세부 설정 기본값으로 복원",
-                                                        fontSize = 13.5.sp,
-                                                        fontWeight = FontWeight.Medium,
-                                                        color = MaterialTheme.colorScheme.primary
-                                                    )
                                                 }
                                             }
                                         }
                                     }
                                 }
+
+                                ProgressEffectSettingsSection(
+                                    prefs = prefs,
+                                    settingsCardColor = settingsCardColor
+                                )
+
+                                ParticleVanishSettingsSection(
+                                    prefs = prefs,
+                                    settingsCardColor = settingsCardColor
+                                )
 
                                 Text(
                                     "탭 오디오 이퀄라이저 모핑",
