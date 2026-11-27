@@ -109,7 +109,7 @@ workflows:
           export PATH="$HOME/.cargo/bin:$PATH"
           if ! command -v cargo >/dev/null 2>&1; then
             echo "Installing Rust toolchain via rustup..."
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+            curl --proto '=https' --tlsv1.2 --retry 5 --retry-delay 4 --retry-all-errors -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
           rustup target add aarch64-linux-android
