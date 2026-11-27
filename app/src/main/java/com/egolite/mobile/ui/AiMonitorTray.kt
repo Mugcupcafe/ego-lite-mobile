@@ -307,8 +307,10 @@ fun AiLiveMonitorTray(
         // ============================================================
         AnimatedVisibility(
             visible = visible,
-            enter = fadeIn(tween(220)) + expandHorizontally(animationSpec = EgoMotion.intSizeSpring),
-            exit = fadeOut(tween(180)) + shrinkHorizontally(animationSpec = tween(220))
+            enter = fadeIn(tween(275)) + expandHorizontally(
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 240f)
+            ),
+            exit = fadeOut(tween(225)) + shrinkHorizontally(animationSpec = tween(275))
         ) {
             val listState = rememberLazyListState()
             var draggingId by remember { mutableStateOf<String?>(null) }
@@ -427,7 +429,7 @@ fun AiLiveMonitorTray(
                 ) {
                     if (monitoredSpaces.isEmpty() && !isTabDragging) {
                         item(key = "__empty_ai_left__") {
-                            EmptyAiMonitorCard(isLeftSidebar = true, onCreateAiSpace = onCreateAiSpace)
+                            EmptyAiMonitorCard(isLeftSidebar = true, trayVisible = visible, onCreateAiSpace = onCreateAiSpace)
                         }
                     }
                     itemsIndexed(monitoredSpaces, key = { _, sp -> sp.id }) { idx, space ->
@@ -569,8 +571,10 @@ fun AiLiveMonitorTray(
         // ============================================================
         AnimatedVisibility(
             visible = visible,
-            enter = fadeIn(tween(220)) + expandVertically(animationSpec = EgoMotion.intSizeSpring),
-            exit = fadeOut(tween(180)) + shrinkVertically(animationSpec = tween(220))
+            enter = fadeIn(tween(275)) + expandVertically(
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 240f)
+            ),
+            exit = fadeOut(tween(225)) + shrinkVertically(animationSpec = tween(275))
         ) {
             val rowState = rememberLazyListState()
             var draggingId by remember { mutableStateOf<String?>(null) }
@@ -602,7 +606,7 @@ fun AiLiveMonitorTray(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Spacer(modifier = Modifier.width(72.dp))
+                    Spacer(modifier = Modifier.width(buddySlotWidthDp(spaces) + 4.dp))
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (canAddAiSpace) {
@@ -743,7 +747,7 @@ fun AiLiveMonitorTray(
                 ) {
                     if (monitoredSpaces.isEmpty() && !isTabDragging) {
                         item(key = "__empty_ai_top__") {
-                            EmptyAiMonitorCard(isLeftSidebar = false, onCreateAiSpace = onCreateAiSpace)
+                            EmptyAiMonitorCard(isLeftSidebar = false, trayVisible = visible, onCreateAiSpace = onCreateAiSpace)
                         }
                     }
                     itemsIndexed(monitoredSpaces, key = { _, sp -> sp.id }) { idx, space ->
@@ -871,24 +875,32 @@ private fun MonitorSpaceCard(
 
     val displayName = if (isPersonal) "Personal" else connectedAiName.ifBlank { space.name }
 
-    // 트레이 동시 유기적 확장(0.32/16dp 블러 → 1.0/0dp) + 메인에서 복귀하는 카드 역방향 블러 모프 착지
-    val cardScale = remember(space.id) { Animatable(if (isReturning) 0.42f else 0.32f) }
+    // 0.8x 속도 M3 Expressive Spring Cascade (블러 링 제거, 선명한 대각선 스프링 캐스케이드 등장)
+    val initSlideX = if (isReturning) (if (isLeftSidebar) 28f else 0f) else (if (isLeftSidebar) -14f else -18f)
+    val initSlideY = if (isReturning) (if (!isLeftSidebar) 28f else 0f) else (if (isLeftSidebar) -24f else -14f)
+    val cardScale = remember(space.id) { Animatable(if (isReturning) 0.62f else 0.84f) }
     val cardAlpha = remember(space.id) { Animatable(0f) }
-    val cardBlur = remember(space.id) { Animatable(if (isReturning) 14f else 16f) }
-    val returnOffset = remember(space.id) { Animatable(if (isReturning) 28f else 0f) }
+    val cardBlur = remember(space.id) { Animatable(if (isReturning) 10f else 0f) }
+    val cascadeOffsetX = remember(space.id) { Animatable(initSlideX) }
+    val cascadeOffsetY = remember(space.id) { Animatable(initSlideY) }
 
     LaunchedEffect(trayVisible, space.id, isReturning) {
         if (trayVisible) {
-            if (!isReturning) delay(index * 28L)
-            launch { cardScale.animateTo(1f, animationSpec = EgoMotion.bouncySpring()) }
-            launch { cardAlpha.animateTo(1f, animationSpec = tween(260)) }
-            launch { cardBlur.animateTo(0f, animationSpec = tween(360)) }
-            launch { returnOffset.animateTo(0f, animationSpec = EgoMotion.bouncySpring()) }
+            if (!isReturning) delay(index * 56L)
+            val m3Spring = spring<Float>(dampingRatio = 0.70f, stiffness = 215f)
+            launch { cardScale.animateTo(1f, animationSpec = m3Spring) }
+            launch { cardAlpha.animateTo(1f, animationSpec = tween(300)) }
+            launch { cascadeOffsetX.animateTo(0f, animationSpec = m3Spring) }
+            launch { cascadeOffsetY.animateTo(0f, animationSpec = m3Spring) }
+            if (cardBlur.value > 0.1f) {
+                launch { cardBlur.animateTo(0f, animationSpec = tween(320)) }
+            }
         } else {
-            delay(index * 15L)
-            launch { cardScale.animateTo(0.32f, animationSpec = tween(190)) }
-            launch { cardAlpha.animateTo(0f, animationSpec = tween(160)) }
-            launch { cardBlur.animateTo(14f, animationSpec = tween(180)) }
+            delay(index * 20L)
+            launch { cardScale.animateTo(0.86f, animationSpec = tween(220)) }
+            launch { cardAlpha.animateTo(0f, animationSpec = tween(200)) }
+            launch { cascadeOffsetX.animateTo(if (isLeftSidebar) -10f else -14f, animationSpec = tween(220)) }
+            launch { cascadeOffsetY.animateTo(if (isLeftSidebar) -16f else -10f, animationSpec = tween(220)) }
         }
     }
 
@@ -943,8 +955,8 @@ private fun MonitorSpaceCard(
             .width(cardWidth)
             .height(cardHeight)
             .graphicsLayer {
-                translationX = dragTranslationX + if (isLeftSidebar) returnOffset.value else 0f
-                translationY = dragTranslationY + if (!isLeftSidebar) returnOffset.value else 0f
+                translationX = dragTranslationX + cascadeOffsetX.value.dp.toPx()
+                translationY = dragTranslationY + cascadeOffsetY.value.dp.toPx()
                 scaleX = cardScale.value * dragScale
                 scaleY = cardScale.value * dragScale
                 alpha = if (isDragging) 0.92f else cardAlpha.value
@@ -1245,58 +1257,112 @@ private fun PerCharWaveText(
 @Composable
 private fun EmptyAiMonitorCard(
     isLeftSidebar: Boolean,
+    trayVisible: Boolean = true,
     onCreateAiSpace: () -> Unit
 ) {
     val accent = MaterialTheme.colorScheme.primary
+    val surfaceLow = MaterialTheme.colorScheme.surfaceContainerLow
+    val outlineVar = MaterialTheme.colorScheme.outlineVariant
+
+    // 0.8x M3 Expressive Spring Cascade entrance
+    val cardScale = remember { Animatable(0.84f) }
+    val cardAlpha = remember { Animatable(0f) }
+    val slideX = remember { Animatable(if (isLeftSidebar) -14f else -18f) }
+    val slideY = remember { Animatable(if (isLeftSidebar) -24f else -14f) }
+    LaunchedEffect(trayVisible) {
+        if (trayVisible) {
+            val m3Spring = spring<Float>(dampingRatio = 0.70f, stiffness = 215f)
+            launch { cardScale.animateTo(1f, animationSpec = m3Spring) }
+            launch { cardAlpha.animateTo(1f, animationSpec = tween(300)) }
+            launch { slideX.animateTo(0f, animationSpec = m3Spring) }
+            launch { slideY.animateTo(0f, animationSpec = m3Spring) }
+        } else {
+            launch { cardScale.animateTo(0.86f, animationSpec = tween(220)) }
+            launch { cardAlpha.animateTo(0f, animationSpec = tween(200)) }
+        }
+    }
+
+    // Gentle floating bob for the M3 clover character
+    val floatInf = rememberInfiniteTransition(label = "emptyBuddyFloat")
+    val floatDp by floatInf.animateFloat(
+        initialValue = -3.5f,
+        targetValue = 3.5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "emptyBuddyBob"
+    )
+
     Box(
         modifier = Modifier
-            .width(if (isLeftSidebar) 216.dp else 230.dp)
-            .height(if (isLeftSidebar) 168.dp else 220.dp)
+            .width(if (isLeftSidebar) 216.dp else 234.dp)
+            .height(if (isLeftSidebar) 186.dp else 220.dp)
+            .graphicsLayer {
+                translationX = slideX.value.dp.toPx()
+                translationY = slideY.value.dp.toPx()
+                scaleX = cardScale.value
+                scaleY = cardScale.value
+                alpha = cardAlpha.value
+            }
             .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .background(surfaceLow)
+            .border(1.dp, outlineVar.copy(alpha = 0.55f), RoundedCornerShape(24.dp))
             .clickable { onCreateAiSpace() },
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.matchParentSize()) {
-            drawRoundRect(
-                color = accent.copy(alpha = 0.42f),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(24.dp.toPx(), 24.dp.toPx()),
-                style = Stroke(
-                    width = 1.5.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
-                )
-            )
-        }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.padding(16.dp)
         ) {
-            Surface(
-                shape = CircleShape,
-                color = accent.copy(alpha = 0.14f),
-                modifier = Modifier.size(38.dp)
+            Box(
+                modifier = Modifier
+                    .size(58.dp)
+                    .graphicsLayer { translationY = floatDp.dp.toPx() },
+                contentAlignment = Alignment.Center
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    EgoIcon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "새 AI 스페이스",
-                        tint = accent,
-                        modifier = Modifier.size(20.dp)
-                    , symbolSize = 20.dp)
-                }
+                M3ExpressiveBuddyAvatar(
+                    color = accent,
+                    baseShape = M3BuddyShape.CLOVER4,
+                    targetShape = M3BuddyShape.SCALLOP,
+                    morphProgress = 0f,
+                    isSquinting = false,
+                    aiStatus = AiSpaceStatus.IDLE,
+                    size = 48.dp,
+                    blinkSeed = 7
+                )
             }
             Text(
-                text = "생성된 AI 스페이스 없음",
-                fontSize = 13.sp,
+                text = "AI 스페이스 없음",
+                fontSize = 13.5.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Text(
-                text = "눌러서 새 AI 스페이스 만들기",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    EgoIcon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(14.dp),
+                        symbolSize = 14.dp
+                    )
+                    Text(
+                        text = "새 AI 스페이스",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
         }
     }
 }
