@@ -341,7 +341,20 @@ fun BrowserScreen() {
     ) {
         if (prefs.cardVanishStyle == CardVanishStyle.OFF || rootRect == null) return
         if (rootRect.width <= 8f || rootRect.height <= 8f) return
-        val localRect = rootRect.translate(-rootBoxLeftPx, -rootBoxTopPx)
+        val rawLocal = rootRect.translate(-rootBoxLeftPx, -rootBoxTopPx)
+        // 보정: 진입 모핑(scale) 중 측정된 축소 rect 대신 캡처된 실제 비트맵 1:1 픽셀 크기 우선 적용
+        val localRect = if (capturedBitmap != null && capturedBitmap.width > 16 && capturedBitmap.height > 16) {
+            val bw = capturedBitmap.width.toFloat()
+            val bh = capturedBitmap.height.toFloat()
+            if (rawLocal.width < bw * 0.92f || rawLocal.height < bh * 0.92f) {
+                Rect(
+                    left = rawLocal.left,
+                    top = rawLocal.top,
+                    right = rawLocal.left + bw,
+                    bottom = rawLocal.top + bh
+                )
+            } else rawLocal
+        } else rawLocal
         val localOriginX = touchRoot?.let { it.x - rootBoxLeftPx } ?: -1f
         val localOriginY = touchRoot?.let { it.y - rootBoxTopPx } ?: -1f
         val id = nextDustBurstId++
@@ -1462,6 +1475,15 @@ fun BrowserScreen() {
                 }
             }
 
+            var omniToolbarPullTarget by remember { mutableFloatStateOf(0f) }
+            val omniToolbarPull by animateFloatAsState(
+                targetValue = omniToolbarPullTarget,
+                animationSpec = EgoMotion.responsiveSpring(),
+                label = "omniToolbarElastic"
+            )
+            var omniTabDragStep by remember { mutableStateOf<Int?>(null) }
+            val activeTabIdxNow = activeSpace.tabs.indexOfFirst { it.id == activeTab.id }.coerceAtLeast(0)
+
             // 2행: Material 3 Expressive Connected 3-그룹 툴바 (바깥 22dp · 인접 6dp, 3dp 간격, 선택 탭과 동일 색상)
             val toolbarChrome = LocalEgoChromeColors.current
             val m3GroupBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.20f)
@@ -1478,10 +1500,19 @@ fun BrowserScreen() {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                // 그룹 1: (홈 · 뒤로 · 앞으로 · 새로고침)
+                // 그룹 1: (홈 · 뒤로 · 앞으로 · 새로고침) — 주소창 드래그에 맞춰 인접 탄성 압축 (#6)
                 Row(
                     modifier = Modifier
                         .height(40.dp)
+                        .graphicsLayer {
+                            if (prefs.toolbarElasticityEnabled && kotlin.math.abs(omniToolbarPull) > 0.2f) {
+                                // 왼쪽으로 당기면 G1 압축, 오른쪽으로 당기면 살짝 압축 후 탄성 복귀
+                                val comp = (1f - kotlin.math.abs(omniToolbarPull) * 0.0042f).coerceIn(0.84f, 1f)
+                                scaleX = comp
+                                translationX = omniToolbarPull * 0.14f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                            }
+                        }
                         .clip(m3LeftGroupShape)
                         .background(toolbarChrome.groupSurface)
                         .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3LeftGroupShape, glowColor = MaterialTheme.colorScheme.primary)
@@ -1518,6 +1549,10 @@ fun BrowserScreen() {
                     mutedIconColor = mutedIconColor,
                     rootBoxLeftPx = rootBoxLeftPx,
                     rootBoxTopPx = rootBoxTopPx,
+                    tabCount = activeSpace.tabs.size,
+                    activeTabIndex = activeTabIdxNow,
+                    onElasticPullChanged = { omniToolbarPullTarget = it },
+                    onTabDragOffsetChanged = { omniTabDragStep = it },
                     onBoundsMeasured = { l, t, w ->
                         addressBarLeftPx = l
                         addressBarTopPx = t
@@ -1531,10 +1566,18 @@ fun BrowserScreen() {
                     }
                 )
 
-                // 그룹 3: (MCP · AI · 광고차단 · 번역 · 다크모드 · 프로필 · 전체탭 · 메뉴)
+                // 그룹 3: (MCP · AI · 광고차단 · 번역 · 다크모드 · 프로필 · 전체탭 · 메뉴) — 주소창 드래그에 맞춰 인접 탄성 압축 (#6)
                 Row(
                     modifier = Modifier
                         .height(40.dp)
+                        .graphicsLayer {
+                            if (prefs.toolbarElasticityEnabled && kotlin.math.abs(omniToolbarPull) > 0.2f) {
+                                val comp = (1f - kotlin.math.abs(omniToolbarPull) * 0.0042f).coerceIn(0.84f, 1f)
+                                scaleX = comp
+                                translationX = omniToolbarPull * 0.14f
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)
+                            }
+                        }
                         .clip(m3RightGroupShape)
                         .background(toolbarChrome.groupSurface)
                         .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3RightGroupShape, glowColor = MaterialTheme.colorScheme.primary)
@@ -1965,7 +2008,7 @@ fun BrowserScreen() {
                     onEditBookmark = { bm -> editingBookmark = bm },
                     onMoveBookmark = { id, delta -> SpaceManager.moveBookmark(id, delta) },
                     onDeleteBookmark = { id -> SpaceManager.removeBookmark(id) },
-                    onOpenAllBookmarks = { showBookmarkManager = true }
+                    onOpenAllBookmarks = { SpaceManager.openBookmarksTab(activeSpace.id) }
                 )
             }
 
@@ -2086,6 +2129,22 @@ fun BrowserScreen() {
                         onRemoveItem = { id -> SpaceManager.removeHistoryItem(id) },
                         onClearAll = { SpaceManager.clearHistory() },
                         onDustVanish = { snap -> emitDustSnapshot(snap, tabPageDustColor, 0.62f) }
+                    )
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = activeTab.url == BOOKMARKS_URL,
+                    enter = fadeIn(tween(150)),
+                    exit = fadeOut(tween(120))
+                ) {
+                    ChromeBookmarksScreen(
+                        bookmarks = bookmarks,
+                        folders = bookmarkFolders,
+                        onNavigate = { url -> SpaceManager.navigate(activeSpace.id, url) },
+                        onEditBookmark = { bm -> editingBookmark = bm },
+                        onDeleteBookmark = { id -> SpaceManager.removeBookmark(id) },
+                        onMoveBookmark = { id, delta -> SpaceManager.moveBookmark(id, delta) },
+                        onDismiss = {}
                     )
                 }
 
@@ -2240,6 +2299,17 @@ fun BrowserScreen() {
         }
 
         val popupDustColor = MaterialTheme.colorScheme.surfaceContainerHigh
+
+        // 주소창 좌우 드래그 시 멀티 탭 이동 시각적 힌트 캡슐 (#7)
+        OmniboxTabSwipeHintPill(
+            tabs = activeSpace.tabs,
+            activeTabIndex = activeTabIdxNow,
+            dragStepOffset = omniTabDragStep,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 98.dp + monitorTopOffset)
+                .zIndex(47f)
+        )
 
         // 주소창 아래 크롬 스타일 슬림 알약 번역 팝업
         Box(
