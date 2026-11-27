@@ -780,7 +780,7 @@ object ExtensionManager {
         }
     }
 
-    private inner class BackgroundBridge(private val extId: String) {
+    private class BackgroundBridge(private val extId: String) {
         @JavascriptInterface
         fun nativeFetch(fid: String, urlStr: String, method: String, body: String) {
             ioScope.launch {
