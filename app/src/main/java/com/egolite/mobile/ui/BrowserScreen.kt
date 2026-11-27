@@ -1586,7 +1586,7 @@ fun BrowserScreen() {
                         .pointerInput(prefs.toolbarElasticityEnabled) {
                             if (!prefs.toolbarElasticityEnabled) return@pointerInput
                             var dragSum = 0f
-                            val maxPullPx = 42f * density
+                            val maxPullPx = with(density) { 42.dp.toPx() }
                             detectHorizontalDragGestures(
                                 onDragEnd = { dragSum = 0f; tbB12TargetPx = 0f },
                                 onDragCancel = { dragSum = 0f; tbB12TargetPx = 0f },
@@ -1676,7 +1676,7 @@ fun BrowserScreen() {
                         .pointerInput(prefs.toolbarElasticityEnabled) {
                             if (!prefs.toolbarElasticityEnabled) return@pointerInput
                             var dragSum = 0f
-                            val maxPullPx = 42f * density
+                            val maxPullPx = with(density) { 42.dp.toPx() }
                             detectHorizontalDragGestures(
                                 onDragEnd = { dragSum = 0f; tbB23TargetPx = 0f },
                                 onDragCancel = { dragSum = 0f; tbB23TargetPx = 0f },
