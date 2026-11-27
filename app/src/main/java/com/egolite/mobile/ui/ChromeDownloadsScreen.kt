@@ -327,6 +327,8 @@ fun ChromeDownloadStatusBanner(
                     enabled = showDlProgress && prefs.progressBarStyle == ProgressBarStyle.HARMONY_OPTICAL,
                     progress = dlProg,
                     isActive = true
+                ,
+                    modifier = Modifier.matchParentSize()
                 ) {
                     BannerContentRow(
                         titleCol = invTextCol,
