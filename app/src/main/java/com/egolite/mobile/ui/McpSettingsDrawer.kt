@@ -82,6 +82,7 @@ import com.egolite.mobile.tunnel.EgoForegroundService
 
 @Composable
 fun McpSettingsDrawer(
+    anchorRect: Rect? = null,
     onDismiss: (VanishSnapshot) -> Unit
 ) {
     val context = LocalContext.current
@@ -113,39 +114,28 @@ fun McpSettingsDrawer(
                 detectTapGestures { offset -> dismissWithCapture(offset) }
             }
     ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 50.dp, end = 92.dp)
-        ) {
-            AnimatedVisibility(
-                visible = cardVisible,
-                enter = fadeIn(tween(130)) + scaleIn(
-                    initialScale = 0.30f,
-                    transformOrigin = TransformOrigin(1f, 0f),
-                    animationSpec = EgoMotion.morphSpring()
-                ),
-                exit = fadeOut(tween(100)) + scaleOut(
-                    targetScale = 0.78f,
-                    transformOrigin = TransformOrigin(1f, 0f),
-                    animationSpec = tween(130)
-                )
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .width(336.dp)
-                        .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
-                        .drawWithContent {
-                            captureLayer.record { this@drawWithContent.drawContent() }
-                            drawLayer(captureLayer)
-                        }
-                        .harmonyRimGlow(enabled = true, cornerRadius = 24.dp, glowColor = MaterialTheme.colorScheme.primary)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) {},
-                    shape = RoundedCornerShape(24.dp),
+        HarmonyAnchoredMorphContainer(
+            anchorRect = anchorRect,
+            cardWidth = 336.dp,
+            fallbackTopPadding = 96.dp,
+            fallbackEndPadding = 92.dp
+        ) { morphCorner ->
+            val cardShape = RoundedCornerShape(morphCorner)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                    .drawWithContent {
+                        captureLayer.record { this@drawWithContent.drawContent() }
+                        drawLayer(captureLayer)
+                    }
+                    .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = cardShape, glowColor = MaterialTheme.colorScheme.primary)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), cardShape)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) {},
+                shape = cardShape,
                     color = MaterialTheme.colorScheme.surfaceContainerLowest,
                     shadowElevation = 14.dp,
                     tonalElevation = 4.dp
@@ -388,7 +378,6 @@ fun McpSettingsDrawer(
                         }
                     }
                 }
-            }
         }
     }
 }
