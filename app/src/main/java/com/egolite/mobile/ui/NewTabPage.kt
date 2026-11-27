@@ -55,6 +55,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.foundation.gestures.detectTapGestures
+import android.content.Context
+import android.content.ClipboardManager
+import android.content.ClipData
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -104,7 +119,11 @@ fun ChromeNewTabPage(
     onOpenOmnibox: () -> Unit,
     onNavigate: (String) -> Unit,
     onEditBookmark: (BookmarkItem) -> Unit,
-    onAddBookmark: () -> Unit
+    onAddBookmark: () -> Unit,
+    onOpenInNewTab: (String) -> Unit = onNavigate,
+    onOpenInIncognito: (String) -> Unit = onNavigate,
+    onDeleteBookmark: (BookmarkItem) -> Unit = {},
+    onDustVanish: (VanishSnapshot) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -122,6 +141,8 @@ fun ChromeNewTabPage(
     var hiddenUrls by remember { mutableStateOf<Set<String>>(emptySet()) }
     var blockedSources by remember { mutableStateOf<Set<String>>(emptySet()) }
     var menuTarget by remember { mutableStateOf<FeedMenuTarget?>(null) }
+    var shortcutMenuTarget by remember { mutableStateOf<Pair<BookmarkItem, Rect?>?>(null) }
+    val haptic = LocalHapticFeedback.current
 
     fun reloadFeed(force: Boolean = false) {
         scope.launch {
@@ -253,14 +274,19 @@ fun ChromeNewTabPage(
                     maxItemsInEachRow = 9
                 ) {
                     bookmarks.take(8).forEach { bm ->
+                        var tileRect by remember(bm.id) { mutableStateOf<Rect?>(null) }
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .width(68.dp)
+                                .onGloballyPositioned { coords -> tileRect = coords.boundsInRoot() }
                                 .clip(RoundedCornerShape(12.dp))
                                 .combinedClickable(
                                     onClick = { onNavigate(bm.url) },
-                                    onLongClick = { onEditBookmark(bm) }
+                                    onLongClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        shortcutMenuTarget = bm to tileRect
+                                    }
                                 )
                                 .padding(vertical = 4.dp)
                         ) {
@@ -496,6 +522,83 @@ fun ChromeNewTabPage(
         }
 
         // 크롬 1:1 뉴스 카드 ⋮ 하단 메뉴 시트 (첨부 5 동일)
+        shortcutMenuTarget?.let { (bm, anchorRect) ->
+            var menuCardRect by remember { mutableStateOf<Rect?>(null) }
+            val menuLayer = rememberGraphicsLayer()
+            fun dismissShortcutMenu(touchRoot: Offset? = null, afterDismiss: () -> Unit = {}) {
+                scope.launch {
+                    val bmp = runCatching { menuLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+                    val origin = touchRoot ?: menuCardRect?.center
+                    onDustVanish(VanishSnapshot(rect = menuCardRect, touchRoot = origin, bitmap = bmp))
+                    shortcutMenuTarget = null
+                    afterDismiss()
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(bm.id) {
+                        detectTapGestures { offset -> dismissShortcutMenu(offset) }
+                    }
+            ) {
+                HarmonyAnchoredMorphContainer(
+                    anchorRect = anchorRect,
+                    cardWidth = 226.dp,
+                    fallbackTopPadding = 180.dp,
+                    fallbackEndPadding = 80.dp
+                ) { morphCorner ->
+                    val cardShape = RoundedCornerShape(morphCorner.coerceAtMost(20.dp))
+                    Surface(
+                        shape = cardShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shadowElevation = 14.dp,
+                        tonalElevation = 4.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coords -> menuCardRect = coords.boundsInRoot() }
+                            .drawWithContent {
+                                menuLayer.record { this@drawWithContent.drawContent() }
+                                drawLayer(menuLayer)
+                            }
+                            .harmonyRimGlow(enabled = true, shape = cardShape, glowColor = MaterialTheme.colorScheme.primary)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f), cardShape)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            listOf(
+                                "새 탭에서 열기" to { onOpenInNewTab(bm.url) },
+                                "시크릿 창으로 열기" to { onOpenInIncognito(bm.url) },
+                                "링크 복사" to {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    cm?.setPrimaryClip(ClipData.newPlainText(bm.title, bm.url))
+                                    Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
+                                },
+                                "편집" to { onEditBookmark(bm) },
+                                "삭제" to { onDeleteBookmark(bm) },
+                                "이 바로가기 고정" to {
+                                    Toast.makeText(context, "${bm.title} 바로가기 고정됨", Toast.LENGTH_SHORT).show()
+                                }
+                            ).forEach { (label, action) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { dismissShortcutMenu(afterDismiss = action) }
+                                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 14.5.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        color = if (label == "삭제") Color(0xFFEF4444) else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         menuTarget?.let { target ->
             val activeSpaceId = SpaceManager.getActiveSpace().id
             ChromeNewsActionBottomSheet(
