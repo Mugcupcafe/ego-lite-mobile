@@ -2706,6 +2706,7 @@ fun BrowserScreen() {
                     enter = fadeIn(tween(180)),
                     exit = fadeOut(tween(140))
                 ) {
+                    val ntpDustColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ChromeNewTabPage(
                         bookmarks = bookmarks,
                         onOpenOmnibox = { showOmniboxOverlay = true },
@@ -2715,7 +2716,7 @@ fun BrowserScreen() {
                         onOpenInNewTab = { url -> SpaceManager.createTab(activeSpace.id, initialUrl = url, selectImmediately = false) },
                         onOpenInIncognito = { url -> SpaceManager.createTab(activeSpace.id, initialUrl = url, incognito = true, selectImmediately = true) },
                         onDeleteBookmark = { bm -> SpaceManager.removeBookmark(bm.id) },
-                        onDustVanish = { snap -> emitDustSnapshot(snap, MaterialTheme.colorScheme.surfaceContainerHigh, 0.90f) }
+                        onDustVanish = { snap -> emitDustSnapshot(snap, ntpDustColor, 0.90f) }
                     )
                 }
                 // AI Space 하단 young-newt-20 MCP 동작 표기 캡슐 HUD (비작동 IDLE 시 자동 숨김)
