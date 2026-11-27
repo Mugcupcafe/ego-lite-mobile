@@ -180,6 +180,13 @@ enum class VanishDirection(val label: String) {
 }
 
 @Serializable
+enum class ProgressBarStyle(val label: String, val description: String) {
+    MATERIAL("머테리얼 (기본값)", "깔끔한 Material 3 기본 직선 프로그래스바"),
+    BOTTOM_LIGHTING("하단 라이팅", "주소창·다운로드 하단 테두리를 따라 흐르는 발광 스트립"),
+    HARMONY_OPTICAL("하모니 광감 (방식 B)", "단면 순백 HDR 빛 커튼 · 양방향 개별 입자 · 지나간 구간 검정 글자 유지")
+}
+
+@Serializable
 enum class CardVanishStyle(val label: String, val description: String) {
     HARMONY_DUST("초미세 먼지 (기본값)", "카드 경계가 침식되며 초미세 먼지로 흩어지는 무손실 소멸"),
     HARMONY_7_SAND_WAVE("하모니OS 7 은빛 모래 파도", "크기별 1~3중 원형 구멍 침식 · 경계선 밀집 1px 은빛 모래 띠 · 일체형 바람 기류"),
@@ -234,6 +241,19 @@ data class BrowserPreferences(
     val sandWindStrength: Float = 1.0f,
     val sandSwirlStrength: Float = 1.0f,
     val rimGlowEnabled: Boolean = true,
+    val rimGlowIntensity: Float = 1.35f,
+    val lightModeParticleColorHex: Long = 0xFF2F436EL,
+    val lightModeParticleSizeBoost: Boolean = true,
+    val vanishSizeAdaptiveCount: Boolean = true,
+    val progressBarStyle: ProgressBarStyle = ProgressBarStyle.MATERIAL,
+    val progressLightIntensity: Float = 1.6f,
+    val progressParticleDensity: Float = 1.4f,
+    val progressShowInOmnibox: Boolean = true,
+    val progressShowInDownload: Boolean = true,
+    val toolbarElasticityEnabled: Boolean = true,
+    val videoVerticalHudEnabled: Boolean = true,
+    val videoHudLightIntensity: Float = 1.6f,
+    val videoHudParticleDensity: Float = 1.4f,
     val tabWidthMode: TabWidthMode = TabWidthMode.DYNAMIC,
     val manualTabWidthDp: Int = 180,
     val aiSpaceRetentionDays: Int = 7,
@@ -265,6 +285,7 @@ data class TranslationPopupState(
     val visible: Boolean = false,
     val isTranslating: Boolean = false,
     val isTranslated: Boolean = false,
+    val progress: Float = 0f,
     val statusText: String = "",
     val sourceLang: String = "auto",
     val targetLang: String = Locale.getDefault().language.ifBlank { "ko" },
