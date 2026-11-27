@@ -266,6 +266,10 @@ fun RowScope.OmniboxCenterCapsule(
     mutedIconColor: Color,
     rootBoxLeftPx: Float,
     rootBoxTopPx: Float,
+    tabCount: Int = 1,
+    activeTabIndex: Int = 0,
+    onElasticPullChanged: (Float) -> Unit = {},
+    onTabDragOffsetChanged: (Int?) -> Unit = {},
     onBoundsMeasured: (left: Float, top: Float, width: Float) -> Unit,
     onSwitchTabByOffset: (Int) -> Unit,
     onOpenOmnibox: () -> Unit,
@@ -305,23 +309,38 @@ fun RowScope.OmniboxCenterCapsule(
             .background(groupSurface)
             .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3CenterGroupShape, glowColor = MaterialTheme.colorScheme.primary)
             .border(1.dp, groupBorder, m3CenterGroupShape)
-            .pointerInput(activeSpaceId, prefs.toolbarElasticityEnabled) {
+            .pointerInput(activeSpaceId, prefs.toolbarElasticityEnabled, tabCount, activeTabIndex) {
                 var dragSum = 0f
+                var lastStep = 0
+                val stepPx = 76f * density
                 detectHorizontalDragGestures(
                     onDragEnd = {
-                        if (dragSum > 70f) onSwitchTabByOffset(-1)
-                        else if (dragSum < -70f) onSwitchTabByOffset(1)
+                        if (lastStep != 0) onSwitchTabByOffset(lastStep)
                         dragSum = 0f
+                        lastStep = 0
+                        onTabDragOffsetChanged(null)
+                        onElasticPullChanged(0f)
                         scope.launch { omniElasticPull.animateTo(0f, EgoMotion.responsiveSpring()) }
                     },
                     onDragCancel = {
                         dragSum = 0f
+                        lastStep = 0
+                        onTabDragOffsetChanged(null)
+                        onElasticPullChanged(0f)
                         scope.launch { omniElasticPull.animateTo(0f, EgoMotion.responsiveSpring()) }
                     },
                     onHorizontalDrag = { _, amount ->
                         dragSum += amount
+                        // 드래그 거리 비례 멀티 탭 탐색 (오른쪽 드래그 -> 이전 탭(-), 왼쪽 드래그 -> 다음 탭(+))
+                        val rawStep = (-dragSum / stepPx).toInt()
+                        val minStep = -activeTabIndex
+                        val maxStep = (tabCount - 1 - activeTabIndex).coerceAtLeast(0)
+                        val clampedStep = rawStep.coerceIn(minStep, maxStep)
+                        lastStep = clampedStep
+                        onTabDragOffsetChanged(if (abs(dragSum) > 22f && tabCount > 1) clampedStep else null)
                         if (prefs.toolbarElasticityEnabled) {
-                            val rubber = sign(dragSum) * 28f * (1f - exp(-abs(dragSum) / 90f))
+                            val rubber = sign(dragSum) * 32f * (1f - exp(-abs(dragSum) / 95f))
+                            onElasticPullChanged(rubber)
                             scope.launch { omniElasticPull.snapTo(rubber) }
                         }
                     }
@@ -357,7 +376,9 @@ fun RowScope.OmniboxCenterCapsule(
             enabled = showOmniOptical && prefs.progressBarStyle == ProgressBarStyle.HARMONY_OPTICAL,
             progress = omniProgFrac,
             isActive = omniIsLoadingNow
-        ) {
+        ,
+                    modifier = Modifier.matchParentSize()
+                ) {
             OmniboxInnerRowContent(
                 activeTab = activeTab,
                 isNewTab = isNewTab,
@@ -693,6 +714,61 @@ fun RightExtraToolbarButton(
                     symbolSize = 20.dp
                 )
             }
+        }
+    }
+}
+
+
+/**
+ * 주소창 좌우 드래그 시 어느 탭으로 이동할지 실시간으로 보여주는 시각적 힌트 캡슐 (#7).
+ */
+@Composable
+fun OmniboxTabSwipeHintPill(
+    tabs: List<BrowserTab>,
+    activeTabIndex: Int,
+    dragStepOffset: Int?,
+    modifier: Modifier = Modifier
+) {
+    if (dragStepOffset == null || tabs.size <= 1) return
+    val targetIdx = (activeTabIndex + dragStepOffset).coerceIn(0, tabs.lastIndex)
+    val targetTab = tabs[targetIdx]
+    val directionText = when {
+        dragStepOffset < 0 -> "← ${-dragStepOffset}칸 이전 탭"
+        dragStepOffset > 0 -> "다음 탭 ${dragStepOffset}칸 →"
+        else -> "현재 탭 유지"
+    }
+    androidx.compose.material3.Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        shadowElevation = 10.dp,
+        modifier = modifier
+            .border(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.72f), CircleShape)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = directionText,
+                fontSize = 11.5.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = targetTab.title.ifBlank { targetTab.url }.take(28),
+                fontSize = 12.5.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "${targetIdx + 1}/${tabs.size}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
