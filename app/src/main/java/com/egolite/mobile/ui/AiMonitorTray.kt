@@ -95,6 +95,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -140,6 +145,7 @@ fun AiLiveMonitorTray(
     onCloseSpace: (String) -> Unit = {},
     onMoveSpace: (fromId: String, toId: String) -> Unit,
     onCreateAiSpace: () -> Unit,
+    onGlobalDustVanish: ((VanishSnapshot, Color) -> Unit)? = null,
     onCollapse: () -> Unit
 ) {
     DisposableEffect(isTabDragging, visible) {
@@ -196,6 +202,8 @@ fun AiLiveMonitorTray(
     val activeVanishBursts = remember { mutableStateListOf<DustVanishRequest>() }
     val vanishingSpaceIds = remember { mutableStateListOf<String>() }
     val cardLocalRects = remember { mutableMapOf<String, Rect>() }
+    val cardRootRects = remember { mutableMapOf<String, Rect>() }
+    val cardCaptureLayers = remember { mutableMapOf<String, GraphicsLayer>() }
     val vanishScope = rememberCoroutineScope()
 
     fun triggerDustVanishClose(space: BrowserSpace, dropOffset: Offset = Offset.Zero) {
@@ -203,53 +211,69 @@ fun AiLiveMonitorTray(
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         val style = prefs.cardVanishStyle
         val baseRect = cardLocalRects[space.id]
-        if (style == CardVanishStyle.OFF || baseRect == null || baseRect.width <= 10f || baseRect.height <= 10f) {
+        val baseRootRect = cardRootRects[space.id]
+        if (style == CardVanishStyle.OFF || (baseRect == null && baseRootRect == null)) {
             onCloseSpace(space.id)
             return
         }
-        // 드래그 삭제 시 원위치가 아닌 '실제로 놓은 삭제 영역 좌표'에서 즉시 분해!
         val isDraggedDrop = dropOffset != Offset.Zero
-        val finalRect = if (isDraggedDrop) baseRect.translate(dropOffset.x, dropOffset.y) else baseRect
-        val originX = if (isDraggedDrop) finalRect.center.x else (finalRect.right - 24f)
-        val originY = if (isDraggedDrop) finalRect.center.y else (finalRect.top + 24f)
+        val spaceAccent = parseSpaceColor(space.accentColorHex)
 
-        vanishingSpaceIds.add(space.id)
-        val burstId = System.nanoTime()
-        activeVanishBursts.add(
-            DustVanishRequest(
-                id = burstId,
-                rect = finalRect,
-                accentColor = parseSpaceColor(space.accentColorHex),
-                thumbnail = thumbnails[space.id],
-                style = style,
-                particleCount = prefs.vanishParticleCount,
-                durationMs = prefs.vanishDurationMs,
-                originX = originX,
-                originY = originY,
-                maxFps = prefs.vanishMaxFps,
-                direction = prefs.vanishDirection,
-                edgeGlow = prefs.vanishEdgeGlow,
-                curlStrength = prefs.vanishCurlStrength,
-                shockwaveStrength = prefs.vanishShockwaveStrength,
-                airDrag = prefs.vanishAirDrag,
-                additiveGlow = prefs.vanishAdditiveGlow,
-                zPerspective = prefs.vanishZPerspective,
-                sizeAdaptiveDuration = prefs.vanishSizeAdaptiveDuration,
-            sandRibbonDensity = prefs.sandRibbonDensity,
-            sandSilverRatio = prefs.sandSilverRatio,
-            sandWindStrength = prefs.sandWindStrength,
-            sandSwirlStrength = prefs.sandSwirlStrength
-            )
-        )
-        // 하모니OS 2단계 리플로우: 드래그 삭제는 즉시, × 버튼 삭제는 40% 침식 시점에 슬롯 제거 -> 주변 카드 과감쇠 스프링 이동
-        val holdMs = if (isDraggedDrop) 50L else when (style) {
-            CardVanishStyle.HARMONY_DUST, CardVanishStyle.HARMONY_GPU_SHADER, CardVanishStyle.HARMONY_7_SAND_WAVE ->
-                (prefs.vanishDurationMs * 0.42f).toLong().coerceIn(220L, 560L)
-            CardVanishStyle.LIGHT_PARTICLES -> 240L
-            CardVanishStyle.SCALE_FADE -> 160L
-            CardVanishStyle.OFF -> 0L
-        }
         vanishScope.launch {
+            // 초록 둥근 테두리 + 웹 미리보기 + 하단 푸터까지 카드 실픽셀 그대로 캡처!
+            val capturedCardBmp = runCatching {
+                cardCaptureLayers[space.id]?.toImageBitmap()?.asAndroidBitmap()
+            }.getOrNull() ?: thumbnails[space.id]
+
+            vanishingSpaceIds.add(space.id)
+
+            if (onGlobalDustVanish != null && baseRootRect != null && baseRootRect.width > 10f && baseRootRect.height > 10f) {
+                // 화면 최상위 전역 오버레이로 방출 -> 좌측 패널 경계를 넘어 웹뷰 위까지 자유롭게 흩날림!
+                val finalRoot = if (isDraggedDrop) baseRootRect.translate(dropOffset.x, dropOffset.y) else baseRootRect
+                val touchRoot = if (isDraggedDrop) finalRoot.center else Offset(finalRoot.right - 24f, finalRoot.top + 24f)
+                onGlobalDustVanish(
+                    VanishSnapshot(rect = finalRoot, touchRoot = touchRoot, bitmap = capturedCardBmp),
+                    spaceAccent
+                )
+            } else if (baseRect != null) {
+                val finalRect = if (isDraggedDrop) baseRect.translate(dropOffset.x, dropOffset.y) else baseRect
+                val originX = if (isDraggedDrop) finalRect.center.x else (finalRect.right - 24f)
+                val originY = if (isDraggedDrop) finalRect.center.y else (finalRect.top + 24f)
+                activeVanishBursts.add(
+                    DustVanishRequest(
+                        id = System.nanoTime(),
+                        rect = finalRect,
+                        accentColor = spaceAccent,
+                        thumbnail = capturedCardBmp,
+                        style = style,
+                        particleCount = prefs.vanishParticleCount,
+                        durationMs = prefs.vanishDurationMs,
+                        originX = originX,
+                        originY = originY,
+                        maxFps = prefs.vanishMaxFps,
+                        direction = prefs.vanishDirection,
+                        edgeGlow = prefs.vanishEdgeGlow,
+                        curlStrength = prefs.vanishCurlStrength,
+                        shockwaveStrength = prefs.vanishShockwaveStrength,
+                        airDrag = prefs.vanishAirDrag,
+                        additiveGlow = prefs.vanishAdditiveGlow,
+                        zPerspective = prefs.vanishZPerspective,
+                        sizeAdaptiveDuration = prefs.vanishSizeAdaptiveDuration,
+                        sandRibbonDensity = prefs.sandRibbonDensity,
+                        sandSilverRatio = prefs.sandSilverRatio,
+                        sandWindStrength = prefs.sandWindStrength,
+                        sandSwirlStrength = prefs.sandSwirlStrength
+                    )
+                )
+            }
+
+            val holdMs = if (isDraggedDrop) 50L else when (style) {
+                CardVanishStyle.HARMONY_DUST, CardVanishStyle.HARMONY_GPU_SHADER, CardVanishStyle.HARMONY_7_SAND_WAVE ->
+                    (prefs.vanishDurationMs * 0.42f).toLong().coerceIn(220L, 560L)
+                CardVanishStyle.LIGHT_PARTICLES -> 240L
+                CardVanishStyle.SCALE_FADE -> 160L
+                CardVanishStyle.OFF -> 0L
+            }
             delay(holdMs)
             onCloseSpace(space.id)
             vanishingSpaceIds.remove(space.id)
@@ -416,8 +440,18 @@ fun AiLiveMonitorTray(
                             modifier = Modifier
                                 .then(if (draggingId == null) Modifier.animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f)) else Modifier)
                                 .graphicsLayer { alpha = if (space.id in vanishingSpaceIds) 0f else 1f }
+                                .let { baseMod ->
+                                    val cardLayer = rememberGraphicsLayer()
+                                    cardCaptureLayers[space.id] = cardLayer
+                                    baseMod.drawWithContent {
+                                        cardLayer.record { this@drawWithContent.drawContent() }
+                                        drawLayer(cardLayer)
+                                    }
+                                }
                                 .onGloballyPositioned { coords ->
-                                    onRegisterSpaceBounds(space.id, coords.boundsInRoot())
+                                    val rBounds = coords.boundsInRoot()
+                                    onRegisterSpaceBounds(space.id, rBounds)
+                                    cardRootRects[space.id] = rBounds
                                     val pos = coords.positionInParent()
                                     cardLocalRects[space.id] = Rect(pos.x, pos.y, pos.x + coords.size.width, pos.y + coords.size.height)
                                 },
@@ -719,8 +753,18 @@ fun AiLiveMonitorTray(
                             modifier = Modifier
                                 .then(if (draggingId == null) Modifier.animateItem(placementSpec = spring(dampingRatio = 0.88f, stiffness = 360f)) else Modifier)
                                 .graphicsLayer { alpha = if (space.id in vanishingSpaceIds) 0f else 1f }
+                                .let { baseMod ->
+                                    val cardLayer = rememberGraphicsLayer()
+                                    cardCaptureLayers[space.id] = cardLayer
+                                    baseMod.drawWithContent {
+                                        cardLayer.record { this@drawWithContent.drawContent() }
+                                        drawLayer(cardLayer)
+                                    }
+                                }
                                 .onGloballyPositioned { coords ->
-                                    onRegisterSpaceBounds(space.id, coords.boundsInRoot())
+                                    val rBounds = coords.boundsInRoot()
+                                    onRegisterSpaceBounds(space.id, rBounds)
+                                    cardRootRects[space.id] = rBounds
                                     val pos = coords.positionInParent()
                                     cardLocalRects[space.id] = Rect(pos.x, pos.y, pos.x + coords.size.width, pos.y + coords.size.height)
                                 },
