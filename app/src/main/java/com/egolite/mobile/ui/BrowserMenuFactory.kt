@@ -50,7 +50,7 @@ import com.egolite.mobile.browser.BrowserScripts
 import com.egolite.mobile.browser.DownloadCenter
 import com.egolite.mobile.browser.DuplicateDownloadPrompt
 import com.egolite.mobile.browser.ExtensionManager
-import com.egolite.mobile.browser.GoogleAccountManager
+import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.browser.InstalledExtension
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.model.BrowserPreferences
@@ -224,7 +224,7 @@ fun BrowserFullScreenFeatureOverlays(
     duplicateDownloadPrompt: DuplicateDownloadPrompt?,
     showDownloadsScreen: Boolean,
     showChromeSettings: Boolean,
-    settingsInitialCategory: ChromeSettingsCategory,
+    settingsInitialCategory: SettingsCategory,
     showAllTabsDialog: Boolean,
     onUpdateManagingExt: (InstalledExtension?) -> Unit,
     onDismissExtPopup: () -> Unit,
