@@ -88,6 +88,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -221,49 +222,7 @@ fun ChromeSettingsScreen(
 
     Surface(
         modifier = Modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                translationX = dismissSwipeX.value
-                alpha = (1f - (dismissSwipeX.value / 1100f)).coerceIn(0.65f, 1f)
-            }
-            .pointerInput(Unit) {
-                val vt = VelocityTracker()
-                detectHorizontalDragGestures(
-                    onDragStart = { vt.resetTracking() },
-                    onHorizontalDrag = { change, dragAmount ->
-                        if (dragAmount > 0f || dismissSwipeX.value > 0f) {
-                            change.consume()
-                            vt.addPosition(change.uptimeMillis, change.position)
-                            val next = (dismissSwipeX.value + dragAmount).coerceAtLeast(0f)
-                            csScope.launch { dismissSwipeX.snapTo(next) }
-                        }
-                    },
-                    onDragEnd = {
-                        val vx = vt.calculateVelocity().x
-                        csScope.launch {
-                            if (dismissSwipeX.value > 220f || vx > 1100f) {
-                                dismissSwipeX.animateTo(
-                                    targetValue = 1200f,
-                                    animationSpec = EgoMotion.responsiveSpring(),
-                                    initialVelocity = vx
-                                )
-                                onDismiss()
-                            } else {
-                                dismissSwipeX.animateTo(
-                                    targetValue = 0f,
-                                    animationSpec = EgoMotion.responsiveSpring(),
-                                    initialVelocity = vx
-                                )
-                            }
-                        }
-                    },
-                    onDragCancel = {
-                        csScope.launch {
-                            dismissSwipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring())
-                        }
-                    }
-                )
-            },
+            .fillMaxSize(),
         color = settingsCanvasColor
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
@@ -669,6 +628,24 @@ fun ChromeSettingsScreen(
                                                 )
                                             }
                                             if (showOAuthAdvanced) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(14.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Column(
+                                                        modifier = Modifier.padding(12.dp),
+                                                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                                                    ) {
+                                                        Text("발급 방법 (5단계 가이드)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                                        Text("1. Google Cloud Console 접속 후 새 프로젝트 생성", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                                        Text("2. [API 및 서비스 → OAuth 동의 화면]에서 외부(External) 선택 후 본인 Gmail을 테스트 사용자로 추가", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                                        Text("3. [사용자 인증 정보 → + 사용자 인증 정보 만들기 → OAuth 클라이언트 ID] 클릭", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                                        Text("4. 애플리케이션 유형을 반드시 '웹 애플리케이션(Web application)'으로 선택 후 생성", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                                        Text("5. 발급된 'xxxx.apps.googleusercontent.com' 주소를 아래에 붙여넣고 저장", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                                                        Text("※ 간단하게 쓰려면 이 설정 없이 위 '브라우저 세션 연동'만 눌러도 바로 동기화됩니다.", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                }
                                                 OutlinedTextField(
                                                     value = clientIdInput,
                                                     onValueChange = { clientIdInput = it },
@@ -676,7 +653,18 @@ fun ChromeSettingsScreen(
                                                     placeholder = { Text("xxxx.apps.googleusercontent.com", fontSize = 13.sp) },
                                                     modifier = Modifier.fillMaxWidth()
                                                 )
-                                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                                Row(
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    TextButton(onClick = {
+                                                        val spId = SpaceManager.spaces.value.firstOrNull()?.id ?: return@TextButton
+                                                        SpaceManager.createTab(spId, initialUrl = "https://console.cloud.google.com/apis/credentials", selectImmediately = true)
+                                                        onDismiss()
+                                                    }) {
+                                                        Text("Cloud Console 열기", fontSize = 12.5.sp)
+                                                    }
                                                     Button(onClick = {
                                                         GoogleAccountManager.updateOAuthWebClientId(clientIdInput)
                                                         Toast.makeText(context, "Web Client ID 저장됨", Toast.LENGTH_SHORT).show()
@@ -2374,114 +2362,159 @@ private fun ThemeColorPalettePickerCard(
     onSelectPreset: (ThemeColorPreset) -> Unit
 ) {
     val allPresets = remember { ThemeColorPreset.entries.toList() }
-    val rows = remember(allPresets) { allPresets.chunked(5) }
+    val activeIdx = allPresets.indexOf(selectedPreset).coerceAtLeast(0)
+    val swatch = previewSwatchForPreset(selectedPreset, isDarkPreview)
+
+    fun stepPreset(delta: Int) {
+        val next = (activeIdx + delta + allPresets.size) % allPresets.size
+        onSelectPreset(allPresets[next])
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = selectedPreset.label,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = selectedPreset.subtitle,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (selectedPreset.isSystem) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Text(
-                        text = "Material You",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = swatch.backdrop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.5.dp, swatch.accent.copy(alpha = 0.65f), RoundedCornerShape(18.dp))
+                .pointerInput(activeIdx) {
+                    var dragSum = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragSum = 0f },
+                        onHorizontalDrag = { change, amount ->
+                            change.consume()
+                            dragSum += amount
+                        },
+                        onDragEnd = {
+                            if (dragSum < -42f) stepPreset(+1)
+                            else if (dragSum > 42f) stepPreset(-1)
+                        }
                     )
                 }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = swatch.group,
+                        modifier = Modifier.size(30.dp).clickable { stepPreset(-1) }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            EgoIcon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "이전 테마", tint = swatch.accent, modifier = Modifier.size(18.dp), symbolSize = 18.dp)
+                        }
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "${selectedPreset.label} (${activeIdx + 1}/${allPresets.size})",
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDarkPreview) Color(0xFFF1F4FA) else Color(0xFF0F172A),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = selectedPreset.subtitle,
+                            fontSize = 11.5.sp,
+                            color = if (isDarkPreview) Color(0xFFB4BCD0) else Color(0xFF475569),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = swatch.group,
+                        modifier = Modifier.size(30.dp).clickable { stepPreset(+1) }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            EgoIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "다음 테마", tint = swatch.accent, modifier = Modifier.size(18.dp), symbolSize = 18.dp)
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(26.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Box(modifier = Modifier.width(56.dp).fillMaxHeight().clip(RoundedCornerShape(topStart = 13.dp, bottomStart = 13.dp, topEnd = 5.dp, bottomEnd = 5.dp)).background(swatch.group))
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(5.dp)).background(swatch.group).border(1.dp, swatch.accent.copy(alpha = 0.55f), RoundedCornerShape(5.dp)),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Box(modifier = Modifier.padding(start = 10.dp).width(44.dp).height(6.dp).clip(CircleShape).background(swatch.accent))
+                    }
+                    Box(modifier = Modifier.width(64.dp).fillMaxHeight().clip(RoundedCornerShape(topStart = 5.dp, bottomStart = 5.dp, topEnd = 13.dp, bottomEnd = 13.dp)).background(swatch.group))
+                }
+                Text(
+                    text = "← 좌우로 드래그해 32종 테마 즉시 전환 →",
+                    fontSize = 10.5.sp,
+                    color = swatch.accent.copy(alpha = 0.9f),
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
             }
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            rows.forEach { rowPresets ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            allPresets.forEach { preset ->
+                val isSelected = preset == selectedPreset
+                val sw = previewSwatchForPreset(preset, isDarkPreview)
+                Column(
+                    modifier = Modifier
+                        .width(58.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { onSelectPreset(preset) }
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    rowPresets.forEach { preset ->
-                        val isSelected = preset == selectedPreset
-                        val swatch = previewSwatchForPreset(preset, isDarkPreview)
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable { onSelectPreset(preset) }
-                                .padding(vertical = 6.dp, horizontal = 2.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(sw.backdrop)
+                            .border(
+                                width = if (isSelected) 2.5.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(20.dp).background(sw.group))
+                        Box(
+                            modifier = Modifier.size(if (isSelected) 18.dp else 11.dp).clip(CircleShape).background(sw.accent),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(swatch.backdrop)
-                                    .border(
-                                        width = if (isSelected) 2.5.dp else 1.dp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                                        shape = CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                // 하단 절반: 선택 탭 & 3-그룹 툴바 색상 프리뷰
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .fillMaxWidth()
-                                        .height(22.dp)
-                                        .background(swatch.group)
-                                )
-                                // 중앙 포인트 액센트 또는 선택 체크 배지
-                                Box(
-                                    modifier = Modifier
-                                        .size(if (isSelected) 20.dp else 12.dp)
-                                        .clip(CircleShape)
-                                        .background(swatch.accent),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (isSelected) {
-                                        EgoIcon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "선택됨",
-                                            modifier = Modifier.size(13.dp),
-                                            tint = Color(0xFF0B192C),
-                                            symbolSize = 13.dp
-                                        )
-                                    }
-                                }
+                            if (isSelected) {
+                                EgoIcon(Icons.Default.Check, contentDescription = "선택됨", modifier = Modifier.size(12.dp), tint = Color(0xFF0B192C), symbolSize = 12.dp)
                             }
-                            Text(
-                                text = preset.label.replace("크롬 ", "").replace("시스템 색상 따르기", "시스템"),
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
                         }
                     }
+                    Text(
+                        text = preset.label.replace("크롬 ", "").replace("시스템 색상 따르기", "시스템"),
+                        fontSize = 10.5.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
