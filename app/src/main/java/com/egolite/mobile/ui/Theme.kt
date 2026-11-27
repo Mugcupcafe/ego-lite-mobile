@@ -71,34 +71,43 @@ data class PalettePreviewSwatch(
 )
 
 fun previewSwatchForPreset(preset: ThemeColorPreset, darkTheme: Boolean): PalettePreviewSwatch {
+    val s = presetSpecOf(preset)
     return if (darkTheme) {
-        when (preset) {
-            ThemeColorPreset.CHROME_SLATE -> PalettePreviewSwatch(Color(0xFF181A1F), Color(0xFF353B4B), Color(0xFFA8C7FA))
-            ThemeColorPreset.SYSTEM_DYNAMIC -> PalettePreviewSwatch(Color(0xFF1E1F24), Color(0xFF333947), Color(0xFF9ECAFF))
-            ThemeColorPreset.CHROME_NEUTRAL -> PalettePreviewSwatch(Color(0xFF1E1F24), Color(0xFF2E3138), Color(0xFFA8C7FA))
-            ThemeColorPreset.CHROME_CLASSIC -> PalettePreviewSwatch(Color(0xFF1E1F24), Color(0xFF292C33), Color(0xFF8AB4F8))
-            ThemeColorPreset.OCEAN_BLUE -> PalettePreviewSwatch(Color(0xFF141923), Color(0xFF26344B), Color(0xFF7CC4FF))
-            ThemeColorPreset.FOREST_EMERALD -> PalettePreviewSwatch(Color(0xFF141C19), Color(0xFF243831), Color(0xFF6DD58C))
-            ThemeColorPreset.ROYAL_LAVENDER -> PalettePreviewSwatch(Color(0xFF1A1723), Color(0xFF342C48), Color(0xFFD0BCFF))
-            ThemeColorPreset.SUNSET_AMBER -> PalettePreviewSwatch(Color(0xFF1D1916), Color(0xFF3B3128), Color(0xFFFFB951))
-            ThemeColorPreset.ROSE_CRIMSON -> PalettePreviewSwatch(Color(0xFF1E161A), Color(0xFF3F2A34), Color(0xFFFFB1C8))
-            ThemeColorPreset.OLED_MIDNIGHT -> PalettePreviewSwatch(Color(0xFF000000), Color(0xFF1E2028), Color(0xFFA8C7FA))
-        }
+        PalettePreviewSwatch(s.darkBackdrop, s.darkGroup, s.primaryDark)
     } else {
-        when (preset) {
-            ThemeColorPreset.CHROME_SLATE -> PalettePreviewSwatch(Color(0xFFE7ECF6), Color(0xFFFFFFFF), Color(0xFF1A73E8))
-            ThemeColorPreset.SYSTEM_DYNAMIC -> PalettePreviewSwatch(Color(0xFFECEEF5), Color(0xFFFFFFFF), Color(0xFF3B66C5))
-            ThemeColorPreset.CHROME_NEUTRAL -> PalettePreviewSwatch(Color(0xFFECEEF5), Color(0xFFFFFFFF), Color(0xFF1A73E8))
-            ThemeColorPreset.CHROME_CLASSIC -> PalettePreviewSwatch(Color(0xFFE8EAED), Color(0xFFFFFFFF), Color(0xFF1A73E8))
-            ThemeColorPreset.OCEAN_BLUE -> PalettePreviewSwatch(Color(0xFFE4EEF8), Color(0xFFFFFFFF), Color(0xFF0B57D0))
-            ThemeColorPreset.FOREST_EMERALD -> PalettePreviewSwatch(Color(0xFFE5F2EC), Color(0xFFFFFFFF), Color(0xFF0D7A4E))
-            ThemeColorPreset.ROYAL_LAVENDER -> PalettePreviewSwatch(Color(0xFFEEEAF8), Color(0xFFFFFFFF), Color(0xFF6750A4))
-            ThemeColorPreset.SUNSET_AMBER -> PalettePreviewSwatch(Color(0xFFF6EFE6), Color(0xFFFFFFFF), Color(0xFFB35D00))
-            ThemeColorPreset.ROSE_CRIMSON -> PalettePreviewSwatch(Color(0xFFF7E9EE), Color(0xFFFFFFFF), Color(0xFFB3265A))
-            ThemeColorPreset.OLED_MIDNIGHT -> PalettePreviewSwatch(Color(0xFFE5E7EE), Color(0xFFFFFFFF), Color(0xFF1A73E8))
-        }
+        PalettePreviewSwatch(s.lightBackdrop, s.lightGroup, s.primaryLight)
     }
 }
+
+
+private fun tonalSpec(
+    darkAccent: Long,
+    onDarkAccent: Long,
+    darkBg: Long,
+    darkGroup: Long,
+    darkUnselected: Long,
+    darkCard: Long,
+    lightAccent: Long,
+    lightContainer: Long,
+    onLightContainer: Long,
+    lightBg: Long,
+    lightUnselected: Long
+): PresetSpec = PresetSpec(
+    primaryDark = Color(darkAccent),
+    onPrimaryDark = Color(onDarkAccent),
+    primaryContainerDark = Color(darkGroup),
+    onPrimaryContainerDark = Color(0xFFF1F4FA),
+    darkBackdrop = Color(darkBg),
+    darkGroup = Color(darkGroup),
+    darkUnselected = Color(darkUnselected),
+    darkCard = Color(darkCard),
+    primaryLight = Color(lightAccent),
+    primaryContainerLight = Color(lightContainer),
+    onPrimaryContainerLight = Color(onLightContainer),
+    lightBackdrop = Color(lightBg),
+    lightGroup = Color(0xFFFFFFFF),
+    lightUnselected = Color(lightUnselected)
+)
 
 private data class PresetSpec(
     val primaryDark: Color,
@@ -262,6 +271,28 @@ private fun presetSpecOf(preset: ThemeColorPreset): PresetSpec = when (preset) {
         lightGroup = Color(0xFFFFFFFF),
         lightUnselected = Color(0xFFD9DCE6)
     )
+    ThemeColorPreset.SAPPHIRE_DEEP -> tonalSpec(0xFF6BB4FF, 0xFF002E5C, 0xFF101726, 0xFF203252, 0xFF172238, 0xFF1A2740, 0xFF0057B8, 0xFFD4E6FF, 0xFF001C3B, 0xFFE5EEFA, 0xFFD8E4F5)
+    ThemeColorPreset.NORDIC_ICE -> tonalSpec(0xFF88D4F5, 0xFF003547, 0xFF141B21, 0xFF253540, 0xFF1B262F, 0xFF1F2B35, 0xFF006783, 0xFFC5EBFA, 0xFF001F2A, 0xFFE7F2F7, 0xFFD9E9F0)
+    ThemeColorPreset.CYBER_CYAN -> tonalSpec(0xFF4EEAF5, 0xFF00363A, 0xFF0E1A1E, 0xFF1B363E, 0xFF14272D, 0xFF172C33, 0xFF006972, 0xFFB8F3F8, 0xFF002023, 0xFFE3F5F7, 0xFFD4ECEF)
+    ThemeColorPreset.INDIGO_NIGHT -> tonalSpec(0xFFA5B4FC, 0xFF1E1B5E, 0xFF141524, 0xFF282B4A, 0xFF1C1E34, 0xFF20233C, 0xFF4338CA, 0xFFE0E7FF, 0xFF1E1B4B, 0xFFEAECFA, 0xFFDFE2F5)
+    ThemeColorPreset.COBALT_MIST -> tonalSpec(0xFF93C5FD, 0xFF0C2D57, 0xFF151A24, 0xFF283449, 0xFF1D2434, 0xFF222B3C, 0xFF2563EB, 0xFFDBEAFE, 0xFF1E3A8A, 0xFFE8F0FB, 0xFFDBE6F7)
+    ThemeColorPreset.MINT_BREEZE -> tonalSpec(0xFF6EE7B7, 0xFF003826, 0xFF111C18, 0xFF203A32, 0xFF172923, 0xFF1B3029, 0xFF059669, 0xFFD1FAE5, 0xFF064E3B, 0xFFE6F6F0, 0xFFD7EEE5)
+    ThemeColorPreset.JADE_SPRING -> tonalSpec(0xFF5EEAD4, 0xFF003731, 0xFF101C1B, 0xFF1E3936, 0xFF162927, 0xFF1A302D, 0xFF0D9488, 0xFFCCFBF1, 0xFF134E4A, 0xFFE4F6F4, 0xFFD5EDE9)
+    ThemeColorPreset.SAGE_BOTANIC -> tonalSpec(0xFFA3D9A5, 0xFF113815, 0xFF161C17, 0xFF2A382B, 0xFF1E281F, 0xFF232E24, 0xFF3A7D44, 0xFFD8F3DC, 0xFF1B4332, 0xFFEBF3EC, 0xFFDFEBDF)
+    ThemeColorPreset.TEAL_LAGOON -> tonalSpec(0xFF67E8F9, 0xFF003640, 0xFF101A1D, 0xFF1E363D, 0xFF16272C, 0xFF1A2D33, 0xFF0891B2, 0xFFCFFAFE, 0xFF164E63, 0xFFE4F4F7, 0xFFD6ECF0)
+    ThemeColorPreset.MATCHA_LEAF -> tonalSpec(0xFFBEF264, 0xFF263800, 0xFF171C13, 0xFF2D3822, 0xFF202819, 0xFF252E1D, 0xFF4D7C0F, 0xFFECFCCB, 0xFF1A2E05, 0xFFEFF5E7, 0xFFE3EDD7)
+    ThemeColorPreset.SAKURA_BLUSH -> tonalSpec(0xFFFBCFE8, 0xFF591438, 0xFF1E171B, 0xFF3D2B35, 0xFF2A1F25, 0xFF31242B, 0xFFDB2777, 0xFFFCE7F3, 0xFF500724, 0xFFF9EDF3, 0xFFF2DFEA)
+    ThemeColorPreset.CORAL_PEACH -> tonalSpec(0xFFFDA4AF, 0xFF5C1120, 0xFF1F1718, 0xFF402B2E, 0xFF2C1F21, 0xFF332426, 0xFFE11D48, 0xFFFFE4E6, 0xFF4C0519, 0xFFF9ECEE, 0xFFF2DFE2)
+    ThemeColorPreset.RUBY_VELVET -> tonalSpec(0xFFFF8A9B, 0xFF630A1C, 0xFF1E1417, 0xFF42242C, 0xFF2D1A20, 0xFF341F25, 0xFFBE123C, 0xFFFFE4E8, 0xFF4C0519, 0xFFF8EAEF, 0xFFF0DCE2)
+    ThemeColorPreset.BERRY_PLUM -> tonalSpec(0xFFF0ABFC, 0xFF50105C, 0xFF1D1520, 0xFF3B2842, 0xFF291D2E, 0xFF302236, 0xFFA21CAF, 0xFFFAE8FF, 0xFF4A044E, 0xFFF6EBF9, 0xFFEDDDF3)
+    ThemeColorPreset.MAGENTA_NEON -> tonalSpec(0xFFF472B6, 0xFF5C0B36, 0xFF1F141B, 0xFF422538, 0xFF2E1A27, 0xFF351F2E, 0xFFBE185D, 0xFFFCE7F3, 0xFF500724, 0xFFF9EBF3, 0xFFF1DCE8)
+    ThemeColorPreset.AMETHYST_HAZE -> tonalSpec(0xFFC4B5FD, 0xFF2E186B, 0xFF181622, 0xFF312B47, 0xFF221E32, 0xFF272339, 0xFF7C3AED, 0xFFEDE9FE, 0xFF2E1065, 0xFFF0EDFA, 0xFFE5E0F5)
+    ThemeColorPreset.ORCHID_DUSK -> tonalSpec(0xFFD8B4FE, 0xFF3F1669, 0xFF1B1622, 0xFF372A47, 0xFF261E31, 0xFF2C2339, 0xFF9333EA, 0xFFF3E8FF, 0xFF3B0764, 0xFFF3EDFA, 0xFFE9E0F5)
+    ThemeColorPreset.LILAC_CLOUD -> tonalSpec(0xFFE9D5FF, 0xFF3E1C61, 0xFF1A1721, 0xFF352E44, 0xFF252030, 0xFF2B2537, 0xFF7E22CE, 0xFFF3E8FF, 0xFF3B0764, 0xFFF2EEF9, 0xFFE8E2F4)
+    ThemeColorPreset.WARM_TERRACOTTA -> tonalSpec(0xFFFDBA74, 0xFF572600, 0xFF1F1814, 0xFF403026, 0xFF2C221B, 0xFF332720, 0xFFEA580C, 0xFFFFEDD5, 0xFF431407, 0xFFF9EFE8, 0xFFF2E3D8)
+    ThemeColorPreset.HONEY_GOLD -> tonalSpec(0xFFFCD34D, 0xFF4D3500, 0xFF1D1A13, 0xFF3C3422, 0xFF292418, 0xFF302A1D, 0xFFD97706, 0xFFFEF3C7, 0xFF451A03, 0xFFF8F3E6, 0xFFF0E8D5)
+    ThemeColorPreset.MOCHA_ESPRESSO -> tonalSpec(0xFFD6B499, 0xFF3E2614, 0xFF1B1715, 0xFF382F2A, 0xFF26201D, 0xFF2C2522, 0xFF8C5327, 0xFFF3E4D7, 0xFF361D0B, 0xFFF4EFEA, 0xFFEBE2DA)
+    ThemeColorPreset.GRAPHITE_MONO -> tonalSpec(0xFFD4D7DF, 0xFF1C1E24, 0xFF16171A, 0xFF2C2E34, 0xFF1F2025, 0xFF24262B, 0xFF475569, 0xFFE2E8F0, 0xFF0F172A, 0xFFECEEF2, 0xFFE0E3EA)
 }
 
 /**
