@@ -169,7 +169,29 @@ enum class ThemeColorPreset(val label: String, val subtitle: String, val isSyste
     ROYAL_LAVENDER("로열 라벤더", "딥 플럼 바탕 + 라벤더 바이올렛 포인트", false),
     SUNSET_AMBER("선셋 앰버", "다크 에스프레소 바탕 + 따뜻한 앰버 포인트", false),
     ROSE_CRIMSON("로즈 크림슨", "딥 와인 바탕 + 소프트 로즈 포인트", false),
-    OLED_MIDNIGHT("OLED 퓨어 블랙", "완전한 블랙 바탕 + 다크 슬레이트 그룹", false)
+    OLED_MIDNIGHT("OLED 퓨어 블랙", "완전한 블랙 바탕 + 다크 슬레이트 그룹", false),
+    SAPPHIRE_DEEP("사파이어 딥", "짙은 사파이어 바탕 + 선명한 블루 포인트", false),
+    NORDIC_ICE("노르딕 아이스", "차가운 빙하 슬레이트 + 아이스 블루 포인트", false),
+    CYBER_CYAN("사이버 시안", "딥 틸 네이비 바탕 + 네온 시안 포인트", false),
+    INDIGO_NIGHT("인디고 나이트", "밤하늘 인디고 바탕 + 소프트 인디고 포인트", false),
+    COBALT_MIST("코발트 미스트", "안개빛 코발트 바탕 + 맑은 스카이 포인트", false),
+    MINT_BREEZE("민트 브리즈", "다크 민트 바탕 + 산뜻한 민트 포인트", false),
+    JADE_SPRING("제이드 스프링", "비취 그린 바탕 + 부드러운 제이드 포인트", false),
+    SAGE_BOTANIC("세이지 보타닉", "차분한 세이지 올리브 바탕 + 허브 그린 포인트", false),
+    TEAL_LAGOON("틸 라군", "깊은 청록 바탕 + 아쿠아 틸 포인트", false),
+    MATCHA_LEAF("말차 리프", "따뜻한 말차 다크 바탕 + 라임 세이지 포인트", false),
+    SAKURA_BLUSH("사쿠라 블러시", "소프트 벚꽃 다크 바탕 + 파스텔 핑크 포인트", false),
+    CORAL_PEACH("코랄 피치", "따뜻한 코랄 다크 바탕 + 피치 살구 포인트", false),
+    RUBY_VELVET("루비 벨벳", "깊은 루비 와인 바탕 + 강렬한 루비 포인트", false),
+    BERRY_PLUM("베리 플럼", "자두빛 플럼 바탕 + 베리 핑크 포인트", false),
+    MAGENTA_NEON("마젠타 네온", "딥 마젠타 바탕 + 비비드 마젠타 포인트", false),
+    AMETHYST_HAZE("아메시스트 헤이즈", "자수정 보라 바탕 + 라일락 바이올렛 포인트", false),
+    ORCHID_DUSK("오키드 더스크", "황혼 오키드 바탕 + 소프트 퍼플 포인트", false),
+    LILAC_CLOUD("라일락 클라우드", "포근한 연보라 다크 바탕 + 라일락 포인트", false),
+    WARM_TERRACOTTA("웜 테라코타", "구운 점토 다크 바탕 + 테라코타 오렌지 포인트", false),
+    HONEY_GOLD("허니 골드", "다크 앰버 브라운 바탕 + 골드 허니 포인트", false),
+    MOCHA_ESPRESSO("모카 에스프레소", "진한 커피 브라운 바탕 + 크림 모카 포인트", false),
+    GRAPHITE_MONO("그라파이트 모노", "무채색 차콜 바탕 + 미니멀 실버 포인트", false)
 }
 
 @Serializable
