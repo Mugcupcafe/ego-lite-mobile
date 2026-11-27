@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -111,12 +112,14 @@ import com.egolite.mobile.browser.DownloadRecord
 import com.egolite.mobile.browser.DuplicateDownloadPrompt
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.model.CardVanishStyle
+import com.egolite.mobile.model.ProgressBarStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 const val DOWNLOADS_URL = "ego://downloads"
 
@@ -212,74 +215,135 @@ fun ChromeDownloadStatusBanner(
                     onDismiss()
                 }
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                EgoIcon(
-                    imageVector = if (banner.isCompleted) Icons.Default.DownloadDone else Icons.Default.Download,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp),
-                    symbolSize = 22.dp
-                )
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        text = if (banner.isCompleted) "다운로드 1개 완료" else "파일 ${banner.activeCount}개 다운로드 중...",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = if (banner.isCompleted) completedSub else "알림에서 다운로드 상태를 확인하세요.",
-                        fontSize = 12.5.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            val prefs by SpaceManager.preferences.collectAsState()
+            val showDlProgress = prefs.progressShowInDownload && !banner.isCompleted
+            val dlProg = banner.progress.coerceIn(0.05f, 0.99f)
+            val dlSubText = if (banner.isCompleted) completedSub else {
+                if (banner.totalBytes > 0L) {
+                    "${DownloadCenter.formatSize(banner.downloadedBytes)} / ${DownloadCenter.formatSize(banner.totalBytes)} (${(dlProg * 100).roundToInt()}%)"
+                } else {
+                    "알림에서 다운로드 상태를 확인하세요."
+                }
+            }
+            val invTextCol = if (isDark) Color(0xFF090D16) else Color.White
+
+            Box(modifier = Modifier.fillMaxWidth()) {
+                if (showDlProgress && prefs.progressBarStyle != ProgressBarStyle.MATERIAL) {
+                    HarmonyHorizontalProgressCanvas(
+                        style = prefs.progressBarStyle,
+                        progress = dlProg,
+                        isActive = true,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        lightIntensity = prefs.progressLightIntensity,
+                        particleDensity = prefs.progressParticleDensity,
+                        cornerRadiusDp = 22.dp,
+                        modifier = Modifier.matchParentSize()
                     )
                 }
-                Spacer(modifier = Modifier.width(10.dp))
-                TextButton(
-                    onClick = {
-                        if (banner.isCompleted) onOpenFile(rec) else onOpenDetails()
-                        onDismiss()
-                    }
-                ) {
-                    Text(
-                        text = if (banner.isCompleted) "열기" else "세부정보",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .clickable {
-                            dismissedViaDust = true
-                            scope.launch {
-                                val bmp = runCatching { bannerCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
-                                val origin = bannerRect?.let { Offset(it.right - 22f, it.center.y) }
-                                onDustDismiss(VanishSnapshot(rect = bannerRect, touchRoot = origin, bitmap = bmp))
+
+                @Composable
+                fun BannerContentRow(titleCol: Color, subCol: Color, actionCol: Color, iconCol: Color) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        EgoIcon(
+                            imageVector = if (banner.isCompleted) Icons.Default.DownloadDone else Icons.Default.Download,
+                            contentDescription = null,
+                            tint = iconCol,
+                            modifier = Modifier.size(22.dp),
+                            symbolSize = 22.dp
+                        )
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = if (banner.isCompleted) "다운로드 1개 완료" else "파일 ${banner.activeCount}개 다운로드 중...",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = titleCol,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = dlSubText,
+                                fontSize = 12.5.sp,
+                                color = subCol,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        TextButton(
+                            onClick = {
+                                if (banner.isCompleted) onOpenFile(rec) else onOpenDetails()
+                                onDismiss()
                             }
-                        },
-                    contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (banner.isCompleted) "열기" else "세부정보",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = actionCol
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    dismissedViaDust = true
+                                    scope.launch {
+                                        val bmp = runCatching { bannerCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+                                        val origin = bannerRect?.let { Offset(it.right - 22f, it.center.y) }
+                                        onDustDismiss(VanishSnapshot(rect = bannerRect, touchRoot = origin, bitmap = bmp))
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            EgoIcon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "다운로드 알림 닫기",
+                                tint = iconCol,
+                                modifier = Modifier.size(16.dp),
+                                symbolSize = 16.dp
+                            )
+                        }
+                    }
+                }
+
+                BannerContentRow(
+                    titleCol = MaterialTheme.colorScheme.onSurface,
+                    subCol = MaterialTheme.colorScheme.onSurfaceVariant,
+                    actionCol = MaterialTheme.colorScheme.primary,
+                    iconCol = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                HarmonyModeBClippedOverlay(
+                    enabled = showDlProgress && prefs.progressBarStyle == ProgressBarStyle.HARMONY_OPTICAL,
+                    progress = dlProg,
+                    isActive = true
                 ) {
-                    EgoIcon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "다운로드 알림 닫기",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp),
-                        symbolSize = 16.dp
+                    BannerContentRow(
+                        titleCol = invTextCol,
+                        subCol = invTextCol.copy(alpha = 0.85f),
+                        actionCol = invTextCol,
+                        iconCol = invTextCol
+                    )
+                }
+
+                if (showDlProgress && prefs.progressBarStyle == ProgressBarStyle.MATERIAL) {
+                    LinearProgressIndicator(
+                        progress = { dlProg },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(2.5.dp),
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
