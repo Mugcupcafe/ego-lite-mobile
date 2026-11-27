@@ -260,7 +260,9 @@ fun ProgressEffectSettingsSection(
                                 enabled = currentStyle == ProgressBarStyle.HARMONY_OPTICAL,
                                 progress = previewProg,
                                 isActive = previewActive
-                            ) {
+                            ,
+                    modifier = Modifier.matchParentSize()
+                ) {
                                 Row(
                                     modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -332,7 +334,9 @@ fun ProgressEffectSettingsSection(
                             enabled = currentStyle == ProgressBarStyle.HARMONY_OPTICAL,
                             progress = previewProg,
                             isActive = previewActive
-                        ) {
+                        ,
+                    modifier = Modifier.matchParentSize()
+                ) {
                             Row(
                                 modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
