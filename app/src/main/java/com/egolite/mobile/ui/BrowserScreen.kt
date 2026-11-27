@@ -456,135 +456,25 @@ fun BrowserScreen() {
         }
     }
 
-    // 크롬 태블릿 1:1 문맥 인식 메뉴 (글자 크기 조절 포함)
-    val chromeMenuItems = buildList {
-        add(
-            ChromeMenuItemSpec(
-                title = if (isMcpDisconnected) "MCP · 터널 (끊김)" else "MCP · 터널 (연결됨)",
-                key = "mcp",
-                icon = Icons.Default.Hub,
-                accentColor = if (isMcpDisconnected) EgoDangerRed else EgoEmerald,
-                bold = true,
-                dividerAfter = true,
-                onClick = { showMcpDrawer = true }
-            )
-        )
-        add(ChromeMenuItemSpec("새 탭", Icons.Default.AddBox, key = "newtab") { SpaceManager.createTab(activeSpace.id) })
-        add(ChromeMenuItemSpec("AI Space", Icons.Default.SmartToy, key = "aispace", accentColor = EgoEmerald) {
-            SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
-        })
-        add(ChromeMenuItemSpec("시크릿 창", Icons.Default.VisibilityOff, key = "incognito", dividerAfter = true) {
-            SpaceManager.createTab(activeSpace.id, incognito = true)
-        })
-        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History, key = "history") { SpaceManager.openHistoryTab(activeSpace.id) })
-        add(ChromeMenuItemSpec("기록 삭제", Icons.Default.DeleteOutline, key = "clear") {
-            SpaceManager.clearHistoryAndCache()
-            Toast.makeText(context, "인터넷 사용 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
-        })
-        add(ChromeMenuItemSpec("사이트 제어", Icons.Default.Tune, key = "site", dividerAfter = true) {
-            if (isWebPage) showAdBlockDialog = true else showChromeSettings = true
-        })
-        add(ChromeMenuItemSpec("다운로드", Icons.Default.DownloadDone, key = "download") {
-            SpaceManager.openDownloadsTab(activeSpace.id)
-        })
-        add(ChromeMenuItemSpec("북마크", Icons.Default.StarBorder, key = "bookmark") { showBookmarkManager = true })
-        add(ChromeMenuItemSpec("북마크 바", Icons.Default.BookmarkBorder, key = "bmbar", checked = prefs.showBookmarkBar, isToggleCheckbox = true) {
-            SpaceManager.updatePreferences { it.copy(showBookmarkBar = !it.showBookmarkBar) }
-        })
-        add(ChromeMenuItemSpec("최근 탭", Icons.Default.Devices, key = "recent", dividerAfter = true) {
-            if (recentlyClosed.isNotEmpty()) {
-                SpaceManager.reopenLastClosedTab(activeSpace.id)
-            } else {
-                Toast.makeText(context, "최근 닫은 탭이 없습니다", Toast.LENGTH_SHORT).show()
-            }
-        })
-        // 글자 크기 (확대/축소) 인라인 조절 — 크롬 1:1 (- 100% +)
-        add(
-            ChromeMenuItemSpec(
-                title = "확대/축소",
-                icon = Icons.Default.ZoomIn,
-                key = "zoom",
-                dividerAfter = true,
-                zoomPercent = prefs.textZoom,
-                onZoomOut = {
-                    SpaceManager.updatePreferences { it.copy(textZoom = (it.textZoom - 10).coerceIn(75, 150)) }
-                },
-                onZoomReset = {
-                    SpaceManager.updatePreferences { it.copy(textZoom = 100) }
-                },
-                onZoomIn = {
-                    SpaceManager.updatePreferences { it.copy(textZoom = (it.textZoom + 10).coerceIn(75, 150)) }
-                }
-            )
-        )
-        if (isWebPage) {
-            add(ChromeMenuItemSpec("공유", Icons.Default.Share, key = "share") {
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
-                    putExtra(Intent.EXTRA_TEXT, activeTab.url)
-                }
-                context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
-            })
-            add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy, key = "copy_link") {
-                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
-                Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
-            })
-            add(ChromeMenuItemSpec("PDF 저장", Icons.Default.Download, key = "pdf") {
-                SpaceManager.printActiveTab(context, activeSpace.id)
-            })
-            add(ChromeMenuItemSpec("페이지 찾기", Icons.Default.FindInPage, key = "find") { showFindBar = true })
-            add(ChromeMenuItemSpec("번역", Icons.Default.Translate, key = "translate") {
-                triggerTranslation("auto", prefs.defaultTranslateTarget)
-            })
-            add(ChromeMenuItemSpec("읽기 모드", Icons.Default.MenuBook, key = "reader") {
-                scope.launch {
-                    runCatching {
-                        val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
-                        val md = JSONObject(raw).optString("markdown", "")
-                        readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
-                    }
-                }
-            })
-            add(ChromeMenuItemSpec("홈 바로가기", Icons.Default.AddToHomeScreen, key = "shortcut", dividerAfter = true) {
-                runCatching {
-                    val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(activeTab.url)).apply {
-                        setPackage(context.packageName)
-                    }
-                    val shortcut = ShortcutInfoCompat.Builder(context, "ego_sc_${activeTab.url.hashCode()}")
-                        .setShortLabel(activeTab.title.ifBlank { currentHost.ifBlank { "웹 페이지" } }.take(24))
-                        .setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
-                        .setIntent(launchIntent)
-                        .build()
-                    if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
-                        ShortcutManagerCompat.requestPinShortcut(context, shortcut, null)
-                        Toast.makeText(context, "홈 화면 바로가기 추가 요청됨", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(context, "런처가 바로가기 고정을 지원하지 않습니다", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            })
-            add(ChromeMenuItemSpec("데스크톱", Icons.Default.DesktopWindows, key = "desktop", checked = prefs.desktopModeEnabled, isToggleCheckbox = true) {
-                SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
-                SpaceManager.reload(activeSpace.id)
-            })
-        }
-        add(ChromeMenuItemSpec("어두운 테마", Icons.Default.Contrast, key = "dark", checked = isEffectiveDark, isToggleCheckbox = true, dividerAfter = true) {
-            val nextDark = !isEffectiveDark
-            SpaceManager.updatePreferences {
-                it.copy(darkModeEnabled = nextDark, themeMode = if (nextDark) ThemeMode.DARK else ThemeMode.LIGHT)
-            }
-        })
-        add(ChromeMenuItemSpec("설정", Icons.Default.Settings, key = "settings") { showChromeSettings = true })
-        add(ChromeMenuItemSpec("기본 브라우저", Icons.Default.Language, key = "default_app") {
-            runCatching {
-                context.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
-            }.onFailure {
-                showChromeSettings = true
-            }
-        })
-    }
+    val chromeMenuItems = buildBrowserChromeMenuItems(
+        context = context,
+        scope = scope,
+        activeSpace = activeSpace,
+        activeTab = activeTab,
+        prefs = prefs,
+        isMcpDisconnected = isMcpDisconnected,
+        isWebPage = isWebPage,
+        isEffectiveDark = isEffectiveDark,
+        currentHost = currentHost,
+        recentlyClosedEmpty = recentlyClosed.isEmpty(),
+        onShowMcpDrawer = { showMcpDrawer = true },
+        onShowAdBlockDialog = { showAdBlockDialog = true },
+        onShowChromeSettings = { showChromeSettings = true },
+        onShowBookmarkManager = { showBookmarkManager = true },
+        onShowFindBar = { showFindBar = true },
+        onTriggerTranslation = { src, dst -> triggerTranslation(src, dst) },
+        onSetReaderMarkdown = { md -> readerMarkdown = md }
+    )
 
     // 제미나이 등 외부 앱에서 링크를 열어 진입 시 열려 있던 오버레이를 즉시 닫아 웹화면 노출 보장
     LaunchedEffect(externalOpenSeq) {
@@ -2631,132 +2521,28 @@ fun BrowserScreen() {
             )
         }
 
-        // 동적 크롬 확장 롱프레스 퀵 관리 & 팝업 UI
-        managingExt?.let { ext ->
-            ExtensionQuickManageDialog(
-                ext = ext,
-                onRunNow = {
-                    val wv = SpaceManager.getActiveWebView(activeSpace.id)
-                    if (wv != null) {
-                        ExtensionManager.injectMatchingExtensions(wv, activeTab.url, "end", forceExtId = ext.id)
-                        Toast.makeText(context, "${ext.name} 강제 실행됨", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onToggleEnabled = { on ->
-                    ExtensionManager.toggleEnabled(ext.id, on)
-                    managingExt = ext.copy(enabled = on)
-                },
-                onHideFromToolbar = {
-                    ExtensionManager.toggleShowInToolbar(ext.id, false)
-                    Toast.makeText(context, "${ext.name} 툴바에서 숨김", Toast.LENGTH_SHORT).show()
-                },
-                onDelete = {
-                    ExtensionManager.deleteExtension(ext.id)
-                    Toast.makeText(context, "${ext.name} 삭제됨", Toast.LENGTH_SHORT).show()
-                },
-                onDismiss = { managingExt = null }
-            )
-        }
-        activeExtPopup?.let { ext ->
-            ExtensionPopupWebViewDialog(
-                ext = ext,
-                onDismiss = { activeExtPopup = null }
-            )
-        }
-
-        // 동일 파일 중복 다운로드 확인 팝업 (Chrome 1:1)
-        duplicateDownloadPrompt?.let { prompt ->
-            ChromeDuplicateDownloadDialog(
-                prompt = prompt,
-                onDismiss = { DownloadCenter.dismissDuplicatePrompt() }
-            )
-        }
-
-        // 인앱 다운로드 파일 관리 페이지 (M3 Expressive)
-        AnimatedVisibility(
-            visible = showDownloadsScreen,
-            modifier = Modifier.zIndex(50f),
-            enter = slideInHorizontally(EgoMotion.intOffsetSpring) { it / 3 } + fadeIn(tween(200)),
-            exit = slideOutHorizontally(tween(190)) { it / 3 } + fadeOut(tween(160))
-        ) {
-            ChromeDownloadsScreen(
-                onDismiss = { showDownloadsScreen = false }
-            )
-        }
-
-        AnimatedVisibility(
-            visible = showChromeSettings,
-            modifier = Modifier.zIndex(50f),
-            enter = slideInHorizontally(EgoMotion.intOffsetSpring) { it / 3 } + fadeIn(tween(200)),
-            exit = slideOutHorizontally(tween(190)) { it / 3 } + fadeOut(tween(160))
-        ) {
-            ChromeSettingsScreen(
-                initialCategory = settingsInitialCategory,
-                onOpenMcpDrawer = { showMcpDrawer = true },
-                onOpenGoogleSignInTab = {
-                    SpaceManager.createTab(activeSpace.id, initialUrl = "https://myaccount.google.com/", selectImmediately = true)
-                },
-                onExtractGoogleProfile = { cb ->
-                    val wv = SpaceManager.getActiveWebView(activeSpace.id)
-                    if (wv != null) {
-                        GoogleAccountManager.extractProfileFromWebView(wv, cb)
-                    } else {
-                        cb(false, "Google 페이지가 열린 탭이 없습니다.")
-                    }
-                },
-                onDismiss = { showChromeSettings = false }
-            )
-        }
-
-        // 크롬형 전체 화면 썸네일 카드 그리드 모든 탭 보기 (스프링 줌 모프 전환)
-        AnimatedVisibility(
-            visible = showAllTabsDialog,
-            modifier = Modifier.zIndex(50f),
-            enter = scaleIn(animationSpec = EgoMotion.smoothSpring(), initialScale = 0.90f) + fadeIn(tween(180)),
-            exit = scaleOut(animationSpec = tween(150), targetScale = 0.92f) + fadeOut(tween(140))
-        ) {
-            ChromeTabSwitcherOverlay(
-                spaces = spaces,
-                activeSpace = activeSpace,
-                darkTheme = isEffectiveDark,
-                canAddAiSpace = canAddAiSpace,
-                onSelectSpaceAndTab = { targetSpaceId, tabId ->
-                    SpaceManager.selectSpace(targetSpaceId)
-                    SpaceManager.selectTab(targetSpaceId, tabId)
-                    showAllTabsDialog = false
-                },
-                onCloseTab = { targetSpaceId, tabId ->
-                    SpaceManager.closeTab(targetSpaceId, tabId)
-                },
-                onMoveTab = { targetSpaceId, fromId, toId ->
-                    SpaceManager.moveTabById(targetSpaceId, fromId, toId)
-                },
-                onCreateTab = { targetSpaceId, incog ->
-                    SpaceManager.selectSpace(targetSpaceId)
-                    SpaceManager.createTab(targetSpaceId, incognito = incog)
-                    showAllTabsDialog = false
-                },
-                onCreateAiSpace = {
-                    SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
-                },
-                onCloseAiSpace = { targetSpaceId ->
-                    SpaceManager.closeAiSpace(targetSpaceId)
-                },
-                onCloseAllTabs = { targetSpaceId ->
-                    SpaceManager.closeAllTabsInSpace(targetSpaceId)
-                    showAllTabsDialog = false
-                },
-                onClearBrowsingData = {
-                    SpaceManager.clearHistoryAndCache()
-                    Toast.makeText(context, "인터넷 사용 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
-                },
-                onOpenSettings = {
-                    showAllTabsDialog = false
-                    showChromeSettings = true
-                },
-                onDismiss = { showAllTabsDialog = false }
-            )
-        }
+        BrowserFullScreenFeatureOverlays(
+            context = context,
+            spaces = spaces,
+            activeSpace = activeSpace,
+            activeTab = activeTab,
+            isEffectiveDark = isEffectiveDark,
+            canAddAiSpace = canAddAiSpace,
+            managingExt = managingExt,
+            activeExtPopup = activeExtPopup,
+            duplicateDownloadPrompt = duplicateDownloadPrompt,
+            showDownloadsScreen = showDownloadsScreen,
+            showChromeSettings = showChromeSettings,
+            settingsInitialCategory = settingsInitialCategory,
+            showAllTabsDialog = showAllTabsDialog,
+            onUpdateManagingExt = { managingExt = it },
+            onDismissExtPopup = { activeExtPopup = null },
+            onDismissDownloadsScreen = { showDownloadsScreen = false },
+            onOpenMcpDrawer = { showMcpDrawer = true },
+            onDismissChromeSettings = { showChromeSettings = false },
+            onOpenChromeSettings = { showChromeSettings = true },
+            onDismissAllTabsDialog = { showAllTabsDialog = false }
+        )
 
         BrowserHistoryAlertDialog(
             visible = showHistoryDialog,
