@@ -1,12 +1,13 @@
 package com.egolite.mobile.ui
 
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,8 +38,8 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.NorthWest
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -48,14 +49,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -66,6 +69,7 @@ import com.egolite.mobile.mcp.BrowserAiCommand
 import com.egolite.mobile.mcp.CommandTransport
 import com.egolite.mobile.model.BrowserSpace
 import com.egolite.mobile.model.SpaceType
+import kotlinx.coroutines.launch
 
 private val QUICK_AI_PROMPTS = listOf(
     "이 페이지 핵심 내용 3줄로 요약해 줘",
@@ -75,13 +79,10 @@ private val QUICK_AI_PROMPTS = listOf(
 )
 
 /**
- * 주소창 팝업(OmniboxOverlay) 형식의 전용 AI 명령 입력 팝업
- * - 주소창과 혼동되지 않도록 AI 포인트 컬러 테두리 + 'AI 명령' 배지 + 대상 AI/탭 선택 칩 제공
- * - 하단에는 북마크/기록 자리에 빠른 AI 명령 프리셋과 최근 AI 명령 기록을 표시
+ * 주소창(ChromeOmniboxOverlay)과 1:1 동일한 위치·너비·일경도저 모핑을 사용하는 전용 AI 명령 입력 팝업.
  */
 @Composable
 fun AiCommandOverlay(
-    visible: Boolean,
     spaces: List<BrowserSpace>,
     activeSpaceId: String,
     preselectedSpaceId: String?,
@@ -89,18 +90,22 @@ fun AiCommandOverlay(
     connectedClients: List<String>,
     defaultAiName: String,
     recentCommands: List<BrowserAiCommand>,
+    anchorLeftPx: Float = 0f,
+    anchorTopPx: Float = 0f,
+    anchorWidthPx: Float = 0f,
     onDismiss: () -> Unit,
     onSubmitCommand: (BrowserAiCommand) -> Unit
 ) {
+    val density = LocalDensity.current
     val availableClients = remember(connectedClients, defaultAiName) {
         val base = connectedClients.ifEmpty { listOf(defaultAiName.ifBlank { "Gemini" }) }
         base.distinct()
     }
 
-    var selectedClient by remember(visible, availableClients) {
+    var selectedClient by remember(availableClients) {
         mutableStateOf(availableClients.firstOrNull() ?: "Gemini")
     }
-    var selectedSpaceId by remember(visible, preselectedSpaceId, activeSpaceId) {
+    var selectedSpaceId by remember(preselectedSpaceId, activeSpaceId) {
         mutableStateOf(
             preselectedSpaceId
                 ?: spaces.firstOrNull { it.id == activeSpaceId && it.type == SpaceType.AI }?.id
@@ -109,370 +114,374 @@ fun AiCommandOverlay(
         )
     }
     val selectedSpace = spaces.firstOrNull { it.id == selectedSpaceId } ?: spaces.firstOrNull()
-    var selectedTabId by remember(visible, preselectedTabId, selectedSpaceId) {
+    var selectedTabId by remember(preselectedTabId, selectedSpaceId) {
         mutableStateOf(
             preselectedTabId?.takeIf { tid -> selectedSpace?.tabs?.any { it.id == tid } == true }
                 ?: selectedSpace?.activeTabId
                 ?: selectedSpace?.tabs?.firstOrNull()?.id.orEmpty()
         )
     }
-    var selectedTransport by remember(visible) { mutableStateOf(CommandTransport.QUEUE) }
-    var promptText by remember(visible) { mutableStateOf("") }
+    var selectedTransport by remember { mutableStateOf(CommandTransport.QUEUE) }
+    var promptText by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(visible) {
-        if (visible) {
-            runCatching { focusRequester.requestFocus() }
+    LaunchedEffect(Unit) {
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    val hasAnchor = anchorWidthPx > 120f
+    val startDp = with(density) { anchorLeftPx.coerceAtLeast(0f).toDp() }
+    val topDp = with(density) { anchorTopPx.coerceAtLeast(0f).toDp() }
+    val widthDp = with(density) { anchorWidthPx.coerceAtLeast(320f).toDp() }
+
+    // 일경도저(一镜到底) 주소창 모핑: 6dp Connected 주소창 -> 22dp 확장 AI 명령창 (닫기 시 역방향 모핑)
+    val morphScope = rememberCoroutineScope()
+    val morphProgress = remember { Animatable(0f) }
+    var isClosingMorph by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        morphProgress.animateTo(1f, animationSpec = EgoMotion.morphSpring())
+    }
+
+    fun dismissWithMorph() {
+        if (isClosingMorph) return
+        isClosingMorph = true
+        morphScope.launch {
+            morphProgress.animateTo(0f, animationSpec = EgoMotion.responsiveSpring())
+            onDismiss()
         }
     }
 
+    val mp = morphProgress.value.coerceIn(0f, 1f)
+    val cornerDp = (6f + 16f * mp).dp
+    val shadowDp = (1f + 13f * mp).dp
     val accentColor = MaterialTheme.colorScheme.primary
 
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(170)),
-        exit = fadeOut(tween(150))
-    ) {
-        // 전체 반투명 검정 배경 제거 — AI 버튼을 덮으며 확장되는 모프 팝업
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
+    val submitAction = {
+        val trimmed = promptText.trim()
+        val sp = selectedSpace
+        val tab = sp?.tabs?.firstOrNull { it.id == selectedTabId } ?: sp?.activeTab
+        if (trimmed.isNotEmpty() && sp != null && tab != null) {
+            onSubmitCommand(
+                BrowserAiCommand(
+                    targetClient = if (selectedTransport == CommandTransport.BUILT_IN_API) "내장 API" else selectedClient,
+                    spaceId = sp.id,
+                    spaceName = sp.name,
+                    tabId = tab.id,
+                    tabTitle = tab.title.ifBlank { tab.url },
+                    tabUrl = tab.url,
+                    isBackgroundTab = tab.id != sp.activeTabId,
+                    prompt = trimmed,
+                    transport = selectedTransport
                 )
-                .padding(top = 50.dp, start = 16.dp, end = 16.dp),
-            contentAlignment = Alignment.TopCenter
+            )
+            promptText = ""
+            dismissWithMorph()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { dismissWithMorph() },
+        contentAlignment = if (hasAnchor) Alignment.TopStart else Alignment.TopCenter
+    ) {
+        Surface(
+            modifier = (if (hasAnchor) {
+                Modifier
+                    .padding(start = startDp, top = topDp)
+                    .width(widthDp)
+            } else {
+                Modifier
+                    .padding(top = 48.dp, start = 16.dp, end = 16.dp)
+                    .widthIn(max = 580.dp)
+                    .fillMaxWidth()
+            })
+                .animateContentSize(animationSpec = EgoMotion.morphIntSizeSpring)
+                .graphicsLayer {
+                    scaleX = 0.985f + 0.015f * mp
+                    alpha = (0.35f + 0.65f * mp).coerceIn(0f, 1f)
+                }
+                .border(
+                    width = 1.dp,
+                    color = accentColor.copy(alpha = 0.38f),
+                    shape = RoundedCornerShape(cornerDp)
+                )
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) {},
+            shape = RoundedCornerShape(cornerDp),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            shadowElevation = shadowDp
         ) {
-            AnimatedVisibility(
-                visible = visible,
-                enter = scaleIn(
-                    initialScale = 0.30f,
-                    transformOrigin = TransformOrigin(0.86f, 0.04f),
-                    animationSpec = EgoMotion.smoothSpring()
-                ) + fadeIn(tween(150)),
-                exit = scaleOut(
-                    targetScale = 0.30f,
-                    transformOrigin = TransformOrigin(0.86f, 0.04f),
-                    animationSpec = tween(170)
-                ) + fadeOut(tween(130))
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                    tonalElevation = 6.dp,
-                    shadowElevation = 24.dp,
+            Column(modifier = Modifier.padding(bottom = if (mp > 0.25f) 10.dp else 0.dp)) {
+                // 1) 상단 54dp 자연어 AI 명령 입력 바 (주소창 1:1 높이·위치 일치)
+                Row(
                     modifier = Modifier
-                        .widthIn(max = 620.dp)
                         .fillMaxWidth()
-                        .border(1.5.dp, accentColor, RoundedCornerShape(22.dp))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {}
-                        )
+                        .height(54.dp)
+                        .padding(start = 16.dp, end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    EgoIcon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(20.dp),
+                        symbolSize = 20.dp
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    BasicTextField(
+                        value = promptText,
+                        onValueChange = { promptText = it },
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        cursorBrush = SolidColor(accentColor),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { submitAction() }),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(focusRequester),
+                        decorationBox = { inner ->
+                            if (promptText.isEmpty()) {
+                                Text(
+                                    text = "AI에게 자연어로 명령하기",
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            inner()
+                        }
+                    )
+                    if (promptText.isNotEmpty()) {
+                        IconButton(
+                            onClick = { promptText = "" },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            EgoIcon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "입력 지우기",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(17.dp),
+                                symbolSize = 17.dp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(2.dp))
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = if (promptText.isNotBlank()) accentColor else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .clickable(enabled = promptText.isNotBlank()) { submitAction() }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            EgoIcon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "AI 명령 전송",
+                                tint = if (promptText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                                modifier = Modifier.size(15.dp),
+                                symbolSize = 15.dp
+                            )
+                        }
+                    }
+                }
+
+                // 2) 일경도저 세로 확장 본문 (단일 콤팩트 타깃 바 + 빠른 명령 + 최근 AI 명령 기록)
+                AnimatedVisibility(
+                    visible = !isClosingMorph && mp > 0.08f,
+                    enter = expandVertically(animationSpec = EgoMotion.morphIntSizeSpring, expandFrom = Alignment.Top) + fadeIn(tween(150)),
+                    exit = shrinkVertically(animationSpec = tween(180), shrinkTowards = Alignment.Top) + fadeOut(tween(120))
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        // 상단 AI 전용 헤더 + 자연어 입력바 (일반 주소창과 명확히 구분)
-                        Column(
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f))
+
+                        // 2-A) 깔끔한 단일 라인 대상 선택 스트립 (테두리 없는 톤 칩)
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(accentColor.copy(alpha = 0.10f))
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(9.dp)
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = accentColor
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        EgoIcon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier.size(13.dp)
-                                        , symbolSize = 13.dp)
-                                        Text(
-                                            text = "AI 명령",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onPrimary
-                                        )
+                            // 대상 AI 클라이언트 (복수 시 탭해서 순환)
+                            val clientLabel = if (selectedTransport == CommandTransport.BUILT_IN_API) "내장 API" else selectedClient
+                            AiTonalChip(
+                                label = clientLabel,
+                                selected = true,
+                                onClick = {
+                                    if (selectedTransport == CommandTransport.BUILT_IN_API) {
+                                        selectedTransport = CommandTransport.QUEUE
+                                    } else if (availableClients.size > 1) {
+                                        val nextIdx = (availableClients.indexOf(selectedClient) + 1) % availableClients.size
+                                        selectedClient = availableClients[nextIdx]
                                     }
                                 }
+                            )
 
-                                // 대상 AI 세션 / 전송 방식 가로 칩
-                                Row(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    availableClients.forEach { client ->
-                                        val isSel = selectedClient == client && selectedTransport != CommandTransport.BUILT_IN_API
-                                        PopupFilterChip(
-                                            label = client,
-                                            selected = isSel,
-                                            onClick = {
-                                                selectedClient = client
-                                                if (selectedTransport == CommandTransport.BUILT_IN_API) {
-                                                    selectedTransport = CommandTransport.QUEUE
-                                                }
-                                            }
-                                        )
-                                    }
-                                    CommandTransport.entries.forEach { mode ->
-                                        PopupFilterChip(
-                                            label = mode.label,
-                                            selected = selectedTransport == mode,
-                                            onClick = { selectedTransport = mode }
-                                        )
-                                    }
+                            // 전송 방식 순환 칩 (명령 큐 -> MCP Sampling -> 내장 API)
+                            AiTonalChip(
+                                label = selectedTransport.label,
+                                selected = false,
+                                onClick = {
+                                    val modes = CommandTransport.entries
+                                    val next = (modes.indexOf(selectedTransport) + 1) % modes.size
+                                    selectedTransport = modes[next]
                                 }
+                            )
 
-                                IconButton(
-                                    onClick = onDismiss,
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    EgoIcon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "AI 명령창 닫기",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
-                                    , symbolSize = 18.dp)
-                                }
-                            }
-
-                            // 대상 스페이스 & 탭(tabId) 지정 칩 행
-                            if (selectedSpace != null) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    spaces.forEach { sp ->
-                                        PopupFilterChip(
-                                            label = sp.name,
-                                            selected = sp.id == selectedSpace.id,
-                                            onClick = {
-                                                selectedSpaceId = sp.id
-                                                selectedTabId = sp.activeTabId
-                                            }
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    selectedSpace.tabs.forEachIndexed { idx, tab ->
-                                        val isBg = tab.id != selectedSpace.activeTabId
-                                        val shortTitle = tab.title.ifBlank { tab.url }.take(14)
-                                        PopupFilterChip(
-                                            label = if (isBg) "탭${idx + 1}·$shortTitle(배경)" else "탭${idx + 1}·$shortTitle",
-                                            selected = tab.id == selectedTabId,
-                                            onClick = { selectedTabId = tab.id }
-                                        )
-                                    }
-                                }
-                            }
-
-                            // 자연어 명령 입력 필드 + 전송 버튼
-                            val submitAction = {
-                                val trimmed = promptText.trim()
-                                val sp = selectedSpace
-                                val tab = sp?.tabs?.firstOrNull { it.id == selectedTabId } ?: sp?.activeTab
-                                if (trimmed.isNotEmpty() && sp != null && tab != null) {
-                                    onSubmitCommand(
-                                        BrowserAiCommand(
-                                            targetClient = if (selectedTransport == CommandTransport.BUILT_IN_API) "내장 API" else selectedClient,
-                                            spaceId = sp.id,
-                                            spaceName = sp.name,
-                                            tabId = tab.id,
-                                            tabTitle = tab.title.ifBlank { tab.url },
-                                            tabUrl = tab.url,
-                                            isBackgroundTab = tab.id != sp.activeTabId,
-                                            prompt = trimmed,
-                                            transport = selectedTransport
-                                        )
-                                    )
-                                    promptText = ""
-                                    onDismiss()
-                                }
-                            }
-
-                            Row(
+                            // 세로 구분선
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surface)
-                                    .border(1.dp, accentColor.copy(alpha = 0.5f), CircleShape)
-                                    .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(modifier = Modifier.weight(1f)) {
-                                    if (promptText.isEmpty()) {
-                                        Text(
-                                            text = "AI에게 보낼 자연어 지시 입력 (주소 검색 아님)",
-                                            fontSize = 13.5.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                    .padding(horizontal = 2.dp)
+                                    .width(1.dp)
+                                    .height(14.dp)
+                                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            )
+
+                            // 대상 스페이스 칩
+                            spaces.forEach { sp ->
+                                AiTonalChip(
+                                    label = sp.name,
+                                    selected = sp.id == selectedSpace?.id,
+                                    onClick = {
+                                        selectedSpaceId = sp.id
+                                        selectedTabId = sp.activeTabId
                                     }
-                                    BasicTextField(
-                                        value = promptText,
-                                        onValueChange = { promptText = it },
-                                        singleLine = true,
-                                        textStyle = TextStyle(
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Medium
-                                        ),
-                                        cursorBrush = SolidColor(accentColor),
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                                        keyboardActions = KeyboardActions(onSend = { submitAction() }),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .focusRequester(focusRequester)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = CircleShape,
-                                    color = if (promptText.isNotBlank()) accentColor else MaterialTheme.colorScheme.surfaceContainerHighest,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(CircleShape)
-                                        .clickable(enabled = promptText.isNotBlank()) { submitAction() }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        EgoIcon(
-                                            imageVector = Icons.AutoMirrored.Filled.Send,
-                                            contentDescription = "명령 전송",
-                                            tint = if (promptText.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(16.dp)
-                                        , symbolSize = 16.dp)
-                                    }
-                                }
+                                )
+                            }
+
+                            // 대상 탭 칩 (탭이 2개 이상이거나 현재 탭 표시)
+                            selectedSpace?.tabs?.forEachIndexed { idx, tab ->
+                                val isBg = tab.id != selectedSpace.activeTabId
+                                val shortTitle = tab.title.ifBlank { tab.url }.take(12)
+                                AiTonalChip(
+                                    label = if (isBg) "탭${idx + 1}·$shortTitle(배경)" else "탭${idx + 1}·$shortTitle",
+                                    selected = tab.id == selectedTabId,
+                                    onClick = { selectedTabId = tab.id }
+                                )
                             }
                         }
 
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-
-                        // 하단: 빠른 AI 명령(북마크 자리) + 최근 AI 명령 기록(검색 기록 자리)
+                        // 2-B) 빠른 AI 명령 + 최근 AI 명령 기록
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 310.dp)
+                                .heightIn(max = 320.dp)
                                 .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                Text(
-                                    text = "빠른 AI 명령",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(7.dp)
-                                ) {
-                                    QUICK_AI_PROMPTS.forEach { preset ->
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                            modifier = Modifier
-                                                .clip(CircleShape)
-                                                .clickable { promptText = preset }
-                                        ) {
-                                            Text(
-                                                text = preset,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
-                                            )
-                                        }
+                            Text(
+                                text = "빠른 명령",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 6.dp)
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                QUICK_AI_PROMPTS.forEach { preset ->
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable { promptText = preset }
+                                    ) {
+                                        Text(
+                                            text = preset,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                        )
                                     }
                                 }
                             }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Text(
+                                text = "최근 AI 명령",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                            )
+                            if (recentCommands.isEmpty()) {
                                 Text(
-                                    text = "최근 AI 명령 기록",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = "최근 보낸 AI 명령이 없습니다.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                                 )
-                                if (recentCommands.isEmpty()) {
-                                    Text(
-                                        text = "아직 보낸 명령이 없습니다. 위에서 자연어로 지시를 입력해 보세요.",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
-                                        modifier = Modifier.padding(vertical = 4.dp)
-                                    )
-                                } else {
-                                    recentCommands.take(6).forEach { cmd ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                                                .clickable { promptText = cmd.prompt }
-                                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            EgoIcon(
-                                                imageVector = Icons.Default.History,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(16.dp)
-                                            , symbolSize = 16.dp)
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = cmd.prompt,
-                                                    fontSize = 12.5.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = "${cmd.targetClient} · ${cmd.spaceName} · ${cmd.tabTitle}",
-                                                    fontSize = 11.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-                                            Surface(
-                                                shape = CircleShape,
-                                                color = accentColor.copy(alpha = 0.14f)
-                                            ) {
-                                                Text(
-                                                    text = cmd.status,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = accentColor,
-                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                                )
-                                            }
+                            } else {
+                                recentCommands.take(6).forEach { cmd ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { promptText = cmd.prompt }
+                                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        EgoIcon(
+                                            imageVector = Icons.Default.History,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp),
+                                            symbolSize = 18.dp
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = cmd.prompt,
+                                                fontSize = 14.sp,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${cmd.targetClient} · ${cmd.spaceName} · ${cmd.tabTitle}",
+                                                fontSize = 11.5.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
                                         }
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = accentColor.copy(alpha = 0.14f)
+                                        ) {
+                                            Text(
+                                                text = cmd.status,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = accentColor,
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        EgoIcon(
+                                            imageVector = Icons.Default.NorthWest,
+                                            contentDescription = "입력창에 채우기",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp),
+                                            symbolSize = 16.dp
+                                        )
                                     }
                                 }
                             }
@@ -485,29 +494,27 @@ fun AiCommandOverlay(
 }
 
 @Composable
-private fun PopupFilterChip(
+private fun AiTonalChip(
     label: String,
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    val bg = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+    val bg = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
     val fg = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
     Surface(
-        shape = CircleShape,
+        shape = RoundedCornerShape(10.dp),
         color = bg,
         modifier = Modifier
-            .border(1.dp, borderColor, CircleShape)
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
     ) {
         Text(
             text = label,
-            fontSize = 11.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 11.5.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             color = fg,
             maxLines = 1,
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
         )
     }
 }
