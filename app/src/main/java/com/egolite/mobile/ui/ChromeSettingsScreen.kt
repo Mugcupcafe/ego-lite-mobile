@@ -1944,7 +1944,7 @@ fun ChromeSettingsScreen(
     }
 }
 
-private class M3SettingsGroupScope {
+internal class M3SettingsGroupScope {
     val items = mutableListOf<@Composable () -> Unit>()
     fun item(content: @Composable () -> Unit) {
         items.add(content)
@@ -1952,7 +1952,7 @@ private class M3SettingsGroupScope {
 }
 
 @Composable
-private fun M3SettingsGroup(
+internal fun M3SettingsGroup(
     cardColor: Color,
     block: M3SettingsGroupScope.() -> Unit
 ) {
