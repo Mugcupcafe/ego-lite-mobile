@@ -348,6 +348,8 @@ fun ChromeStyleTranslatePopup(
                     enabled = trActive,
                     progress = trProg,
                     isActive = trActive
+                ,
+                    modifier = Modifier.matchParentSize()
                 ) {
                     TranslateBannerContent(
                         primaryCol = invTextCol,
