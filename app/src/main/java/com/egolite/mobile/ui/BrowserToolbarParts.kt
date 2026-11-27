@@ -896,3 +896,96 @@ fun AiCommandToolbarButton(
         }
     }
 }
+
+
+/**
+ * 탭 바 최우측 새 페이지(+) 버튼 — 탄성 눌림 + 우측 발사 반동(recoil) + 90도 회전 + 잔광 링
+ */
+@Composable
+fun BallisticNewTabButton(
+    tint: Color,
+    accentColor: Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.84f else 1f,
+        animationSpec = spring(dampingRatio = 0.58f, stiffness = 700f),
+        label = "newTabPressScale"
+    )
+    val pressBgAlpha by animateFloatAsState(
+        targetValue = if (isPressed) 0.16f else 0f,
+        animationSpec = tween(110),
+        label = "newTabPressBg"
+    )
+
+    val recoilX = remember { Animatable(0f) }
+    val spinDeg = remember { Animatable(0f) }
+    val tapHalo = remember { Animatable(1f) }
+    val popScale = remember { Animatable(1f) }
+
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(accentColor.copy(alpha = pressBgAlpha))
+            .drawBehind {
+                val p = tapHalo.value
+                if (p < 0.99f) {
+                    val radius = size.minDimension * (0.28f + 0.34f * p)
+                    drawCircle(
+                        color = accentColor.copy(alpha = (1f - p) * 0.34f),
+                        radius = radius,
+                        style = Stroke(width = 1.6.dp.toPx())
+                    )
+                }
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null
+            ) {
+                scope.launch {
+                    launch {
+                        recoilX.snapTo(0f)
+                        recoilX.animateTo(8.5f, animationSpec = tween(55))
+                        recoilX.animateTo(0f, animationSpec = spring(dampingRatio = 0.46f, stiffness = 460f))
+                    }
+                    launch {
+                        val nextAngle = spinDeg.value + 90f
+                        spinDeg.animateTo(nextAngle, animationSpec = spring(dampingRatio = 0.62f, stiffness = 420f))
+                    }
+                    launch {
+                        popScale.snapTo(0.84f)
+                        popScale.animateTo(1.12f, animationSpec = tween(70))
+                        popScale.animateTo(1f, animationSpec = spring(dampingRatio = 0.56f, stiffness = 460f))
+                    }
+                    launch {
+                        tapHalo.snapTo(0f)
+                        tapHalo.animateTo(1f, animationSpec = tween(300))
+                    }
+                }
+                onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        EgoIcon(
+            imageVector = Icons.Default.Add,
+            contentDescription = "새 탭",
+            tint = tint,
+            modifier = Modifier
+                .size(19.dp)
+                .graphicsLayer {
+                    translationX = recoilX.value.dp.toPx()
+                    rotationZ = spinDeg.value
+                    val s = pressScale * popScale.value
+                    scaleX = s
+                    scaleY = s
+                },
+            symbolSize = 19.dp
+        )
+    }
+}
