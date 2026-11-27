@@ -93,12 +93,14 @@ fun AdBlockControlDialog(
 
     var cardVisible by remember { mutableStateOf(false) }
     var cardRect by remember { mutableStateOf<Rect?>(null) }
+    var cardCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
     val captureLayer = rememberGraphicsLayer()
     val captureScope = rememberCoroutineScope()
     fun dismissWithCapture(touchRoot: Offset?) {
         captureScope.launch {
             val bmp = runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
-            onDismiss(VanishSnapshot(rect = cardRect, touchRoot = touchRoot, bitmap = bmp))
+            val liveRect = cardCoords?.takeIf { it.isAttached }?.boundsInRoot() ?: cardRect
+            onDismiss(VanishSnapshot(rect = liveRect, touchRoot = touchRoot, bitmap = bmp))
         }
     }
     LaunchedEffect(Unit) { cardVisible = true }
@@ -127,7 +129,7 @@ fun AdBlockControlDialog(
             tonalElevation = 4.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                .onGloballyPositioned { coords -> cardCoords = coords; cardRect = coords.boundsInRoot() }
                 .drawWithContent {
                     captureLayer.record { this@drawWithContent.drawContent() }
                     drawLayer(captureLayer)
