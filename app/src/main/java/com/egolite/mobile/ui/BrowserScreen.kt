@@ -213,6 +213,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -330,7 +331,8 @@ fun BrowserScreen() {
     var readerMarkdown by remember { mutableStateOf<String?>(null) }
     var previewPageUrl by remember { mutableStateOf<String?>(null) }
     var hoveredSpaceIndex by remember { mutableStateOf(-1) }
-    var hoveredMenuIndex by remember { mutableStateOf(-1) }
+    var hoveredQuickMenuKey by remember { mutableStateOf<String?>(null) }
+    val quickMenuTileBounds = remember { mutableStateMapOf<String, Rect>() }
     var rootBoxLeftPx by remember { mutableStateOf(0f) }
     var rootBoxTopPx by remember { mutableStateOf(0f) }
 
@@ -458,7 +460,8 @@ fun BrowserScreen() {
     val chromeMenuItems = buildList {
         add(
             ChromeMenuItemSpec(
-                title = if (isMcpDisconnected) "MCP · 터널 설정 (끊김)" else "MCP · 터널 설정 (연결됨)",
+                title = if (isMcpDisconnected) "MCP · 터널 (끊김)" else "MCP · 터널 (연결됨)",
+                key = "mcp",
                 icon = Icons.Default.Hub,
                 accentColor = if (isMcpDisconnected) EgoDangerRed else EgoEmerald,
                 bold = true,
@@ -466,29 +469,29 @@ fun BrowserScreen() {
                 onClick = { showMcpDrawer = true }
             )
         )
-        add(ChromeMenuItemSpec("새 탭", Icons.Default.AddBox) { SpaceManager.createTab(activeSpace.id) })
-        add(ChromeMenuItemSpec("새 창 (AI Space)", Icons.Default.SmartToy, accentColor = EgoEmerald) {
+        add(ChromeMenuItemSpec("새 탭", Icons.Default.AddBox, key = "newtab") { SpaceManager.createTab(activeSpace.id) })
+        add(ChromeMenuItemSpec("AI Space", Icons.Default.SmartToy, key = "aispace", accentColor = EgoEmerald) {
             SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
         })
-        add(ChromeMenuItemSpec("새 시크릿 창", Icons.Default.VisibilityOff, dividerAfter = true) {
+        add(ChromeMenuItemSpec("시크릿 창", Icons.Default.VisibilityOff, key = "incognito", dividerAfter = true) {
             SpaceManager.createTab(activeSpace.id, incognito = true)
         })
-        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History) { SpaceManager.openHistoryTab(activeSpace.id) })
-        add(ChromeMenuItemSpec("인터넷 사용 기록 삭제", Icons.Default.DeleteOutline) {
+        add(ChromeMenuItemSpec("방문 기록", Icons.Default.History, key = "history") { SpaceManager.openHistoryTab(activeSpace.id) })
+        add(ChromeMenuItemSpec("기록 삭제", Icons.Default.DeleteOutline, key = "clear") {
             SpaceManager.clearHistoryAndCache()
             Toast.makeText(context, "인터넷 사용 기록 및 캐시 삭제됨", Toast.LENGTH_SHORT).show()
         })
-        add(ChromeMenuItemSpec("사이트 제어", Icons.Default.Tune, dividerAfter = true) {
+        add(ChromeMenuItemSpec("사이트 제어", Icons.Default.Tune, key = "site", dividerAfter = true) {
             if (isWebPage) showAdBlockDialog = true else showChromeSettings = true
         })
-        add(ChromeMenuItemSpec("다운로드", Icons.Default.DownloadDone) {
+        add(ChromeMenuItemSpec("다운로드", Icons.Default.DownloadDone, key = "download") {
             SpaceManager.openDownloadsTab(activeSpace.id)
         })
-        add(ChromeMenuItemSpec("북마크", Icons.Default.StarBorder) { showBookmarkManager = true })
-        add(ChromeMenuItemSpec("북마크 바 표시", Icons.Default.BookmarkBorder, checked = prefs.showBookmarkBar, isToggleCheckbox = true) {
+        add(ChromeMenuItemSpec("북마크", Icons.Default.StarBorder, key = "bookmark") { showBookmarkManager = true })
+        add(ChromeMenuItemSpec("북마크 바", Icons.Default.BookmarkBorder, key = "bmbar", checked = prefs.showBookmarkBar, isToggleCheckbox = true) {
             SpaceManager.updatePreferences { it.copy(showBookmarkBar = !it.showBookmarkBar) }
         })
-        add(ChromeMenuItemSpec("최근 탭", Icons.Default.Devices, dividerAfter = true) {
+        add(ChromeMenuItemSpec("최근 탭", Icons.Default.Devices, key = "recent", dividerAfter = true) {
             if (recentlyClosed.isNotEmpty()) {
                 SpaceManager.reopenLastClosedTab(activeSpace.id)
             } else {
@@ -500,6 +503,7 @@ fun BrowserScreen() {
             ChromeMenuItemSpec(
                 title = "확대/축소",
                 icon = Icons.Default.ZoomIn,
+                key = "zoom",
                 dividerAfter = true,
                 zoomPercent = prefs.textZoom,
                 onZoomOut = {
@@ -514,7 +518,7 @@ fun BrowserScreen() {
             )
         )
         if (isWebPage) {
-            add(ChromeMenuItemSpec("공유...", Icons.Default.Share) {
+            add(ChromeMenuItemSpec("공유", Icons.Default.Share, key = "share") {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
@@ -522,19 +526,19 @@ fun BrowserScreen() {
                 }
                 context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
             })
-            add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy) {
+            add(ChromeMenuItemSpec("링크 복사", Icons.Default.ContentCopy, key = "copy_link") {
                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("URL", activeTab.url))
                 Toast.makeText(context, "링크 복사됨", Toast.LENGTH_SHORT).show()
             })
-            add(ChromeMenuItemSpec("다운로드 페이지 (PDF)", Icons.Default.Download) {
+            add(ChromeMenuItemSpec("PDF 저장", Icons.Default.Download, key = "pdf") {
                 SpaceManager.printActiveTab(context, activeSpace.id)
             })
-            add(ChromeMenuItemSpec("페이지에서 찾기", Icons.Default.FindInPage) { showFindBar = true })
-            add(ChromeMenuItemSpec("번역...", Icons.Default.Translate) {
+            add(ChromeMenuItemSpec("페이지 찾기", Icons.Default.FindInPage, key = "find") { showFindBar = true })
+            add(ChromeMenuItemSpec("번역", Icons.Default.Translate, key = "translate") {
                 triggerTranslation("auto", prefs.defaultTranslateTarget)
             })
-            add(ChromeMenuItemSpec("읽기 모드 표시", Icons.Default.MenuBook) {
+            add(ChromeMenuItemSpec("읽기 모드", Icons.Default.MenuBook, key = "reader") {
                 scope.launch {
                     runCatching {
                         val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
@@ -543,7 +547,7 @@ fun BrowserScreen() {
                     }
                 }
             })
-            add(ChromeMenuItemSpec("홈 화면에 바로가기 추가", Icons.Default.AddToHomeScreen, dividerAfter = true) {
+            add(ChromeMenuItemSpec("홈 바로가기", Icons.Default.AddToHomeScreen, key = "shortcut", dividerAfter = true) {
                 runCatching {
                     val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(activeTab.url)).apply {
                         setPackage(context.packageName)
@@ -561,19 +565,19 @@ fun BrowserScreen() {
                     }
                 }
             })
-            add(ChromeMenuItemSpec("데스크톱 사이트", Icons.Default.DesktopWindows, checked = prefs.desktopModeEnabled, isToggleCheckbox = true) {
+            add(ChromeMenuItemSpec("데스크톱", Icons.Default.DesktopWindows, key = "desktop", checked = prefs.desktopModeEnabled, isToggleCheckbox = true) {
                 SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
                 SpaceManager.reload(activeSpace.id)
             })
         }
-        add(ChromeMenuItemSpec("어두운 테마", Icons.Default.Contrast, checked = isEffectiveDark, isToggleCheckbox = true, dividerAfter = true) {
+        add(ChromeMenuItemSpec("어두운 테마", Icons.Default.Contrast, key = "dark", checked = isEffectiveDark, isToggleCheckbox = true, dividerAfter = true) {
             val nextDark = !isEffectiveDark
             SpaceManager.updatePreferences {
                 it.copy(darkModeEnabled = nextDark, themeMode = if (nextDark) ThemeMode.DARK else ThemeMode.LIGHT)
             }
         })
-        add(ChromeMenuItemSpec("설정", Icons.Default.Settings) { showChromeSettings = true })
-        add(ChromeMenuItemSpec("ego(lite)를 기본값으로 설정", Icons.Default.Language) {
+        add(ChromeMenuItemSpec("설정", Icons.Default.Settings, key = "settings") { showChromeSettings = true })
+        add(ChromeMenuItemSpec("기본 브라우저", Icons.Default.Language, key = "default_app") {
             runCatching {
                 context.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
             }.onFailure {
@@ -937,12 +941,30 @@ fun BrowserScreen() {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         var pressedTabIndex by remember(activeSpace.id) { mutableIntStateOf(-1) }
+                        val tabStripScrollState = rememberScrollState()
+                        var tabStripViewportWidthPx by remember { mutableFloatStateOf(0f) }
+                        val tabLocalXMap = remember(activeSpace.id) { mutableStateMapOf<String, Pair<Float, Float>>() }
+                        val omniTargetTabIdx = omniTabDragStep?.let { step ->
+                            (activeTabIdxNow + step).coerceIn(0, (activeSpace.tabs.size - 1).coerceAtLeast(0))
+                        }
+                        LaunchedEffect(omniTargetTabIdx, activeSpace.id) {
+                            val tIdx = omniTargetTabIdx ?: return@LaunchedEffect
+                            val tTab = activeSpace.tabs.getOrNull(tIdx) ?: return@LaunchedEffect
+                            val pair = tabLocalXMap[tTab.id]
+                            if (pair != null && tabStripViewportWidthPx > 40f) {
+                                val desired = (pair.first + pair.second * 0.5f - tabStripViewportWidthPx * 0.5f)
+                                    .roundToInt()
+                                    .coerceIn(0, tabStripScrollState.maxValue)
+                                tabStripScrollState.animateScrollTo(desired)
+                            }
+                        }
                         val tabElastic = rememberElasticOverscroll(isVertical = false, maxPullPx = 76f)
                         Row(
                             modifier = Modifier
                                 .weight(1f)
+                                .onGloballyPositioned { coords -> tabStripViewportWidthPx = coords.size.width.toFloat() }
                                 .then(tabElastic.containerModifier)
-                                .horizontalScroll(rememberScrollState())
+                                .horizontalScroll(tabStripScrollState)
                                 .animateContentSize(animationSpec = EgoMotion.intSizeSpring),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(3.dp + tabElastic.extraSpacingDp)
@@ -977,10 +999,22 @@ fun BrowserScreen() {
                                     animationSpec = EgoMotion.bouncySpring(),
                                     label = "tabEndRadius"
                                 )
+                                val isOmniDragActive = omniTargetTabIdx != null
+                                val isOmniOpticalTarget = omniTargetTabIdx == idx
                                 val tabScale by animateFloatAsState(
-                                    targetValue = if (isPressed) 0.95f else 1f,
+                                    targetValue = when {
+                                        isPressed -> 0.95f
+                                        isOmniOpticalTarget -> 1.02f
+                                        isOmniDragActive -> 0.99f
+                                        else -> 1f
+                                    },
                                     animationSpec = EgoMotion.bouncySpring(),
                                     label = "tabPressScale"
+                                )
+                                val tabOpticalAlpha by animateFloatAsState(
+                                    targetValue = if (isOmniDragActive && !isOmniOpticalTarget) 0.66f else 1f,
+                                    animationSpec = tween(150),
+                                    label = "tabOpticalAlpha"
                                 )
                                 val neighborNudge by animateDpAsState(
                                     targetValue = when {
@@ -1144,7 +1178,30 @@ fun BrowserScreen() {
                                                 }
                                             }
                                         }
-                                        .then(slotBorderMod)
+                                        .onGloballyPositioned { coords ->
+                                            val pos = coords.positionInParent()
+                                            tabLocalXMap[tab.id] = pos.x to coords.size.width.toFloat()
+                                        }
+                                        .graphicsLayer { alpha = tabOpticalAlpha }
+                                        .then(
+                                            if (isOmniOpticalTarget) {
+                                                Modifier
+                                                    .background(
+                                                        Brush.verticalGradient(
+                                                            listOf(
+                                                                Color.White.copy(alpha = 0.11f),
+                                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                                            )
+                                                        ),
+                                                        tabShape
+                                                    )
+                                                    .border(
+                                                        1.dp,
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.52f),
+                                                        tabShape
+                                                    )
+                                            } else slotBorderMod
+                                        )
                                         .pointerInput(tab.id) {
                                             awaitPointerEventScope {
                                                 while (true) {
@@ -1477,11 +1534,19 @@ fun BrowserScreen() {
                 }
             }
 
-            var omniToolbarPullTarget by remember { mutableFloatStateOf(0f) }
-            val omniToolbarPull by animateFloatAsState(
-                targetValue = omniToolbarPullTarget,
-                animationSpec = EgoMotion.responsiveSpring(),
-                label = "omniToolbarElastic"
+            var tbB12TargetPx by remember { mutableFloatStateOf(0f) }
+            var tbB23TargetPx by remember { mutableFloatStateOf(0f) }
+            var g1NaturalWidthPx by remember { mutableFloatStateOf(0f) }
+            var g3NaturalWidthPx by remember { mutableFloatStateOf(0f) }
+            val tbB12Px by animateFloatAsState(
+                targetValue = tbB12TargetPx,
+                animationSpec = spring(dampingRatio = 0.68f, stiffness = 440f),
+                label = "toolbarB12"
+            )
+            val tbB23Px by animateFloatAsState(
+                targetValue = tbB23TargetPx,
+                animationSpec = spring(dampingRatio = 0.68f, stiffness = 440f),
+                label = "toolbarB23"
             )
 
             // 2행: Material 3 Expressive Connected 3-그룹 툴바 (바깥 22dp · 인접 6dp, 3dp 간격, 선택 탭과 동일 색상)
@@ -1500,25 +1565,43 @@ fun BrowserScreen() {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                // 그룹 1: (홈 · 뒤로 · 앞으로 · 새로고침) — 주소창 드래그에 맞춰 인접 탄성 압축 (#6)
+                // 그룹 1: (홈 · 뒤로 · 앞으로 · 새로고침) — 좌측 끝 고정, 우측 경계만 고무줄 연동 (0-갭)
+                val g1WidthMod = if (prefs.toolbarElasticityEnabled && g1NaturalWidthPx > 20f && kotlin.math.abs(tbB12Px) > 0.4f) {
+                    val wPx = (g1NaturalWidthPx + tbB12Px).coerceIn(g1NaturalWidthPx * 0.66f, g1NaturalWidthPx + with(density) { 46.dp.toPx() })
+                    Modifier.width(with(density) { wPx.toDp() })
+                } else Modifier
                 Row(
                     modifier = Modifier
                         .height(40.dp)
-                        .graphicsLayer {
-                            if (prefs.toolbarElasticityEnabled && kotlin.math.abs(omniToolbarPull) > 0.2f) {
-                                // 왼쪽으로 당기면 G1 압축, 오른쪽으로 당기면 살짝 압축 후 탄성 복귀
-                                val comp = (1f - kotlin.math.abs(omniToolbarPull) * 0.0042f).coerceIn(0.84f, 1f)
-                                scaleX = comp
-                                translationX = omniToolbarPull * 0.14f
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                        .then(g1WidthMod)
+                        .onGloballyPositioned { coords ->
+                            if (kotlin.math.abs(tbB12Px) < 0.4f && coords.size.width > 0) {
+                                g1NaturalWidthPx = coords.size.width.toFloat()
                             }
                         }
                         .clip(m3LeftGroupShape)
                         .background(toolbarChrome.groupSurface)
                         .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3LeftGroupShape, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3LeftGroupShape)
+                        .pointerInput(prefs.toolbarElasticityEnabled) {
+                            if (!prefs.toolbarElasticityEnabled) return@pointerInput
+                            var dragSum = 0f
+                            val maxPullPx = 42f * density
+                            detectHorizontalDragGestures(
+                                onDragEnd = { dragSum = 0f; tbB12TargetPx = 0f },
+                                onDragCancel = { dragSum = 0f; tbB12TargetPx = 0f },
+                                onHorizontalDrag = { _, amount ->
+                                    dragSum += amount
+                                    tbB12TargetPx = if (dragSum > 0f) {
+                                        maxPullPx * (1f - kotlin.math.exp(-dragSum / (maxPullPx * 2.1f)))
+                                    } else 0f
+                                    tbB23TargetPx = 0f
+                                }
+                            )
+                        }
                         .padding(horizontal = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                     LeftNavToolbarButtons(
                         showHomeButton = prefs.showHomeButton,
@@ -1540,7 +1623,7 @@ fun BrowserScreen() {
                     activeSpaceId = activeSpace.id,
                     isAiSpace = activeSpace.type == SpaceType.AI,
                     isEffectiveDark = isEffectiveDark,
-                    showOmniboxOverlay = showOmniboxOverlay,
+                    showOmniboxOverlay = showOmniboxOverlay || showAiCommandPopup,
                     prefs = prefs,
                     existingBookmark = existingBookmark,
                     groupSurface = toolbarChrome.groupSurface,
@@ -1551,7 +1634,13 @@ fun BrowserScreen() {
                     rootBoxTopPx = rootBoxTopPx,
                     tabCount = activeSpace.tabs.size,
                     activeTabIndex = activeTabIdxNow,
-                    onElasticPullChanged = { omniToolbarPullTarget = it },
+                    onElasticPullChanged = { pullPx ->
+                        when {
+                            pullPx < -0.2f -> { tbB12TargetPx = pullPx; tbB23TargetPx = 0f }
+                            pullPx > 0.2f -> { tbB12TargetPx = 0f; tbB23TargetPx = pullPx }
+                            else -> { tbB12TargetPx = 0f; tbB23TargetPx = 0f }
+                        }
+                    },
                     onTabDragOffsetChanged = { omniTabDragStep = it },
                     onBoundsMeasured = { l, t, w ->
                         addressBarLeftPx = l
@@ -1566,24 +1655,43 @@ fun BrowserScreen() {
                     }
                 )
 
-                // 그룹 3: (MCP · AI · 광고차단 · 번역 · 다크모드 · 프로필 · 전체탭 · 메뉴) — 주소창 드래그에 맞춰 인접 탄성 압축 (#6)
+                // 그룹 3: (MCP · AI · 광고차단 · 번역 · 다크모드 · 프로필 · 전체탭 · 메뉴) — 우측 끝 고정, 좌측 경계만 고무줄 연동 (0-갭)
+                val g3WidthMod = if (prefs.toolbarElasticityEnabled && g3NaturalWidthPx > 20f && kotlin.math.abs(tbB23Px) > 0.4f) {
+                    val wPx = (g3NaturalWidthPx - tbB23Px).coerceIn(g3NaturalWidthPx * 0.72f, g3NaturalWidthPx + with(density) { 46.dp.toPx() })
+                    Modifier.width(with(density) { wPx.toDp() })
+                } else Modifier
                 Row(
                     modifier = Modifier
                         .height(40.dp)
-                        .graphicsLayer {
-                            if (prefs.toolbarElasticityEnabled && kotlin.math.abs(omniToolbarPull) > 0.2f) {
-                                val comp = (1f - kotlin.math.abs(omniToolbarPull) * 0.0042f).coerceIn(0.84f, 1f)
-                                scaleX = comp
-                                translationX = omniToolbarPull * 0.14f
-                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0.5f)
+                        .then(g3WidthMod)
+                        .onGloballyPositioned { coords ->
+                            if (kotlin.math.abs(tbB23Px) < 0.4f && coords.size.width > 0) {
+                                g3NaturalWidthPx = coords.size.width.toFloat()
                             }
                         }
                         .clip(m3RightGroupShape)
                         .background(toolbarChrome.groupSurface)
                         .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3RightGroupShape, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3RightGroupShape)
+                        .pointerInput(prefs.toolbarElasticityEnabled) {
+                            if (!prefs.toolbarElasticityEnabled) return@pointerInput
+                            var dragSum = 0f
+                            val maxPullPx = 42f * density
+                            detectHorizontalDragGestures(
+                                onDragEnd = { dragSum = 0f; tbB23TargetPx = 0f },
+                                onDragCancel = { dragSum = 0f; tbB23TargetPx = 0f },
+                                onHorizontalDrag = { _, amount ->
+                                    dragSum += amount
+                                    tbB23TargetPx = if (dragSum < 0f) {
+                                        -maxPullPx * (1f - kotlin.math.exp(-kotlin.math.abs(dragSum) / (maxPullPx * 2.1f)))
+                                    } else 0f
+                                    tbB12TargetPx = 0f
+                                }
+                            )
+                        }
                         .padding(horizontal = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
                 // 사용자 커스텀 순서(prefs.toolbarButtonOrder)에 따라 주소창 우측 버튼 동적 배치
                 val defaultTbOrder = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
@@ -1620,45 +1728,16 @@ fun BrowserScreen() {
                                 enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.78f, animationSpec = EgoMotion.bouncySpring()),
                                 exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.78f, animationSpec = tween(140))
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .size(38.dp)
-                                            .pressBounceScale(0.88f)
-                                            .clip(CircleShape)
-                                            .background(
-                                                if (showAiCommandPopup) MaterialTheme.colorScheme.primary
-                                                else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
-                                            )
-                                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), CircleShape)
-                                            .clickable {
-                                                aiPopupSpaceId = null
-                                                aiPopupTabId = null
-                                                showAiCommandPopup = !showAiCommandPopup
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        EgoIcon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = "AI 명령 팝업 열기",
-                                            tint = if (showAiCommandPopup) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                                            filled = showAiCommandPopup,
-                                            modifier = Modifier.size(19.dp),
-                                            symbolSize = 20.dp
-                                        )
-                                        if (mcpPendingCount > 0) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .align(Alignment.TopEnd)
-                                                    .padding(top = 5.dp, end = 5.dp)
-                                                    .size(7.dp)
-                                                    .clip(CircleShape)
-                                                    .background(EgoEmerald)
-                                            )
-                                        }
+                                AiCommandToolbarButton(
+                                    expanded = showAiCommandPopup,
+                                    pendingCount = mcpPendingCount,
+                                    onClick = {
+                                        aiPopupSpaceId = null
+                                        aiPopupTabId = null
+                                        if (!showAiCommandPopup) showOmniboxOverlay = false
+                                        showAiCommandPopup = !showAiCommandPopup
                                     }
-                                }
+                                )
                             }
                         }
                         "ADBLOCK" -> {
@@ -1969,9 +2048,10 @@ fun BrowserScreen() {
                 BrowserMenuDragButton(
                     showChromeMenu = showChromeMenu,
                     chromeMenuItems = chromeMenuItems,
+                    tileBounds = quickMenuTileBounds,
                     activeIconColor = activeIconColor,
                     onSetShowMenu = { showChromeMenu = it },
-                    onSetHoveredIndex = { hoveredMenuIndex = it }
+                    onSetHoveredKey = { hoveredQuickMenuKey = it }
                 )
                 }
             }
@@ -2184,7 +2264,7 @@ fun BrowserScreen() {
         }
 
         // 최상단 좌측 고정 알약 캡슐 (설정·전체 탭·리더 전체화면에서는 숨김)
-        if (!showChromeSettings && !showDownloadsScreen && !showAllTabsDialog && readerMarkdown == null) {
+        if (!showChromeSettings && !showDownloadsScreen && !showAllTabsDialog && readerMarkdown == null && fullscreenVideo.view == null) {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -2254,10 +2334,14 @@ fun BrowserScreen() {
             }
         )
 
-        // 주소창 팝업 형식의 전용 AI 명령 입력 팝업
-        Box(modifier = Modifier.fillMaxSize().zIndex(48f)) {
+        // 주소창(ChromeOmniboxOverlay)과 1:1 위치·모핑이 일치하는 전용 AI 명령 입력 팝업
+        AnimatedVisibility(
+            visible = showAiCommandPopup,
+            enter = fadeIn(tween(70)),
+            exit = fadeOut(tween(130)),
+            modifier = Modifier.zIndex(48f)
+        ) {
             AiCommandOverlay(
-                visible = showAiCommandPopup,
                 spaces = spaces,
                 activeSpaceId = activeSpaceId,
                 preselectedSpaceId = aiPopupSpaceId,
@@ -2265,6 +2349,9 @@ fun BrowserScreen() {
                 connectedClients = mcpConnectedClients,
                 defaultAiName = connectedAiName,
                 recentCommands = mcpRecentCommands,
+                anchorLeftPx = addressBarLeftPx,
+                anchorTopPx = addressBarTopPx,
+                anchorWidthPx = addressBarWidthPx,
                 onDismiss = { showAiCommandPopup = false },
                 onSubmitCommand = { cmd ->
                     val feedback = McpCommandBridge.enqueueCommand(cmd)
@@ -2300,16 +2387,7 @@ fun BrowserScreen() {
 
         val popupDustColor = MaterialTheme.colorScheme.surfaceContainerHigh
 
-        // 주소창 좌우 드래그 시 멀티 탭 이동 시각적 힌트 캡슐 (#7)
-        OmniboxTabSwipeHintPill(
-            tabs = activeSpace.tabs,
-            activeTabIndex = activeTabIdxNow,
-            dragStepOffset = omniTabDragStep,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 98.dp + monitorTopOffset)
-                .zIndex(47f)
-        )
+        // 상단 탭 바 직접 은은한 광감 하이라이트 및 자동 스크롤로 대체 완료
 
         // 주소창 아래 크롬 스타일 슬림 알약 번역 팝업
         Box(
@@ -2480,15 +2558,21 @@ fun BrowserScreen() {
             prefs = prefs
         )
 
-        // 우상단 크롬형 Drag-to-Open / Drag-to-Select 브라우저 메뉴 오버레이
-        DragToSelectChromeMenuOverlay(
+        // 우상단 3열 퀵세팅 커스텀 브라우저 메뉴 (Drag-to-Open / Drag-to-Select 완전 지원)
+        QuickSettingsBrowserMenuOverlay(
             visible = showChromeMenu,
             items = chromeMenuItems,
-            hoveredIndex = hoveredMenuIndex,
+            savedLayout = prefs.quickMenuLayout,
+            hoveredKey = hoveredQuickMenuKey,
             topPadding = 98.dp + monitorTopOffset,
+            onTileBoundsUpdated = { k, r -> quickMenuTileBounds[k] = r },
+            onClearTileBounds = { quickMenuTileBounds.clear() },
+            onSaveLayout = { newLayout ->
+                SpaceManager.updatePreferences { it.copy(quickMenuLayout = newLayout) }
+            },
             onDismiss = {
                 showChromeMenu = false
-                hoveredMenuIndex = -1
+                hoveredQuickMenuKey = null
             }
         )
 
@@ -2508,9 +2592,10 @@ fun BrowserScreen() {
         }
 
         // 크롬 태블릿 1:1 2-패널 전체 화면 설정 페이지
-        BackHandler(enabled = showMcpDrawer || showOmniboxOverlay || showAllTabsDialog || readerMarkdown != null) {
+        BackHandler(enabled = showMcpDrawer || showOmniboxOverlay || showAiCommandPopup || showAllTabsDialog || readerMarkdown != null) {
             when {
                 showMcpDrawer -> showMcpDrawer = false
+                showAiCommandPopup -> showAiCommandPopup = false
                 showOmniboxOverlay -> showOmniboxOverlay = false
                 showAllTabsDialog -> showAllTabsDialog = false
                 readerMarkdown != null -> readerMarkdown = null
