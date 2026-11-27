@@ -232,6 +232,7 @@ fun ProgressEffectSettingsSection(
                                 lightIntensity = prefs.progressLightIntensity,
                                 particleDensity = prefs.progressParticleDensity,
                                 cornerRadiusDp = 10.dp,
+                                darkUseThemeColor = prefs.progressDarkUseThemeColor,
                                 modifier = Modifier.fillMaxSize()
                             )
                             Row(
@@ -313,6 +314,7 @@ fun ProgressEffectSettingsSection(
                             lightIntensity = prefs.progressLightIntensity,
                             particleDensity = prefs.progressParticleDensity,
                             cornerRadiusDp = 22.dp,
+                            darkUseThemeColor = prefs.progressDarkUseThemeColor,
                             modifier = Modifier.fillMaxSize()
                         )
                         Row(
@@ -416,6 +418,12 @@ fun ProgressEffectSettingsSection(
             }
 
             ProgressSwitchRow(
+                title = "야간 모드 광감에 브라우저 테마색 사용",
+                subtitle = if (prefs.progressDarkUseThemeColor) "야간에도 선택한 브라우저 테마 색상으로 광감 표시" else "야간에는 순백(실버·화이트) 기반 광감 표시",
+                checked = prefs.progressDarkUseThemeColor,
+                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(progressDarkUseThemeColor = c) } }
+            )
+            ProgressSwitchRow(
                 title = "주소창 로딩에 적용",
                 subtitle = "페이지 로딩 시 주소창에 선택한 프로그래스바 효과 표시",
                 checked = prefs.progressShowInOmnibox,
@@ -468,8 +476,8 @@ fun ProgressEffectSettingsSection(
                 var vSpd by remember { mutableFloatStateOf(0f) }
                 val bOver = remember { Animatable(0f) }
                 val vOver = remember { Animatable(0f) }
-                val bEnergy by animateFloatAsState(if (bDrag) 1f else 0.85f, tween(240), label = "demoBE")
-                val vEnergy by animateFloatAsState(if (vDrag) 1f else 0.85f, tween(240), label = "demoVE")
+                val bEnergy by animateFloatAsState(if (bDrag) 1f else 0f, tween(if (bDrag) 110 else 360), label = "demoBE")
+                val vEnergy by animateFloatAsState(if (vDrag) 1f else 0f, tween(if (vDrag) 110 else 360), label = "demoVE")
 
                 Box(
                     modifier = Modifier
