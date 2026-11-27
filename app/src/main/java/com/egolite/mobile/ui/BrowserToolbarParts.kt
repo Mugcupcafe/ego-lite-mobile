@@ -24,6 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.Home
@@ -290,12 +294,6 @@ fun RowScope.OmniboxCenterCapsule(
             .height(40.dp)
             .graphicsLayer {
                 alpha = if (showOmniboxOverlay) 0f else 1f
-                if (prefs.toolbarElasticityEnabled) {
-                    val pull = omniElasticPull.value
-                    translationX = pull * 0.22f
-                    scaleX = (1f + abs(pull) * 0.0008f).coerceAtMost(1.03f)
-                    scaleY = (1f - abs(pull) * 0.0005f).coerceAtLeast(0.97f)
-                }
             }
             .onGloballyPositioned { coords ->
                 val pos = coords.positionInRoot()
@@ -331,17 +329,17 @@ fun RowScope.OmniboxCenterCapsule(
                     },
                     onHorizontalDrag = { _, amount ->
                         dragSum += amount
-                        // 드래그 거리 비례 멀티 탭 탐색 (오른쪽 드래그 -> 이전 탭(-), 왼쪽 드래그 -> 다음 탭(+))
-                        val rawStep = (-dragSum / stepPx).toInt()
+                        // 드래그 거리 비례 멀티 탭 탐색 (왼쪽 드래그 -> 이전 탭(-), 오른쪽 드래그 -> 다음 탭(+))
+                        val rawStep = (dragSum / stepPx).toInt()
                         val minStep = -activeTabIndex
                         val maxStep = (tabCount - 1 - activeTabIndex).coerceAtLeast(0)
                         val clampedStep = rawStep.coerceIn(minStep, maxStep)
                         lastStep = clampedStep
                         onTabDragOffsetChanged(if (abs(dragSum) > 22f && tabCount > 1) clampedStep else null)
                         if (prefs.toolbarElasticityEnabled) {
-                            val rubber = sign(dragSum) * 32f * (1f - exp(-abs(dragSum) / 95f))
+                            val maxPullPx = 38f * density
+                            val rubber = sign(dragSum) * maxPullPx * (1f - exp(-abs(dragSum) / (maxPullPx * 2.1f)))
                             onElasticPullChanged(rubber)
-                            scope.launch { omniElasticPull.snapTo(rubber) }
                         }
                     }
                 )
@@ -356,6 +354,7 @@ fun RowScope.OmniboxCenterCapsule(
                 accentColor = omniAccent,
                 lightIntensity = prefs.progressLightIntensity,
                 particleDensity = prefs.progressParticleDensity,
+                darkUseThemeColor = prefs.progressDarkUseThemeColor,
                 cornerRadiusDp = 6.dp,
                 modifier = Modifier.fillMaxSize()
             )
@@ -768,6 +767,131 @@ fun OmniboxTabSwipeHintPill(
                 text = "${targetIdx + 1}/${tabs.size}",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+
+/**
+ * 상단 툴바 AI 명령 버튼 — 원링 제거, 실시간 눌림(Press-down) 탄성 애니메이션 + 클릭 리플 +
+ * 확장 시 AutoAwesome -> Close 회전 크로스 모핑 동적 전환.
+ */
+@Composable
+fun AiCommandToolbarButton(
+    expanded: Boolean,
+    pendingCount: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
+    val pressScale by animateFloatAsState(
+        targetValue = if (isPressed) 0.78f else 1f,
+        animationSpec = spring(dampingRatio = 0.48f, stiffness = 680f),
+        label = "aiBtnPressScale"
+    )
+    val pressDropPx by animateFloatAsState(
+        targetValue = if (isPressed) with(density) { 1.6.dp.toPx() } else 0f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 700f),
+        label = "aiBtnPressDrop"
+    )
+    val expandProgress by animateFloatAsState(
+        targetValue = if (expanded) 1f else 0f,
+        animationSpec = EgoMotion.morphSpring(),
+        label = "aiBtnExpandMorph"
+    )
+    val tapPop = remember { Animatable(1f) }
+    val tapHalo = remember { Animatable(0f) }
+    val accentColor = MaterialTheme.colorScheme.primary
+
+    Box(
+        modifier = modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .drawBehind {
+                val h = tapHalo.value
+                if (h in 0.01f..0.99f) {
+                    val radius = size.minDimension * (0.20f + 0.34f * h)
+                    drawCircle(
+                        color = accentColor.copy(alpha = (1f - h) * 0.42f),
+                        radius = radius,
+                        style = Stroke(width = (2.0f * (1f - h * 0.6f)).dp.toPx())
+                    )
+                }
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null
+            ) {
+                scope.launch {
+                    tapPop.snapTo(0.84f)
+                    tapPop.animateTo(1.16f, animationSpec = spring(dampingRatio = 0.42f, stiffness = 620f))
+                    tapPop.animateTo(1f, animationSpec = spring(dampingRatio = 0.60f, stiffness = 520f))
+                }
+                scope.launch {
+                    tapHalo.snapTo(0f)
+                    tapHalo.animateTo(1f, animationSpec = tween(320))
+                }
+                onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        val combinedScale = pressScale * tapPop.value
+
+        // 기본 아이콘: AutoAwesome (확장 시 90도 회전하며 축소 페이드아웃)
+        val idleAlpha = (1f - expandProgress * 1.45f).coerceIn(0f, 1f)
+        if (idleAlpha > 0.01f) {
+            EgoIcon(
+                imageVector = Icons.Default.AutoAwesome,
+                contentDescription = "AI 명령창 열기",
+                tint = accentColor,
+                modifier = Modifier
+                    .size(20.dp)
+                    .graphicsLayer {
+                        val s = combinedScale * (1f - 0.32f * expandProgress)
+                        scaleX = s
+                        scaleY = s
+                        translationY = pressDropPx
+                        rotationZ = expandProgress * 95f
+                        alpha = idleAlpha
+                    },
+                symbolSize = 20.dp
+            )
+        }
+
+        // 확장 아이콘: Close (확장 시 -90도 -> 0도 회전하며 탄성 등장)
+        val openAlpha = ((expandProgress - 0.28f) / 0.72f).coerceIn(0f, 1f)
+        if (openAlpha > 0.01f) {
+            EgoIcon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "AI 명령창 닫기",
+                tint = accentColor,
+                modifier = Modifier
+                    .size(20.dp)
+                    .graphicsLayer {
+                        val s = combinedScale * (0.68f + 0.32f * expandProgress)
+                        scaleX = s
+                        scaleY = s
+                        translationY = pressDropPx
+                        rotationZ = -90f * (1f - expandProgress)
+                        alpha = openAlpha
+                    },
+                symbolSize = 20.dp
+            )
+        }
+
+        if (pendingCount > 0 && !expanded) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 6.dp)
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(EgoEmerald)
             )
         }
     }
