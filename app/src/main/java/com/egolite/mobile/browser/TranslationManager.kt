@@ -117,7 +117,8 @@ object TranslationManager {
         sourceLang: String,
         targetLang: String,
         engine: TranslationEngine,
-        onProgress: (String) -> Unit = {}
+        onProgress: (String) -> Unit = {},
+        onProgressFraction: (Float) -> Unit = {}
     ): Pair<Boolean, String> {
         val rawNodes = SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.COLLECT_TRANSLATABLE_NODES_JS)
         val arr = runCatching { JSONArray(rawNodes) }.getOrNull() ?: return false to "번역할 텍스트 없음"
@@ -129,14 +130,18 @@ object TranslationManager {
         }
         val originals = items.map { it.second }
 
+        onProgressFraction(0.08f)
         var result = when (engine) {
             TranslationEngine.ONLINE_GOOGLE -> {
                 onProgress("번역 중...")
-                translateOnlineChunked(originals, sourceLang, targetLang)
+                translateOnlineChunked(originals, sourceLang, targetLang, onProgressFraction)
             }
             TranslationEngine.OFFLINE_MLKIT -> {
                 onProgress("오프라인 번역 중...")
-                translateOfflineMlKit(originals, sourceLang, targetLang)
+                onProgressFraction(0.35f)
+                val r = translateOfflineMlKit(originals, sourceLang, targetLang)
+                onProgressFraction(0.92f)
+                r
             }
         }
 
@@ -158,7 +163,9 @@ object TranslationManager {
             val newText = result.texts.getOrNull(idx) ?: originals[idx]
             outArr.put(JSONObject().put("i", items[idx].first).put("t", newText))
         }
+        onProgressFraction(0.96f)
         SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.applyTranslationsJs(outArr.toString()))
+        onProgressFraction(1.0f)
         return true to result.detected
     }
 
@@ -177,7 +184,8 @@ object TranslationManager {
     private suspend fun translateOnlineChunked(
         texts: List<String>,
         sourceLang: String,
-        targetLang: String
+        targetLang: String,
+        onProgressFraction: (Float) -> Unit = {}
     ): ChunkResult = coroutineScope {
         // GET URL 길이 및 레이트 리밋을 고려한 안전한 소청크 분할 (최대 6문장, 480자 이하)
         val chunks = mutableListOf<List<String>>()
@@ -200,7 +208,9 @@ object TranslationManager {
 
         // 동시 2개씩 병렬 처리 + 짧은 간격으로 429 레이트 리밋 방지
         val allTranslated = mutableListOf<String>()
-        for ((batchIdx, batch) in chunks.chunked(2).withIndex()) {
+        val batches = chunks.chunked(2)
+        val totalBatches = batches.size.coerceAtLeast(1)
+        for ((batchIdx, batch) in batches.withIndex()) {
             if (batchIdx > 0) delay(45L)
             val batchResults = batch.map { chunk ->
                 async(Dispatchers.IO) { translateOnlineBatchWithFallback(chunk, sourceLang, targetLang) }
@@ -212,6 +222,8 @@ object TranslationManager {
                 totalOk += res.okCount
                 allTranslated.addAll(res.texts)
             }
+            val frac = 0.12f + 0.80f * ((batchIdx + 1).toFloat() / totalBatches.toFloat())
+            onProgressFraction(frac.coerceIn(0.12f, 0.94f))
         }
         ChunkResult(allTranslated, detected, totalOk)
     }
