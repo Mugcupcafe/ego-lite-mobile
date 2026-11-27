@@ -114,6 +114,7 @@ fun ChromeStyleTranslatePopup(
 ) {
     var pickingForSource by remember { mutableStateOf<Boolean?>(null) }
     var capsuleRect by remember { mutableStateOf<Rect?>(null) }
+    var capsuleCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
     val capsuleCaptureLayer = rememberGraphicsLayer()
     val capsuleCaptureScope = rememberCoroutineScope()
     val prefs by SpaceManager.preferences.collectAsState()
@@ -125,7 +126,8 @@ fun ChromeStyleTranslatePopup(
         capsuleCaptureScope.launch {
             val bmp = runCatching { capsuleCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
             val origin = capsuleRect?.let { Offset(it.right - 22f, it.center.y) }
-            onDismiss(VanishSnapshot(rect = capsuleRect, touchRoot = origin, bitmap = bmp))
+            val liveCapRect = capsuleCoords?.takeIf { it.isAttached }?.boundsInRoot() ?: capsuleRect
+            onDismiss(VanishSnapshot(rect = liveCapRect, touchRoot = origin, bitmap = bmp))
         }
     }
 
@@ -148,7 +150,7 @@ fun ChromeStyleTranslatePopup(
             modifier = Modifier
                 .widthIn(min = 320.dp, max = 460.dp)
                 .padding(horizontal = 12.dp, vertical = 4.dp)
-                .onGloballyPositioned { coords -> capsuleRect = coords.boundsInRoot() }
+                .onGloballyPositioned { coords -> capsuleCoords = coords; capsuleRect = coords.boundsInRoot() }
                 .drawWithContent {
                     capsuleCaptureLayer.record { this@drawWithContent.drawContent() }
                     drawLayer(capsuleCaptureLayer)
@@ -198,6 +200,7 @@ fun ChromeStyleTranslatePopup(
                     accentColor = MaterialTheme.colorScheme.primary,
                     lightIntensity = prefs.progressLightIntensity,
                     particleDensity = prefs.progressParticleDensity,
+                darkUseThemeColor = prefs.progressDarkUseThemeColor,
                     cornerRadiusDp = 22.dp,
                     modifier = Modifier.matchParentSize()
                 )
@@ -563,12 +566,14 @@ fun TranslateSettingsPopupDialog(
     )
     var cardVisible by remember { mutableStateOf(false) }
     var cardRect by remember { mutableStateOf<Rect?>(null) }
+    var cardCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
     val captureLayer = rememberGraphicsLayer()
     val captureScope = rememberCoroutineScope()
     fun dismissWithCapture(touchRoot: Offset?) {
         captureScope.launch {
             val bmp = runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
-            onDismiss(VanishSnapshot(rect = cardRect, touchRoot = touchRoot, bitmap = bmp))
+            val liveRect = cardCoords?.takeIf { it.isAttached }?.boundsInRoot() ?: cardRect
+            onDismiss(VanishSnapshot(rect = liveRect, touchRoot = touchRoot, bitmap = bmp))
         }
     }
     LaunchedEffect(Unit) { cardVisible = true }
@@ -594,7 +599,7 @@ fun TranslateSettingsPopupDialog(
                 shadowElevation = 14.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                    .onGloballyPositioned { coords -> cardCoords = coords; cardRect = coords.boundsInRoot() }
                     .drawWithContent {
                         captureLayer.record { this@drawWithContent.drawContent() }
                         drawLayer(captureLayer)
