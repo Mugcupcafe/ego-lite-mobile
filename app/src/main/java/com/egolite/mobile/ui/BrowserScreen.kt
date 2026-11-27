@@ -66,8 +66,11 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
@@ -606,9 +609,10 @@ fun BrowserScreen() {
             it.type == SpaceType.AI && (it.aiStatus == AiSpaceStatus.WORKING || it.aiStatus == AiSpaceStatus.THINKING)
         }
         val workingAccent = parseSpaceColor(workingSpace?.accentColorHex ?: activeSpace.accentColorHex)
+        val buddySlotWidth = buddySlotWidthDp(spaces)
         val tabStartPadding by animateDpAsState(
-            targetValue = if (showAiMonitorTray) 0.dp else 72.dp,
-            animationSpec = EgoMotion.smoothSpring(),
+            targetValue = if (showAiMonitorTray) 0.dp else (buddySlotWidth + 4.dp),
+            animationSpec = spring(dampingRatio = 0.78f, stiffness = 240f),
             label = "tabStripLeftSlide"
         )
 
@@ -681,31 +685,7 @@ fun BrowserScreen() {
             }
         }
 
-        // 좌측 상단 캡슐 중심에서 시야 밖까지 느리게(2.38s) 퍼져 나가는 원형 링 광효과 상태
-        val ringProgress = remember { Animatable(0f) }
-        val ringAlpha = remember { Animatable(0f) }
         val ringColor = MaterialTheme.colorScheme.primary
-        LaunchedEffect(showAiMonitorTray, activeMonitorPos) {
-            if (showAiMonitorTray) {
-                ringProgress.snapTo(0.05f)
-                ringAlpha.snapTo(0.92f)
-                launch {
-                    ringProgress.animateTo(
-                        targetValue = 2.45f,
-                        animationSpec = tween(durationMillis = 2380, easing = CubicBezierEasing(0.18f, 0.65f, 0.35f, 1f))
-                    )
-                }
-                launch {
-                    ringAlpha.animateTo(
-                        targetValue = 0f,
-                        animationSpec = tween(durationMillis = 2380, easing = CubicBezierEasing(0.18f, 0.65f, 0.35f, 1f))
-                    )
-                }
-            } else {
-                ringAlpha.snapTo(0f)
-                ringProgress.snapTo(0f)
-            }
-        }
 
         Row(modifier = Modifier.fillMaxSize()) {
             // LEFT 모드(가로 기본): 좌측 사이드바 AI 라이브 모니터 (상단 페이드 그라데이션 + 링 광효과)
@@ -716,29 +696,6 @@ fun BrowserScreen() {
                         .background(MaterialTheme.colorScheme.background)
                         .clipToBounds()
                 ) {
-                    Canvas(modifier = Modifier.matchParentSize()) {
-                        val a = ringAlpha.value
-                        val p = ringProgress.value
-                        if (a > 0.01f && p > 0f) {
-                            val origin = Offset(44.dp.toPx(), 24.dp.toPx())
-                            val maxR = (size.height * p).coerceAtLeast(1f)
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    0.00f to Color.Transparent,
-                                    0.24f to Color.Transparent,
-                                    0.38f to ringColor.copy(alpha = a * 0.30f),
-                                    0.48f to workingAccent.copy(alpha = a * 0.56f),
-                                    0.58f to ringColor.copy(alpha = a * 0.24f),
-                                    0.72f to Color.Transparent,
-                                    1.00f to Color.Transparent,
-                                    center = origin,
-                                    radius = maxR
-                                ),
-                                radius = maxR,
-                                center = origin
-                            )
-                        }
-                    }
                     AiLiveMonitorTray(
                         visible = showAiMonitorTray,
                         position = MonitorPosition.LEFT,
@@ -771,31 +728,6 @@ fun BrowserScreen() {
                     .background(MaterialTheme.colorScheme.background)
                     .clipToBounds()
             ) {
-                if (activeMonitorPos == MonitorPosition.TOP) {
-                    Canvas(modifier = Modifier.matchParentSize()) {
-                        val a = ringAlpha.value
-                        val p = ringProgress.value
-                        if (a > 0.01f && p > 0f) {
-                            val origin = Offset(44.dp.toPx(), 24.dp.toPx())
-                            val maxR = (size.width * p).coerceAtLeast(1f)
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    0.00f to Color.Transparent,
-                                    0.24f to Color.Transparent,
-                                    0.38f to ringColor.copy(alpha = a * 0.30f),
-                                    0.48f to workingAccent.copy(alpha = a * 0.56f),
-                                    0.58f to ringColor.copy(alpha = a * 0.24f),
-                                    0.72f to Color.Transparent,
-                                    1.00f to Color.Transparent,
-                                    center = origin,
-                                    radius = maxR
-                                ),
-                                radius = maxR,
-                                center = origin
-                            )
-                        }
-                    }
-                }
 
                 Column(modifier = Modifier.fillMaxWidth()) {
                     if (activeMonitorPos == MonitorPosition.TOP) {
@@ -848,11 +780,36 @@ fun BrowserScreen() {
                                 tabStripScrollState.animateScrollTo(desired)
                             }
                         }
+                        var justLaunchedTabId by remember(activeSpace.id) { mutableStateOf<String?>(null) }
+                        var tabImpactSeq by remember(activeSpace.id) { mutableIntStateOf(0) }
+                        var tabImpactOriginIdx by remember(activeSpace.id) { mutableIntStateOf(-1) }
                         val tabElastic = rememberElasticOverscroll(isVertical = false, maxPullPx = 76f)
                         Row(
                             modifier = Modifier
                                 .weight(1f)
                                 .onGloballyPositioned { coords -> tabStripViewportWidthPx = coords.size.width.toFloat() }
+                                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                                .drawWithContent {
+                                    drawContent()
+                                    val scrollVal = tabStripScrollState.value.toFloat()
+                                    if (scrollVal > 1f) {
+                                        val fadeW = 30.dp.toPx().coerceAtMost(size.width * 0.35f)
+                                        val strength = (scrollVal / fadeW).coerceIn(0f, 1f)
+                                        if (fadeW > 1f && strength > 0.01f) {
+                                            drawRect(
+                                                brush = Brush.horizontalGradient(
+                                                    0.0f to Color.Black.copy(alpha = 1f - strength),
+                                                    1.0f to Color.Black,
+                                                    startX = 0f,
+                                                    endX = fadeW
+                                                ),
+                                                topLeft = Offset.Zero,
+                                                size = Size(fadeW, size.height),
+                                                blendMode = BlendMode.DstIn
+                                            )
+                                        }
+                                    }
+                                }
                                 .then(tabElastic.containerModifier)
                                 .horizontalScroll(tabStripScrollState)
                                 .animateContentSize(animationSpec = EgoMotion.intSizeSpring),
@@ -973,6 +930,29 @@ fun BrowserScreen() {
                                     animationSpec = spring(dampingRatio = 0.88f, stiffness = 340f),
                                     label = "tabCollapse_${tab.id}"
                                 )
+                                val isBulletNewTab = tab.id == justLaunchedTabId
+                                val bulletOffsetX = remember(tab.id) { Animatable(if (isBulletNewTab) 78f else 0f) }
+                                val bulletScaleX = remember(tab.id) { Animatable(if (isBulletNewTab) 0.72f else 1f) }
+                                val bulletScaleY = remember(tab.id) { Animatable(if (isBulletNewTab) 1.08f else 1f) }
+                                val dominoKickX = remember(tab.id) { Animatable(0f) }
+                                LaunchedEffect(isBulletNewTab) {
+                                    if (isBulletNewTab) {
+                                        launch { bulletOffsetX.animateTo(0f, animationSpec = spring(dampingRatio = 0.72f, stiffness = 780f)) }
+                                        launch { bulletScaleX.animateTo(1f, animationSpec = spring(dampingRatio = 0.64f, stiffness = 620f)) }
+                                        launch { bulletScaleY.animateTo(1f, animationSpec = spring(dampingRatio = 0.64f, stiffness = 620f)) }
+                                    }
+                                }
+                                LaunchedEffect(tabImpactSeq) {
+                                    if (tabImpactSeq > 0 && !isBulletNewTab && tabImpactOriginIdx >= 0 && idx <= tabImpactOriginIdx) {
+                                        val dist = tabImpactOriginIdx - idx
+                                        if (dist in 0..5) {
+                                            delay(55L + dist * 26L)
+                                            val impulse = (-11.5f * Math.pow(0.68, dist.toDouble())).toFloat()
+                                            dominoKickX.animateTo(impulse, animationSpec = tween(55))
+                                            dominoKickX.animateTo(0f, animationSpec = spring(dampingRatio = 0.48f, stiffness = 420f))
+                                        }
+                                    }
+                                }
                                 Row(
                                     modifier = Modifier
                                         .layout { measurable, constraints ->
@@ -993,9 +973,9 @@ fun BrowserScreen() {
                                             drawLayer(tabCaptureLayer)
                                         }
                                         .graphicsLayer {
-                                            scaleX = tabScale
-                                            scaleY = tabScale
-                                            translationX = neighborNudge.toPx() + animatedDragShiftPx
+                                            scaleX = tabScale * bulletScaleX.value
+                                            scaleY = tabScale * bulletScaleY.value
+                                            translationX = neighborNudge.toPx() + animatedDragShiftPx + (bulletOffsetX.value + dominoKickX.value).dp.toPx()
                                             alpha = when { tab.id in vanishingTopTabIds -> 0f; isBeingDragged -> 0.36f; else -> 1f }
                                         }
                                         .height(34.dp)
@@ -1408,18 +1388,27 @@ fun BrowserScreen() {
                             }
                         }
 
-                        // 새 탭(+) 버튼: 탭 개수와 무관하게 항상 탭 바 최우측 상단에 고정
+                        // 새 탭(+) 버튼: 클릭 반동 + 새 탭 총알 발사 + 기존 탭 도미노 충격파
                         Spacer(modifier = Modifier.width(4.dp))
-                        IconButton(
-                            onClick = { SpaceManager.createTab(activeSpace.id) },
-                            modifier = Modifier.size(34.dp).pressBounceScale()
-                        ) {
-                            EgoIcon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "새 탭",
-                                tint = activeIconColor
-                            )
-                        }
+                        BallisticNewTabButton(
+                            tint = activeIconColor,
+                            accentColor = MaterialTheme.colorScheme.primary,
+                            onClick = {
+                                val prevLastIdx = activeSpace.tabs.lastIndex
+                                val createdTab = SpaceManager.createTab(activeSpace.id)
+                                justLaunchedTabId = createdTab.id
+                                tabImpactOriginIdx = prevLastIdx
+                                tabImpactSeq += 1
+                                scope.launch {
+                                    delay(36L)
+                                    tabStripScrollState.animateScrollTo(tabStripScrollState.maxValue)
+                                    delay(420L)
+                                    if (justLaunchedTabId == createdTab.id) {
+                                        justLaunchedTabId = null
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -2167,6 +2156,7 @@ fun BrowserScreen() {
         ) {
             PillSpaceCapsule(
                 activeSpace = activeSpace,
+                spaces = spaces,
                 isAnyAiWorking = workingSpace != null,
                 workingAccentColor = workingAccent,
                 spaceCount = spaces.size,
