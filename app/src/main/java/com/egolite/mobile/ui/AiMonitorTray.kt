@@ -3,6 +3,14 @@ package com.egolite.mobile.ui
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.Canvas
 import android.graphics.Bitmap
+import android.graphics.BlurMaskFilter
+import android.graphics.Paint as AndroidPaint
+import android.graphics.Path as AndroidPath
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import kotlin.math.exp
+import kotlin.math.pow
 import android.os.Build
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -204,6 +212,7 @@ fun AiLiveMonitorTray(
     val cardLocalRects = remember { mutableMapOf<String, Rect>() }
     val cardRootRects = remember { mutableMapOf<String, Rect>() }
     val cardCaptureLayers = remember { mutableMapOf<String, GraphicsLayer>() }
+    val preDragCardBitmaps = remember { mutableMapOf<String, android.graphics.Bitmap>() }
     val vanishScope = rememberCoroutineScope()
 
     fun triggerDustVanishClose(space: BrowserSpace, dropOffset: Offset = Offset.Zero) {
@@ -218,19 +227,26 @@ fun AiLiveMonitorTray(
         }
         val isDraggedDrop = dropOffset != Offset.Zero
         val spaceAccent = parseSpaceColor(space.accentColorHex)
+        // 드래그 종료 시 원위치 1프레임 복귀 깜빡임을 원천 차단하기 위해 동기 즉시 숨김!
+        vanishingSpaceIds.add(space.id)
+
+        fun scaleRectCenter(r: Rect, s: Float): Rect {
+            val cx = r.center.x
+            val cy = r.center.y
+            val hw = (r.width * s) * 0.5f
+            val hh = (r.height * s) * 0.5f
+            return Rect(cx - hw, cy - hh, cx + hw, cy + hh)
+        }
 
         vanishScope.launch {
-            // 초록 둥근 테두리 + 웹 미리보기 + 하단 푸터까지 카드 실픽셀 그대로 캡처!
-            // 드래그 중 원본 카드가 축소/투명 상태일 수 있으므로 썸네일 폴백 + 안전 캡처 보장
-            val capturedCardBmp = (if (isDraggedDrop) thumbnails[space.id] else null)
+            // 드래그 시작 직전 캡처한 전체 카드(1.75dp 테두리·모델명 푸터 포함) 실픽셀 우선 사용!
+            val capturedCardBmp = (if (isDraggedDrop) preDragCardBitmaps.remove(space.id) else null)
                 ?: runCatching { cardCaptureLayers[space.id]?.toImageBitmap()?.asAndroidBitmap() }.getOrNull()
                 ?: thumbnails[space.id]
 
-            vanishingSpaceIds.add(space.id)
-
             if (onGlobalDustVanish != null && baseRootRect != null && baseRootRect.width > 10f && baseRootRect.height > 10f) {
-                // 화면 최상위 전역 오버레이로 방출 -> 좌측 패널 경계를 넘어 웹뷰 위까지 자유롭게 흩날림!
-                val finalRoot = baseRootRect
+                // 화면 최상위 전역 오버레이로 방출 -> 하단 드롭존의 실제 축소(0.84x) 위치·크기에서 즉시 소멸!
+                val finalRoot = if (isDraggedDrop) scaleRectCenter(baseRootRect.translate(dropOffset.x, dropOffset.y), 0.84f) else baseRootRect
                 val touchRoot = if (isDraggedDrop) finalRoot.center else Offset(finalRoot.right - 24f, finalRoot.top + 24f)
                 onGlobalDustVanish(
                     VanishSnapshot(rect = finalRoot, touchRoot = touchRoot, bitmap = capturedCardBmp),
@@ -340,6 +356,9 @@ fun AiLiveMonitorTray(
                                     val key = hit?.key as? String
                                     val idx = curList.indexOfFirst { it.id == key }
                                     if (key != null && idx >= 0) {
+                                        vanishScope.launch {
+                                            runCatching { cardCaptureLayers[key]?.toImageBitmap()?.asAndroidBitmap() }.getOrNull()?.let { preDragCardBitmaps[key] = it }
+                                        }
                                         draggingId = key
                                         dragStartIdx = idx
                                         dragTargetIdx = idx
@@ -654,6 +673,9 @@ fun AiLiveMonitorTray(
                                     val key = hit?.key as? String
                                     val idx = curList.indexOfFirst { it.id == key }
                                     if (key != null && idx >= 0) {
+                                        vanishScope.launch {
+                                            runCatching { cardCaptureLayers[key]?.toImageBitmap()?.asAndroidBitmap() }.getOrNull()?.let { preDragCardBitmaps[key] = it }
+                                        }
                                         draggingId = key
                                         dragStartIdx = idx
                                         dragTargetIdx = idx
@@ -890,7 +912,7 @@ private fun MonitorSpaceCard(
         label = "veilAlpha"
     )
     val statusSlotHeight by animateDpAsState(
-        targetValue = if (activePhrase.isNotBlank()) 28.dp else 0.dp,
+        targetValue = if (activePhrase.isNotBlank()) 19.dp else 0.dp,
         animationSpec = EgoMotion.smoothSpring(),
         label = "statusSlotHeight"
     )
@@ -913,7 +935,7 @@ private fun MonitorSpaceCard(
     } else {
         186.dp
     }
-    val cardHeight = previewHeight + 68.dp
+    val cardHeight = previewHeight + 44.dp
 
     Box(
         modifier = modifier
@@ -929,23 +951,39 @@ private fun MonitorSpaceCard(
             }
             .then(blurMod)
             .shadow(
-                elevation = if (isDragging) 18.dp else if (isWorking) 14.dp else 6.dp,
-                shape = RoundedCornerShape(26.dp),
+                elevation = if (isDragging) 18.dp else if (isWorking) 12.dp else 6.dp,
+                shape = RoundedCornerShape(24.dp),
                 ambientColor = spaceColor,
                 spotColor = spaceColor
             )
-            .clip(RoundedCornerShape(26.dp))
-            .background(spaceColor)
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .border(
+                width = 1.75.dp,
+                color = if (isWorking || isPersonal) spaceColor else spaceColor.copy(alpha = 0.46f),
+                shape = RoundedCornerShape(24.dp)
+            )
             .clickable { onSelect() }
-            .padding(3.5.dp)
     ) {
+        // 카드 최하단 시작: 저높이 웨이브형 색상 블러 + 1px 하모니 모래 파티클 (작동 중 활성)
+        if (!isPersonal) {
+            AiCardBottomSandWaveOverlay(
+                active = isWorking,
+                accentColor = spaceColor,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2f)
+            )
+        }
+
         Column(modifier = Modifier.fillMaxSize()) {
-            // 고정 크기 웹 미리보기 영역 (활동/완료/대기 3단계 크기 불변)
-            val previewShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+            // 고정 크기 웹 미리보기 영역
+            val previewShape = RoundedCornerShape(topStart = 19.dp, topEnd = 19.dp, bottomStart = 13.dp, bottomEnd = 13.dp)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(previewHeight)
+                    .padding(start = 5.dp, end = 5.dp, top = 5.dp)
+                    .height(previewHeight - 5.dp)
                     .clip(previewShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerLowest),
                 contentAlignment = Alignment.Center
@@ -977,30 +1015,14 @@ private fun MonitorSpaceCard(
                         )
                     }
                 }
-
-                // 스페이스 색상 상향 그라데이션 (미리보기 영역 내부로만 엄격 제한)
-                if (veilAlpha > 0.01f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0.0f to Color.Transparent,
-                                    0.32f to Color.Transparent,
-                                    0.64f to spaceColor.copy(alpha = 0.28f * veilAlpha),
-                                    0.86f to spaceColor.copy(alpha = 0.76f * veilAlpha),
-                                    1.0f to spaceColor.copy(alpha = veilAlpha)
-                                )
-                            )
-                    )
-                }
             }
 
-            // 고정 하단 푸터: 한 글자 웨이브 활동 문구 + AI 이름
+            // 슬림 브라우저 테마 푸터: 기존 한 글자 웨이브 활동 문구 유지 + AI 이름
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .zIndex(3f)
                     .padding(horizontal = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
@@ -1021,13 +1043,13 @@ private fun MonitorSpaceCard(
                     ) { phrase ->
                         if (phrase.isNotBlank()) {
                             if (isWorking) {
-                                PerCharWaveText(text = phrase, color = inkColor)
+                                PerCharWaveText(text = phrase, color = spaceColor)
                             } else {
                                 Text(
                                     text = phrase,
-                                    fontSize = 14.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = inkColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = spaceColor,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -1038,19 +1060,19 @@ private fun MonitorSpaceCard(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(7.dp)
+                            .size(6.5.dp)
                             .clip(CircleShape)
-                            .background(inkColor.copy(alpha = 0.82f))
+                            .background(if (isWorking || isPersonal) spaceColor else spaceColor.copy(alpha = 0.55f))
                     )
                     Text(
                         text = displayName,
-                        fontSize = 15.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = inkColor,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1328,6 +1350,183 @@ private fun MonitorDeleteDropZone(
                     color = if (isHovered) Color.White else EgoDangerRed
                 )
             }
+        }
+    }
+}
+
+
+private class AiCardSandGrain(
+    val startX: Float,
+    val startY: Float,
+    val vx: Float,
+    val vy: Float,
+    val swirl: Float,
+    val phase: Float,
+    val radius: Float,
+    val life: Float,
+    val brightMix: Float,
+    var age: Float = 0f
+)
+
+/**
+ * AI 스페이스 카드 최하단에서 피어오르는 저높이 웨이브형 색상 블러 +
+ * HARMONY_7_SAND_WAVE 동일 1px 선명한 모래 파티클 오버레이.
+ */
+@Composable
+private fun AiCardBottomSandWaveOverlay(
+    active: Boolean,
+    accentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val waveFade by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "aiCardWaveFade"
+    )
+    val particles = remember { ArrayList<AiCardSandGrain>(220) }
+    val rng = remember { Random(System.nanoTime()) }
+    var timeSec by remember { mutableFloatStateOf(0f) }
+    var frameTick by remember { mutableIntStateOf(0) }
+    var canvasW by remember { mutableFloatStateOf(0f) }
+    var canvasH by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(active) {
+        var lastNs = 0L
+        while (active || particles.isNotEmpty()) {
+            withFrameNanos { nowNs ->
+                val dt = if (lastNs == 0L) 0.016f else ((nowNs - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.05f)
+                lastNs = nowNs
+                timeSec += dt
+
+                val w = canvasW
+                val h = canvasH
+                if (active && w > 24f && h > 24f && particles.size < 190) {
+                    val budget = minOf(8, 190 - particles.size)
+                    repeat(budget) {
+                        val sx = 8f + rng.nextFloat() * (w - 16f)
+                        val sy = h - 2f - rng.nextFloat() * 14f
+                        particles.add(
+                            AiCardSandGrain(
+                                startX = sx,
+                                startY = sy,
+                                vx = (rng.nextFloat() - 0.35f) * 34f,
+                                vy = -(h * (0.30f + rng.nextFloat() * 0.42f)),
+                                swirl = 7f + rng.nextFloat() * 14f,
+                                phase = rng.nextFloat() * (PI.toFloat() * 2f),
+                                radius = 1.6f + rng.nextFloat() * 1.4f,
+                                life = 1.05f + rng.nextFloat() * 1.15f,
+                                brightMix = if (rng.nextFloat() < 0.22f) (0.45f + rng.nextFloat() * 0.45f) else (rng.nextFloat() * 0.16f)
+                            )
+                        )
+                    }
+                }
+                var i = particles.size - 1
+                while (i >= 0) {
+                    val p = particles[i]
+                    p.age += dt
+                    if (p.age >= p.life) {
+                        particles.removeAt(i)
+                    }
+                    i--
+                }
+                frameTick++
+            }
+        }
+    }
+
+    if (!active && waveFade <= 0.01f && particles.isEmpty()) return
+
+    val wavePaint = remember {
+        AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+            style = AndroidPaint.Style.FILL
+        }
+    }
+    val wavePath = remember { AndroidPath() }
+    val grainPaint = remember {
+        AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+            style = AndroidPaint.Style.FILL
+        }
+    }
+
+    Canvas(modifier = modifier) {
+        val _tick = frameTick // subscribe to 60fps tick
+        val w = size.width
+        val h = size.height
+        canvasW = w
+        canvasH = h
+        if (w <= 10f || h <= 10f) return@Canvas
+
+        val native = drawContext.canvas.nativeCanvas
+        val argb = accentColor.toArgb()
+        val r = (argb shr 16) and 0xFF
+        val g = (argb shr 8) and 0xFF
+        val b = argb and 0xFF
+        val t = timeSec
+
+        // 1) 하단 저높이 웨이브형 색상 블러 (상단 콘텐츠 방해 최소화)
+        if (waveFade > 0.01f) {
+            val blur1 = (13.dp.toPx()).coerceAtLeast(4f)
+            wavePaint.maskFilter = BlurMaskFilter(blur1, BlurMaskFilter.Blur.NORMAL)
+            wavePaint.color = (((waveFade * 0.36f * 255f).toInt().coerceIn(0, 255)) shl 24) or (r shl 16) or (g shl 8) or b
+            wavePath.reset()
+            wavePath.moveTo(-12f, h + 12f)
+            val step = (w / 18f).coerceAtLeast(8f)
+            var x = -12f
+            while (x <= w + 12f) {
+                val nx = x / w
+                val wy = (h - 24.dp.toPx()) -
+                    sin(nx * PI.toFloat() * 2.1f + t * 1.4f) * 7.dp.toPx() -
+                    cos(nx * PI.toFloat() * 3.2f - t * 1.0f) * 3.5.dp.toPx()
+                wavePath.lineTo(x, wy)
+                x += step
+            }
+            wavePath.lineTo(w + 12f, h + 12f)
+            wavePath.close()
+            native.drawPath(wavePath, wavePaint)
+
+            val blur2 = (7.dp.toPx()).coerceAtLeast(3f)
+            wavePaint.maskFilter = BlurMaskFilter(blur2, BlurMaskFilter.Blur.NORMAL)
+            val r2 = (r + 40).coerceAtMost(255)
+            val g2 = (g + 40).coerceAtMost(255)
+            val b2 = (b + 40).coerceAtMost(255)
+            wavePaint.color = (((waveFade * 0.28f * 255f).toInt().coerceIn(0, 255)) shl 24) or (r2 shl 16) or (g2 shl 8) or b2
+            wavePath.reset()
+            wavePath.moveTo(-8f, h + 8f)
+            x = -8f
+            while (x <= w + 8f) {
+                val nx = x / w
+                val wy = (h - 12.dp.toPx()) -
+                    sin(nx * PI.toFloat() * 2.5f - t * 1.7f + 1.1f) * 5.2.dp.toPx() -
+                    cos(nx * PI.toFloat() * 1.6f + t * 1.05f) * 2.5.dp.toPx()
+                wavePath.lineTo(x, wy)
+                x += step
+            }
+            wavePath.lineTo(w + 8f, h + 8f)
+            wavePath.close()
+            native.drawPath(wavePath, wavePaint)
+        }
+
+        // 2) HARMONY_7_SAND_WAVE 동일 선명한 1px 모래 입자 (drawRect · 헤일로 없음)
+        for (i in 0 until particles.size) {
+            val p = particles[i]
+            val lt = (p.age / p.life).coerceIn(0f, 1f)
+            if (lt >= 1f) continue
+            val dragEase = 1f - exp(-2.15f * lt)
+            val px = p.startX + p.vx * dragEase + sin(p.startY * 0.015f + t * 5.2f + p.phase * 0.25f) * p.swirl * lt
+            val py = p.startY + p.vy * dragEase + cos(p.startX * 0.014f + t * 4.4f + p.phase * 0.25f) * p.swirl * 0.8f * lt
+            if (px < 2f || px > w - 2f || py < 6f) continue
+
+            val alpha = (1f - lt).pow(1.32f) * (if (lt < 0.14f) (0.78f + lt * 1.55f).coerceAtMost(1f) else 1f)
+            val alphaInt = (alpha.coerceIn(0f, 1f) * 245f).toInt()
+            if (alphaInt <= 2) continue
+
+            val sz = (p.radius * (1.06f - lt * 0.44f)).coerceAtLeast(1.1f)
+            val m = p.brightMix
+            val pr = (r + (248 - r) * m).toInt().coerceIn(0, 255)
+            val pg = (g + (252 - g) * m).toInt().coerceIn(0, 255)
+            val pb = (b + (255 - b) * m).toInt().coerceIn(0, 255)
+            grainPaint.color = (alphaInt shl 24) or (pr shl 16) or (pg shl 8) or pb
+            native.drawRect(px, py, px + sz, py + sz, grainPaint)
         }
     }
 }
