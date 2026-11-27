@@ -81,6 +81,7 @@ fun AdBlockControlDialog(
     currentHost: String,
     activeTabId: String,
     onReloadPage: () -> Unit,
+    anchorRect: Rect? = null,
     onDismiss: (VanishSnapshot) -> Unit
 ) {
     val st by AdBlockEngine.state.collectAsState()
@@ -111,45 +112,33 @@ fun AdBlockControlDialog(
             }
     )
 
-    // 방패 버튼을 그대로 덮으며 카드 자체만 깔끔하게 모프
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 50.dp, end = 54.dp),
-        contentAlignment = Alignment.TopEnd
-    ) {
-        AnimatedVisibility(
-            visible = cardVisible,
-            enter = fadeIn(tween(130)) + scaleIn(
-                animationSpec = EgoMotion.morphSpring(),
-                initialScale = 0.30f,
-                transformOrigin = TransformOrigin(1f, 0f)
-            ),
-            exit = fadeOut(tween(100)) + scaleOut(
-                animationSpec = tween(130),
-                targetScale = 0.78f,
-                transformOrigin = TransformOrigin(1f, 0f)
-            )
+    // 방패 아이콘 바로 하단에서 하모니OS 7 일경도저 모핑 전개
+    HarmonyAnchoredMorphContainer(
+        anchorRect = anchorRect,
+        cardWidth = 326.dp,
+        fallbackTopPadding = 96.dp,
+        fallbackEndPadding = 54.dp
+    ) { morphCorner ->
+        val cardShape = RoundedCornerShape(morphCorner)
+        Surface(
+            shape = cardShape,
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            shadowElevation = 14.dp,
+            tonalElevation = 4.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                .drawWithContent {
+                    captureLayer.record { this@drawWithContent.drawContent() }
+                    drawLayer(captureLayer)
+                }
+                .harmonyRimGlow(enabled = true, shape = cardShape, glowColor = MaterialTheme.colorScheme.primary)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f), cardShape)
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) {}
         ) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                shadowElevation = 14.dp,
-                tonalElevation = 4.dp,
-                modifier = Modifier
-                    .width(326.dp)
-                    .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
-                    .drawWithContent {
-                        captureLayer.record { this@drawWithContent.drawContent() }
-                        drawLayer(captureLayer)
-                    }
-                    .harmonyRimGlow(enabled = true, cornerRadius = 24.dp, glowColor = MaterialTheme.colorScheme.primary)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() }
-                    ) {}
-            ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -314,7 +303,6 @@ fun AdBlockControlDialog(
                     }
                 }
             }
-        }
     }
 }
 
