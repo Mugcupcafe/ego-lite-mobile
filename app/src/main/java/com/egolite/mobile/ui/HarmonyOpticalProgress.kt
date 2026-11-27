@@ -459,6 +459,7 @@ fun HarmonyModeBClippedOverlay(
     enabled: Boolean,
     progress: Float,
     isActive: Boolean,
+    modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
     if (!enabled) return
@@ -475,8 +476,7 @@ fun HarmonyModeBClippedOverlay(
     )
     if (alpha <= 0.01f) return
     Box(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
             .drawWithContent {
                 val rightX = size.width * smoothProg
                 clipRect(left = 0f, top = 0f, right = rightX, bottom = size.height) {
