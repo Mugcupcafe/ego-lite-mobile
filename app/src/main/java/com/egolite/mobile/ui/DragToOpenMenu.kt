@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 data class ChromeMenuItemSpec(
     val title: String,
     val icon: ImageVector,
+    val key: String = title,
     val accentColor: Color? = null,
     val bold: Boolean = false,
     val checked: Boolean = false,
