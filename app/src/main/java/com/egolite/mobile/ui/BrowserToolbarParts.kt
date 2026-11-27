@@ -337,7 +337,7 @@ fun RowScope.OmniboxCenterCapsule(
                         lastStep = clampedStep
                         onTabDragOffsetChanged(if (abs(dragSum) > 22f && tabCount > 1) clampedStep else null)
                         if (prefs.toolbarElasticityEnabled) {
-                            val maxPullPx = 38f * density
+                            val maxPullPx = 38.dp.toPx()
                             val rubber = sign(dragSum) * maxPullPx * (1f - exp(-abs(dragSum) / (maxPullPx * 2.1f)))
                             onElasticPullChanged(rubber)
                         }
