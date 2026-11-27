@@ -13,6 +13,11 @@ import android.os.Build
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import com.egolite.mobile.browser.SpaceManager
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -267,10 +272,19 @@ fun ParticleDisintegrationOverlay(
     onBurstFinished: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isLightBg = MaterialTheme.colorScheme.background.luminance() >= 0.5f
+    val lightPrefs by SpaceManager.preferences.collectAsState()
+    val lightParticleRgb = (lightPrefs.lightModeParticleColorHex and 0xFFFFFFL).toInt()
+    val lightSizeMul = if (isLightBg && lightPrefs.lightModeParticleSizeBoost) 1.18f else 1.0f
+    val sizeAdaptiveCount = lightPrefs.vanishSizeAdaptiveCount
     bursts.forEach { burst ->
         androidx.compose.runtime.key(burst.id) {
             SingleParticleDisintegration(
                 burst = burst,
+                isLightBg = isLightBg,
+                lightParticleRgb = lightParticleRgb,
+                lightSizeMul = lightSizeMul,
+                sizeAdaptiveCount = sizeAdaptiveCount,
                 onFinished = { onBurstFinished(burst.id) },
                 modifier = modifier
             )
@@ -281,9 +295,14 @@ fun ParticleDisintegrationOverlay(
 @Composable
 private fun SingleParticleDisintegration(
     burst: DustVanishRequest,
+    isLightBg: Boolean,
+    lightParticleRgb: Int,
+    lightSizeMul: Float,
+    sizeAdaptiveCount: Boolean,
     onFinished: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val densityPx = LocalDensity.current.density.coerceAtLeast(1f)
     var animProgress by remember(burst.id) { mutableFloatStateOf(0f) }
     val reusablePaint = remember(burst.id) {
         Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -404,7 +423,7 @@ private fun SingleParticleDisintegration(
                 } else {
                     shader.setFloatUniform("origin", normOriginX, normOriginY)
                     shader.setFloatUniform("dirMode", dirModeFloat)
-                    shader.setFloatUniform("glowStrength", burst.edgeGlow.coerceIn(0f, 2f))
+                    shader.setFloatUniform("glowStrength", if (isLightBg) (burst.edgeGlow * 0.25f).coerceIn(0f, 0.5f) else burst.edgeGlow.coerceIn(0f, 2f))
                     shader.setFloatUniform("shockStrength", burst.shockwaveStrength.coerceIn(0f, 2f))
                 }
                 shader
@@ -467,12 +486,11 @@ private fun SingleParticleDisintegration(
 
                 CardVanishStyle.HARMONY_7_SAND_WAVE -> {
                     // 하모니OS 7 실물 물리: 1~3중 원형 구멍 경계선 밀집 1px 은빛 모래 파도 띠 + 일체형 바람 기류
-                    val sizeWeight = when (autoSeedCount) {
-                        1 -> 0.55f
-                        2 -> 0.78f
-                        else -> 1.0f
-                    }
-                    val n = (burst.particleCount * sizeWeight * burst.sandRibbonDensity.coerceIn(0.4f, 1.8f)).toInt().coerceIn(1000, 14000)
+                    val refAreaPx = (320f * densityPx) * (240f * densityPx)
+                    val areaScale = if (sizeAdaptiveCount) {
+                        sqrt((rect.width * rect.height).coerceAtLeast(1f) / refAreaPx).coerceIn(0.38f, 1.65f)
+                    } else 1.0f
+                    val n = (burst.particleCount * areaScale * burst.sandRibbonDensity.coerceIn(0.4f, 1.8f)).toInt().coerceIn(400, 14000)
                     val sx = FloatArray(n)
                     val sy = FloatArray(n)
                     val vx = FloatArray(n)
@@ -510,9 +528,12 @@ private fun SingleParticleDisintegration(
                         val cr = (basePixel shr 16) and 0xFF
                         val cg = (basePixel shr 8) and 0xFF
                         val cb = basePixel and 0xFF
-                        val nr = (cr + (244 - cr) * mixAmt).toInt().coerceIn(0, 255)
-                        val ng = (cg + (248 - cg) * mixAmt).toInt().coerceIn(0, 255)
-                        val nb = (cb + (255 - cb) * mixAmt).toInt().coerceIn(0, 255)
+                        val targetR = if (isLightBg) (lightParticleRgb shr 16) and 0xFF else 244
+                        val targetG = if (isLightBg) (lightParticleRgb shr 8) and 0xFF else 248
+                        val targetB = if (isLightBg) lightParticleRgb and 0xFF else 255
+                        val nr = (cr + (targetR - cr) * mixAmt).toInt().coerceIn(0, 255)
+                        val ng = (cg + (targetG - cg) * mixAmt).toInt().coerceIn(0, 255)
+                        val nb = (cb + (targetB - cb) * mixAmt).toInt().coerceIn(0, 255)
                         rgb[i] = (nr shl 16) or (ng shl 8) or nb
 
                         // AGSL 셰이더와 1:1 동일한 다중 원형 구멍 거리장 계산
@@ -536,13 +557,17 @@ private fun SingleParticleDisintegration(
                         ph[i] = rng.nextFloat() * 6.283f
                         sw[i] = (24f + rng.nextFloat() * 26f) * swirl
                         sp[i] = isRibbonCore
-                        rd[i] = if (isRibbonCore) (1.35f + rng.nextFloat() * 1.15f) else (1.1f + rng.nextFloat() * 1.65f)
+                        rd[i] = (if (isRibbonCore) (1.35f + rng.nextFloat() * 1.15f) else (1.1f + rng.nextFloat() * 1.65f)) * lightSizeMul
                     }
                     LosslessParticleBuffer(n, sx, sy, vx, vy, ph, sw, dl, lf, rd, rgb, sp, zd)
                 }
 
                 CardVanishStyle.HARMONY_GPU_SHADER -> {
-                    val n = burst.particleCount.coerceIn(1000, 14000)
+                    val refAreaPx = (320f * densityPx) * (240f * densityPx)
+                    val areaScale = if (sizeAdaptiveCount) {
+                        sqrt((rect.width * rect.height).coerceAtLeast(1f) / refAreaPx).coerceIn(0.38f, 1.65f)
+                    } else 1.0f
+                    val n = (burst.particleCount * areaScale).toInt().coerceIn(400, 14000)
                     val sx = FloatArray(n)
                     val sy = FloatArray(n)
                     val vx = FloatArray(n)
@@ -576,7 +601,18 @@ private fun SingleParticleDisintegration(
                             val pixel = runCatching { bmp.getPixel(bx, by) }.getOrDefault(0)
                             if ((pixel ushr 24) > 20) sampledRgb = pixel and 0x00FFFFFF
                         }
-                        rgb[i] = sampledRgb
+                        rgb[i] = if (isLightBg) {
+                            val sr = (sampledRgb shr 16) and 0xFF
+                            val sg = (sampledRgb shr 8) and 0xFF
+                            val sb = sampledRgb and 0xFF
+                            val tr = (lightParticleRgb shr 16) and 0xFF
+                            val tg = (lightParticleRgb shr 8) and 0xFF
+                            val tb = lightParticleRgb and 0xFF
+                            val mr = (sr + (tr - sr) * 0.72f).toInt().coerceIn(0, 255)
+                            val mg = (sg + (tg - sg) * 0.72f).toInt().coerceIn(0, 255)
+                            val mb = (sb + (tb - sb) * 0.72f).toInt().coerceIn(0, 255)
+                            (mr shl 16) or (mg shl 8) or mb
+                        } else sampledRgb
 
                         val baseDist = when (burst.direction) {
                             VanishDirection.TOUCH_RADIAL -> {
@@ -605,13 +641,17 @@ private fun SingleParticleDisintegration(
                         sw[i] = (rng.nextFloat() - 0.5f) * 28f * burst.curlStrength.coerceIn(0f, 2f)
                         val isBokeh = rng.nextFloat() < 0.14f
                         sp[i] = isBokeh
-                        rd[i] = if (isBokeh) (1.8f + rng.nextFloat() * 2.0f) * z else (0.95f + rng.nextFloat() * 1.4f) * z
+                        rd[i] = (if (isBokeh) (1.8f + rng.nextFloat() * 2.0f) * z else (0.95f + rng.nextFloat() * 1.4f) * z) * lightSizeMul
                     }
                     LosslessParticleBuffer(n, sx, sy, vx, vy, ph, sw, dl, lf, rd, rgb, sp, zd)
                 }
 
                 else -> {
-                    val n = burst.particleCount.coerceIn(800, 14000)
+                    val refAreaPx = (320f * densityPx) * (240f * densityPx)
+                    val areaScale = if (sizeAdaptiveCount) {
+                        sqrt((rect.width * rect.height).coerceAtLeast(1f) / refAreaPx).coerceIn(0.38f, 1.65f)
+                    } else 1.0f
+                    val n = (burst.particleCount * areaScale).toInt().coerceIn(400, 14000)
                     val sx = FloatArray(n)
                     val sy = FloatArray(n)
                     val vx = FloatArray(n)
@@ -786,7 +826,7 @@ private fun SingleParticleDisintegration(
             CardVanishStyle.HARMONY_GPU_SHADER -> {
                 val dragK = burst.airDrag.coerceIn(1.2f, 8.0f)
                 val curlYMul = 12f * burst.curlStrength.coerceIn(0f, 2f)
-                val useAdd = burst.additiveGlow
+                val useAdd = burst.additiveGlow && !isLightBg
                 val zScaleMul = 0.45f * burst.zPerspective.coerceIn(0f, 2f)
 
                 for (i in 0 until n) {
@@ -832,8 +872,20 @@ private fun SingleParticleDisintegration(
                     val alphaInt = (alpha * 255f).toInt()
                     if (alphaInt <= 1) continue
                     val rad = (buf.radius[i] * (1f - lt * 0.65f)).coerceAtLeast(0.65f)
-                    reusablePaint.color = (alphaInt shl 24) or buf.baseRgb[i]
-                    native.drawCircle(px, py, rad, reusablePaint)
+                    val drawRgb = if (isLightBg) {
+                        val sr = (buf.baseRgb[i] shr 16) and 0xFF
+                        val sg = (buf.baseRgb[i] shr 8) and 0xFF
+                        val sb = buf.baseRgb[i] and 0xFF
+                        val tr = (lightParticleRgb shr 16) and 0xFF
+                        val tg = (lightParticleRgb shr 8) and 0xFF
+                        val tb = lightParticleRgb and 0xFF
+                        val mr = (sr + (tr - sr) * 0.72f).toInt().coerceIn(0, 255)
+                        val mg = (sg + (tg - sg) * 0.72f).toInt().coerceIn(0, 255)
+                        val mb = (sb + (tb - sb) * 0.72f).toInt().coerceIn(0, 255)
+                        (mr shl 16) or (mg shl 8) or mb
+                    } else buf.baseRgb[i]
+                    reusablePaint.color = (alphaInt shl 24) or drawRgb
+                    native.drawCircle(px, py, rad * lightSizeMul, reusablePaint)
                 }
             }
         }
