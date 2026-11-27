@@ -221,15 +221,16 @@ fun AiLiveMonitorTray(
 
         vanishScope.launch {
             // 초록 둥근 테두리 + 웹 미리보기 + 하단 푸터까지 카드 실픽셀 그대로 캡처!
-            val capturedCardBmp = runCatching {
-                cardCaptureLayers[space.id]?.toImageBitmap()?.asAndroidBitmap()
-            }.getOrNull() ?: thumbnails[space.id]
+            // 드래그 중 원본 카드가 축소/투명 상태일 수 있으므로 썸네일 폴백 + 안전 캡처 보장
+            val capturedCardBmp = (if (isDraggedDrop) thumbnails[space.id] else null)
+                ?: runCatching { cardCaptureLayers[space.id]?.toImageBitmap()?.asAndroidBitmap() }.getOrNull()
+                ?: thumbnails[space.id]
 
             vanishingSpaceIds.add(space.id)
 
             if (onGlobalDustVanish != null && baseRootRect != null && baseRootRect.width > 10f && baseRootRect.height > 10f) {
                 // 화면 최상위 전역 오버레이로 방출 -> 좌측 패널 경계를 넘어 웹뷰 위까지 자유롭게 흩날림!
-                val finalRoot = if (isDraggedDrop) baseRootRect.translate(dropOffset.x, dropOffset.y) else baseRootRect
+                val finalRoot = baseRootRect
                 val touchRoot = if (isDraggedDrop) finalRoot.center else Offset(finalRoot.right - 24f, finalRoot.top + 24f)
                 onGlobalDustVanish(
                     VanishSnapshot(rect = finalRoot, touchRoot = touchRoot, bitmap = capturedCardBmp),
