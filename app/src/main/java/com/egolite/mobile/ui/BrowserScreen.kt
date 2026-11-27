@@ -135,6 +135,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -2714,7 +2715,7 @@ fun BrowserScreen() {
                         onOpenInNewTab = { url -> SpaceManager.createTab(activeSpace.id, initialUrl = url, selectImmediately = false) },
                         onOpenInIncognito = { url -> SpaceManager.createTab(activeSpace.id, initialUrl = url, incognito = true, selectImmediately = true) },
                         onDeleteBookmark = { bm -> SpaceManager.removeBookmark(bm.id) },
-                        onDustVanish = { snap -> emitDustSnapshot(snap, popupDustColor, 0.90f) }
+                        onDustVanish = { snap -> emitDustSnapshot(snap, MaterialTheme.colorScheme.surfaceContainerHigh, 0.90f) }
                     )
                 }
                 // AI Space 하단 young-newt-20 MCP 동작 표기 캡슐 HUD (비작동 IDLE 시 자동 숨김)
