@@ -165,7 +165,7 @@ fun PillSpaceCapsule(
 
     Box(
         modifier = Modifier
-            .height(38.dp)
+            .height(34.dp)
             .clip(CircleShape)
             .background(surfaceColor)
             .then(borderModifier)
@@ -219,7 +219,7 @@ fun PillSpaceCapsule(
                     }
                 }
             }
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 11.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(
@@ -234,7 +234,7 @@ fun PillSpaceCapsule(
 
 @Composable
 private fun SpaceDotIndicator(color: Color, filled: Boolean) {
-    Canvas(modifier = Modifier.size(12.dp)) {
+    Canvas(modifier = Modifier.size(10.dp)) {
         if (filled) {
             drawCircle(color = color)
         } else {
