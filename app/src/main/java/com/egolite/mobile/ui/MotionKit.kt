@@ -14,6 +14,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
@@ -327,20 +342,26 @@ fun TabEqualizerIcon(
  * - 손가락이 닿은 좌표 주변 테두리와 표면에만 은은한 빛이 번졌다 잔광과 함께 소멸
  * - 기존 clickable/drag 이벤트를 소비하지 않고 시각 효과만 중첩
  */
+val LocalRimGlowIntensity = compositionLocalOf { 1.35f }
+
 fun Modifier.harmonyRimGlow(
     enabled: Boolean = true,
     cornerRadius: Dp = 18.dp,
     glowColor: Color = Color(0xFFBBD6FF),
-    strokeWidth: Dp = 1.5.dp
+    strokeWidth: Dp = 1.6.dp,
+    shape: Shape? = null,
+    intensity: Float? = null
 ): Modifier = composed {
     if (!enabled) return@composed this
+    val effectiveIntensity = (intensity ?: LocalRimGlowIntensity.current).coerceIn(0.4f, 2.6f)
     var touchPos by remember { mutableStateOf(Offset.Zero) }
     var isTouching by remember { mutableStateOf(false) }
     val glowAlpha by animateFloatAsState(
         targetValue = if (isTouching) 1f else 0f,
-        animationSpec = tween(durationMillis = if (isTouching) 90 else 320),
+        animationSpec = tween(durationMillis = if (isTouching) 75 else 380),
         label = "harmonyRimGlowAlpha"
     )
+    val resolvedShape = shape ?: RoundedCornerShape(cornerRadius)
     this
         .pointerInput(Unit) {
             awaitPointerEventScope {
@@ -361,36 +382,121 @@ fun Modifier.harmonyRimGlow(
         .drawWithContent {
             drawContent()
             if (glowAlpha > 0.01f) {
-                val radiusPx = (size.maxDimension * 0.48f).coerceIn(110f, 340f)
-                val crPx = cornerRadius.toPx()
-                // 표면 미세 광택
-                drawRoundRect(
+                val radiusPx = (size.maxDimension * 0.56f).coerceIn(130f, 380f)
+                val outline = resolvedShape.createOutline(size, layoutDirection, this)
+                val surfCore = (0.16f * effectiveIntensity * glowAlpha).coerceAtMost(0.42f)
+                val surfMid = (0.24f * effectiveIntensity * glowAlpha).coerceAtMost(0.55f)
+                // 1) 광수지동(光随指动): 정확한 컴포넌트 윤곽 내부 표면 물리 광장
+                drawOutline(
+                    outline = outline,
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            glowColor.copy(alpha = 0.14f * glowAlpha),
+                            Color.White.copy(alpha = surfCore),
+                            glowColor.copy(alpha = surfMid),
                             Color.Transparent
                         ),
                         center = touchPos,
                         radius = radiusPx
                     ),
-                    cornerRadius = CornerRadius(crPx, crPx)
+                    style = Fill
                 )
-                // 테두리 광학 발광 스트로크
-                drawRoundRect(
+                // 2) 광선구륵(光线勾勒): 비대칭 22dp/6dp 코너까지 픽셀 정밀도로 따라가는 테두리 스페큘러 윤곽선
+                val rimPeak = (0.94f * effectiveIntensity * glowAlpha).coerceAtMost(1.0f)
+                val rimMid = (0.58f * effectiveIntensity * glowAlpha).coerceAtMost(0.95f)
+                val strokePx = (strokeWidth.toPx() * (0.85f + 0.30f * effectiveIntensity)).coerceAtMost(3.2.dp.toPx())
+                drawOutline(
+                    outline = outline,
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            glowColor.copy(alpha = 0.88f * glowAlpha),
-                            glowColor.copy(alpha = 0.28f * glowAlpha),
+                            Color.White.copy(alpha = rimPeak),
+                            glowColor.copy(alpha = rimMid),
+                            glowColor.copy(alpha = (0.18f * effectiveIntensity * glowAlpha).coerceAtMost(0.5f)),
                             Color.Transparent
                         ),
                         center = touchPos,
-                        radius = radiusPx * 0.86f
+                        radius = radiusPx * 0.92f
                     ),
-                    cornerRadius = CornerRadius(crPx, crPx),
-                    style = Stroke(width = strokeWidth.toPx())
+                    style = Stroke(width = strokePx)
                 )
             }
         }
+}
+
+/**
+ * 하모니OS 7 아이콘 하단 앵커 + 일경도저 비선형 모핑 컨테이너
+ * - 버튼의 실제 화면 좌표(anchorRect) 바로 아래에 카드를 배치하고
+ * - 아이콘 중심을 Pivot으로 삼아 알약에서 카드로 매끄럽게 모핑 전개
+ */
+@Composable
+fun HarmonyAnchoredMorphContainer(
+    anchorRect: Rect?,
+    cardWidth: Dp,
+    fallbackTopPadding: Dp = 96.dp,
+    fallbackEndPadding: Dp = 24.dp,
+    content: @Composable (morphCorner: Dp) -> Unit
+) {
+    val density = LocalDensity.current
+    var containerRect by remember { mutableStateOf<Rect?>(null) }
+    val morphAnim = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        morphAnim.snapTo(0f)
+        morphAnim.animateTo(1f, animationSpec = EgoMotion.morphSpring())
+    }
+
+    val p = morphAnim.value.coerceIn(0f, 1.15f)
+    val clampedP = p.coerceIn(0f, 1f)
+    val morphCorner = (32f - 8f * clampedP).dp
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coords -> containerRect = coords.boundsInRoot() }
+    ) {
+        val cRect = containerRect
+        val aRect = anchorRect
+        if (cRect != null && aRect != null && aRect.width > 4f) {
+            val cardWidthPx = with(density) { cardWidth.toPx() }
+            val marginPx = with(density) { 12.dp.toPx() }
+            val gapPx = with(density) { 8.dp.toPx() }
+            val iconCenterX = aRect.center.x - cRect.left
+            val maxLeft = (cRect.width - cardWidthPx - marginPx).coerceAtLeast(marginPx)
+            val leftPx = (iconCenterX - cardWidthPx * 0.5f).coerceIn(marginPx, maxLeft)
+            val topPx = (aRect.bottom - cRect.top + gapPx).coerceAtLeast(with(density) { 52.dp.toPx() })
+            val pivotX = ((iconCenterX - leftPx) / cardWidthPx).coerceIn(0.10f, 0.90f)
+
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(leftPx.toInt(), topPx.toInt()) }
+                    .width(cardWidth)
+                    .graphicsLayer {
+                        transformOrigin = TransformOrigin(pivotX, 0f)
+                        scaleX = 0.24f + 0.76f * p
+                        scaleY = 0.16f + 0.84f * p
+                        translationY = with(density) { (-14.dp.toPx()) * (1f - clampedP) }
+                        alpha = (clampedP * 1.55f).coerceIn(0f, 1f)
+                    }
+            ) {
+                content(morphCorner)
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = fallbackTopPadding, end = fallbackEndPadding)
+                    .width(cardWidth)
+                    .graphicsLayer {
+                        transformOrigin = TransformOrigin(0.88f, 0f)
+                        scaleX = 0.28f + 0.72f * p
+                        scaleY = 0.20f + 0.80f * p
+                        translationY = with(density) { (-12.dp.toPx()) * (1f - clampedP) }
+                        alpha = (clampedP * 1.55f).coerceIn(0f, 1f)
+                    }
+            ) {
+                content(morphCorner)
+            }
+        }
+    }
 }
 
 /**
