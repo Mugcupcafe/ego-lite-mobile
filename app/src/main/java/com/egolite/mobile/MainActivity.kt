@@ -31,6 +31,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import com.egolite.mobile.browser.BrowserActivityBridge
+import com.egolite.mobile.browser.ExtensionManager
 import com.egolite.mobile.browser.DownloadCenter
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.account.GoogleAccountManager
@@ -38,6 +39,8 @@ import com.egolite.mobile.model.ThemeMode
 import com.egolite.mobile.model.WebFontMode
 import com.egolite.mobile.ui.BrowserScreen
 import com.egolite.mobile.ui.EgoLiteTheme
+import com.egolite.mobile.ui.LocalRimGlowIntensity
+import androidx.compose.runtime.CompositionLocalProvider
 import java.io.File
 
 class MainActivity : ComponentActivity() {
@@ -127,6 +130,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val extensionZipPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            ExtensionManager.inspectZipUri(this, uri) { report ->
+                if (!report.canInstall) {
+                    Toast.makeText(this, "확장 진단: ${report.status.label}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     private val fontPickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -180,6 +195,8 @@ class MainActivity : ComponentActivity() {
         BrowserActivityBridge.launchBookmarkImport = { bookmarkImportLauncher.launch(arrayOf("text/html", "*/*")) }
         BrowserActivityBridge.launchBookmarkExport = { bookmarkExportLauncher.launch("ego-lite-bookmarks.html") }
         BrowserActivityBridge.launchFontPicker = { fontPickerLauncher.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "*/*")) }
+        ExtensionManager.init(this)
+        BrowserActivityBridge.launchExtensionZipPicker = { extensionZipPickerLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*")) }
 
         handleIncomingBrowserIntent(intent)
 
@@ -241,8 +258,10 @@ class MainActivity : ComponentActivity() {
                 controller.isAppearanceLightStatusBars = isLight
                 controller.isAppearanceLightNavigationBars = isLight
             }
-            EgoLiteTheme(darkTheme = isDark, colorPreset = prefs.themeColorPreset) {
-                BrowserScreen()
+            CompositionLocalProvider(LocalRimGlowIntensity provides prefs.rimGlowIntensity) {
+                EgoLiteTheme(darkTheme = isDark, colorPreset = prefs.themeColorPreset) {
+                    BrowserScreen()
+                }
             }
         }
     }
@@ -299,6 +318,7 @@ class MainActivity : ComponentActivity() {
         BrowserActivityBridge.launchBookmarkImport = null
         BrowserActivityBridge.launchBookmarkExport = null
         BrowserActivityBridge.launchFontPicker = null
+        BrowserActivityBridge.launchExtensionZipPicker = null
         super.onDestroy()
     }
 
