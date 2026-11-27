@@ -236,6 +236,7 @@ fun ChromeDownloadStatusBanner(
                         accentColor = MaterialTheme.colorScheme.primary,
                         lightIntensity = prefs.progressLightIntensity,
                         particleDensity = prefs.progressParticleDensity,
+                darkUseThemeColor = prefs.progressDarkUseThemeColor,
                         cornerRadiusDp = 22.dp,
                         modifier = Modifier.matchParentSize()
                     )
