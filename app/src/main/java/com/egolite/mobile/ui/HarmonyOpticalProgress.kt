@@ -4,6 +4,16 @@ import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
 import android.provider.Settings
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.RenderEffect as AndroidRenderEffect
+import android.graphics.Shader
+import android.os.Build
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
@@ -66,6 +76,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -231,6 +242,64 @@ internal class OpticalParticlePool(private val maxCount: Int = 220) {
  * - ProgressBarStyle.HARMONY_OPTICAL: 방식 B (실버 베이스 + 단면 100% 순백 커튼 + 양방향 개별 입자 풀)
  * - 완료(progress >= 1f 또는 !isActive) 시 부드럽게 0으로 페이드아웃
  */
+
+/**
+ * 점프 없는 부드러운 지수 감속 + 점진적 멈춤(Asymptotic Creep) 진행률 보간기.
+ * 4% -> 30% 급격한 점프도 부드럽게 흘러가며 목표치 근처에서 점진적으로 감속 정지.
+ */
+@Composable
+internal fun rememberSmoothOpticalProgress(
+    rawProgress: Float,
+    isActive: Boolean
+): Pair<Float, Float> {
+    val target = rawProgress.coerceIn(0f, 1f)
+    var displayed by remember { mutableFloatStateOf(if (isActive) target.coerceAtMost(0.08f) else 0f) }
+    var activeVisual by remember { mutableStateOf(isActive) }
+
+    LaunchedEffect(isActive) {
+        if (isActive) {
+            activeVisual = true
+            if (displayed >= 0.98f || target < displayed - 0.25f) {
+                displayed = target.coerceAtMost(0.06f)
+            }
+        }
+    }
+
+    LaunchedEffect(isActive, target) {
+        var lastNs = 0L
+        while (activeVisual || isActive) {
+            withFrameNanos { ns ->
+                val dt = if (lastNs == 0L) 0.016f else ((ns - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.033f)
+                lastNs = ns
+                if (isActive) {
+                    // 점진적 멈춤 크립 상한: 현재 target보다 약간 앞까지 서서히 차오르며 감속
+                    val creepCeil = (target + 0.14f).coerceAtMost(0.92f)
+                    val goal = if (target > displayed) target else creepCeil
+                    val rate = if (target > displayed) 3.8f else 0.32f
+                    val factor = 1f - exp(-dt * rate)
+                    displayed = (displayed + (goal - displayed) * factor).coerceIn(0f, 0.99f)
+                } else {
+                    // 완료 시 100% 끝까지 부드럽게 흘러 도달한 뒤 페이드아웃 시작
+                    if (target >= 0.95f && displayed < 0.995f) {
+                        val factor = 1f - exp(-dt * 8.5f)
+                        displayed = (displayed + (1f - displayed) * factor).coerceAtMost(1f)
+                    } else {
+                        displayed = if (target >= 0.95f) 1f else 0f
+                        activeVisual = false
+                    }
+                }
+            }
+        }
+    }
+
+    val effectAlpha by animateFloatAsState(
+        targetValue = if (isActive || (activeVisual && displayed < 0.995f)) 1f else 0f,
+        animationSpec = tween(durationMillis = if (isActive) 150 else 320),
+        label = "smoothOpticalAlpha"
+    )
+    return displayed to effectAlpha
+}
+
 @Composable
 fun HarmonyHorizontalProgressCanvas(
     style: ProgressBarStyle,
@@ -240,21 +309,15 @@ fun HarmonyHorizontalProgressCanvas(
     lightIntensity: Float = 1.6f,
     particleDensity: Float = 1.4f,
     cornerRadiusDp: Dp = 6.dp,
+    darkUseThemeColor: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (style == ProgressBarStyle.MATERIAL) return
 
     val isLightTheme = MaterialTheme.colorScheme.background.luminance() >= 0.5f
-    val clampedProg = progress.coerceIn(0f, 1f)
-    val smoothProg by animateFloatAsState(
-        targetValue = if (isActive) clampedProg else if (clampedProg >= 0.99f) 1f else 0f,
-        animationSpec = tween(durationMillis = 140),
-        label = "opticalProg"
-    )
-    val effectAlpha by animateFloatAsState(
-        targetValue = if (isActive && clampedProg in 0.005f..0.995f) 1f else 0f,
-        animationSpec = tween(durationMillis = if (isActive) 120 else 280),
-        label = "opticalAlpha"
+    val (smoothProg, effectAlpha) = rememberSmoothOpticalProgress(
+        rawProgress = progress,
+        isActive = isActive
     )
 
     val pool = remember { OpticalParticlePool(200) }
@@ -313,11 +376,12 @@ fun HarmonyHorizontalProgressCanvas(
                 val glowH = 14.dp.toPx()
                 // Soft upward ambient glow along bottom edge
                 if (cutX > 2f) {
+                    val blColor = if (isLightTheme || darkUseThemeColor) accentColor else Color(0xFFEAF2FF)
                     drawRect(
                         brush = Brush.verticalGradient(
                             colors = listOf(
                                 Color.Transparent,
-                                accentColor.copy(alpha = (0.34f * lightIntensity * effectAlpha).coerceIn(0f, 0.65f))
+                                blColor.copy(alpha = (0.34f * lightIntensity * effectAlpha).coerceIn(0f, 0.65f))
                             ),
                             startY = h - glowH,
                             endY = h
@@ -329,8 +393,8 @@ fun HarmonyHorizontalProgressCanvas(
                     drawRect(
                         brush = Brush.horizontalGradient(
                             colors = listOf(
-                                accentColor.copy(alpha = 0.45f * effectAlpha),
-                                accentColor.copy(alpha = 0.92f * effectAlpha),
+                                blColor.copy(alpha = 0.45f * effectAlpha),
+                                blColor.copy(alpha = 0.92f * effectAlpha),
                                 Color.White.copy(alpha = (0.98f * effectAlpha).coerceIn(0f, 1f))
                             ),
                             startX = 0f,
@@ -345,7 +409,7 @@ fun HarmonyHorizontalProgressCanvas(
                         brush = Brush.radialGradient(
                             colors = listOf(
                                 Color.White.copy(alpha = (0.95f * effectAlpha).coerceIn(0f, 1f)),
-                                accentColor.copy(alpha = (0.55f * effectAlpha).coerceIn(0f, 1f)),
+                                blColor.copy(alpha = (0.55f * effectAlpha).coerceIn(0f, 1f)),
                                 Color.Transparent
                             ),
                             center = Offset(cutX, h - stripH * 0.5f),
@@ -358,7 +422,7 @@ fun HarmonyHorizontalProgressCanvas(
             } else if (style == ProgressBarStyle.HARMONY_OPTICAL) {
                 if (cutX > 1f && effectAlpha > 0.01f) {
                     // 1. 방식 B: 지나간 구간(0..cutX) 실버 베이스(야간 기준 검정 글자 선명 유지)
-                    val silverBase = if (isLightTheme) {
+                    val silverBase = if (isLightTheme || darkUseThemeColor) {
                         accentColor.copy(alpha = 0.88f * effectAlpha)
                     } else {
                         Color(0xFF7A8396).copy(alpha = 0.94f * effectAlpha)
@@ -374,8 +438,8 @@ fun HarmonyHorizontalProgressCanvas(
                         .coerceIn(18f, w * 0.45f)
                     val startX = (cutX - curtainW).coerceAtLeast(0f)
                     val peakAlpha = (0.96f * effectAlpha * (0.82f + 0.18f * lightIntensity)).coerceIn(0f, 1f)
-                    val curtainStartCol = if (isLightTheme) accentColor.copy(alpha = 0f) else Color.White.copy(alpha = 0f)
-                    val curtainMidCol = if (isLightTheme) Color.White.copy(alpha = peakAlpha * 0.35f) else Color(0xFFEAF2FF).copy(alpha = peakAlpha * 0.52f)
+                    val curtainStartCol = if (isLightTheme || darkUseThemeColor) accentColor.copy(alpha = 0f) else Color.White.copy(alpha = 0f)
+                    val curtainMidCol = if (isLightTheme || darkUseThemeColor) Color.White.copy(alpha = peakAlpha * 0.42f) else Color(0xFFEAF2FF).copy(alpha = peakAlpha * 0.52f)
                     val curtainCoreCol = Color.White.copy(alpha = peakAlpha)
 
                     drawRect(
@@ -463,16 +527,9 @@ fun HarmonyModeBClippedOverlay(
     content: @Composable BoxScope.() -> Unit
 ) {
     if (!enabled) return
-    val clampedProg = progress.coerceIn(0f, 1f)
-    val smoothProg by animateFloatAsState(
-        targetValue = if (isActive) clampedProg else if (clampedProg >= 0.99f) 1f else 0f,
-        animationSpec = tween(durationMillis = 140),
-        label = "clipProg"
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (isActive && clampedProg in 0.005f..0.995f) 1f else 0f,
-        animationSpec = tween(durationMillis = if (isActive) 120 else 280),
-        label = "clipAlpha"
+    val (smoothProg, alpha) = rememberSmoothOpticalProgress(
+        rawProgress = progress,
+        isActive = isActive
     )
     if (alpha <= 0.01f) return
     Box(
@@ -506,23 +563,30 @@ fun VerticalHarmonyCapsuleSlider(
     var lastSize by remember { mutableStateOf(Size.Zero) }
     val clampedVal = value.coerceIn(0f, 1f)
 
+    val latestEnergy by rememberUpdatedState(activeEnergy)
+    val latestVal by rememberUpdatedState(clampedVal)
+    val latestSpeed by rememberUpdatedState(speed)
+    val latestDensity by rememberUpdatedState(particleDensity)
+
     LaunchedEffect(activeEnergy > 0.01f) {
         var lastNs = 0L
-        while (activeEnergy > 0.01f || pool.particles.isNotEmpty()) {
+        while (latestEnergy > 0.01f || pool.particles.isNotEmpty()) {
             withFrameNanos { ns ->
                 val dt = if (lastNs == 0L) 0.016f else ((ns - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.033f)
                 lastNs = ns
                 val w = lastSize.width
                 val h = lastSize.height
-                val cutY = h * (1f - clampedVal)
+                val eNow = latestEnergy
+                val vNow = latestVal
+                val cutY = h * (1f - vNow)
                 pool.stepVertical(
                     dt = dt,
                     cutY = cutY,
                     barW = w,
                     barH = h,
-                    speed = speed,
-                    densityMul = particleDensity * activeEnergy,
-                    spawning = activeEnergy > 0.08f && clampedVal in 0.01f..0.992f
+                    speed = latestSpeed,
+                    densityMul = (latestDensity * eNow).coerceAtLeast(if (eNow > 0.08f) 0.65f else 0f),
+                    spawning = eNow > 0.08f && vNow in 0.01f..0.992f
                 )
                 frameTick = ns
             }
@@ -567,15 +631,40 @@ fun VerticalHarmonyCapsuleSlider(
                 val ambientTint = if (isBrightness) Color(0x2482AFFF) else Color(0x24FF8291)
                 drawRect(color = ambientTint)
 
-                // 2. 유휴 상태 채움 트랙 (19012.mp4 3.75s)
-                val fillH = (h - cutY).coerceAtLeast(0f)
-                if (fillH > 0.5f) {
-                    drawRect(
-                        color = Color.White.copy(alpha = 0.13f + 0.05f * activeEnergy),
-                        topLeft = Offset(0f, cutY),
-                        size = Size(w, fillH)
-                    )
+                // 2. 비터치 시 19108 스타일 5.5dp 내장형 반투명 바 -> 드래그 시 0dp 풀폭으로 자연 확장
+                val insetPx = (5.5.dp.toPx() * (1f - activeEnergy)).coerceAtLeast(0f)
+                val iw = (w - insetPx * 2f).coerceAtLeast(4f)
+                val ih = (h - insetPx * 2f).coerceAtLeast(4f)
+                val ir = (rad - insetPx).coerceAtLeast(2f)
+                val innerPath = Path().apply {
+                    addRoundRect(RoundRect(Rect(insetPx, insetPx, insetPx + iw, insetPx + ih), CornerRadius(ir, ir)))
                 }
+                val innerFillH = (ih * clampedVal).coerceAtLeast(0f)
+                val innerCutY = insetPx + ih - innerFillH
+                if (innerFillH > 0.5f) {
+                    clipPath(innerPath) {
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFFDAE4F6).copy(alpha = 0.18f + 0.34f * activeEnergy),
+                                    Color(0xFFB0C0DA).copy(alpha = 0.13f + 0.22f * activeEnergy)
+                                ),
+                                startY = innerCutY,
+                                endY = insetPx + ih
+                            ),
+                            topLeft = Offset(insetPx, innerCutY),
+                            size = Size(iw, innerFillH)
+                        )
+                        if (activeEnergy < 0.35f) {
+                            drawRect(
+                                color = Color.White.copy(alpha = 0.16f * (1f - activeEnergy)),
+                                topLeft = Offset(insetPx, innerCutY),
+                                size = Size(iw, 1.dp.toPx())
+                            )
+                        }
+                    }
+                }
+                val fillH = (h - cutY).coerceAtLeast(0f)
 
                 // 3. 활성 시 19012.mp4 1:1 순백 HDR 빛 커튼 (단면 아래만 강렬, 멀어지면 0%로 소멸)
                 if (activeEnergy > 0.01f && clampedVal > 0.005f) {
@@ -682,44 +771,84 @@ fun FullscreenVideoVerticalHudOverlay(
 ) {
     if (!enabled) return
     val context = LocalContext.current
+    val density = LocalDensity.current
     val audioManager = remember(context) { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
     val activity = remember(context) { context as? Activity }
     val scope = rememberCoroutineScope()
 
-    var showLeftHud by remember { mutableStateOf(false) }
-    var showRightHud by remember { mutableStateOf(false) }
-    var brightnessVal by remember { mutableFloatStateOf(0.55f) }
-    var volumeVal by remember { mutableFloatStateOf(0.5f) }
-    var brightDragging by remember { mutableStateOf(false) }
-    var volDragging by remember { mutableStateOf(false) }
+    var hudOpen by remember { mutableStateOf(false) }
+    var hudOnLeft by remember { mutableStateOf(true) }
+    var activeBar by remember { mutableStateOf<String?>(null) } // "bright" | "vol" | null
+    var brightnessVal by remember { mutableFloatStateOf(0.58f) }
+    var volumeVal by remember { mutableFloatStateOf(0.52f) }
     var brightSpeed by remember { mutableFloatStateOf(0f) }
     var volSpeed by remember { mutableFloatStateOf(0f) }
     val brightOverPull = remember { Animatable(0f) }
     val volOverPull = remember { Animatable(0f) }
-    var hideLeftToken by remember { mutableIntStateOf(0) }
-    var hideRightToken by remember { mutableIntStateOf(0) }
+    var hideToken by remember { mutableIntStateOf(0) }
 
-    val brightEnergy by animateFloatAsState(
-        targetValue = if (brightDragging) 1f else 0f,
-        animationSpec = tween(durationMillis = if (brightDragging) 110 else 360),
-        label = "brightEnergy"
-    )
-    val volEnergy by animateFloatAsState(
-        targetValue = if (volDragging) 1f else 0f,
-        animationSpec = tween(durationMillis = if (volDragging) 110 else 360),
-        label = "volEnergy"
-    )
+    // Apple Liquid Glass 단계별 스프링 모핑 상태 (베젤 앵커 -> 메인 물방울 이탈 -> 짝꿍 캡슐 분리)
+    val edgeBulge = remember { Animatable(0f) }
+    val primDetach = remember { Animatable(0f) }
+    val primInflate = remember { Animatable(0f) }
+    val compSep = remember { Animatable(0f) }
+    val compInflate = remember { Animatable(0f) }
 
-    LaunchedEffect(hideLeftToken, brightDragging) {
-        if (showLeftHud && !brightDragging) {
-            delay(1150L)
-            showLeftHud = false
+    LaunchedEffect(hudOpen, hudOnLeft) {
+        if (hudOpen) {
+            launch {
+                edgeBulge.snapTo(0f)
+                edgeBulge.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 340f))
+                delay(150L)
+                edgeBulge.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 280f))
+            }
+            launch {
+                delay(15L)
+                primDetach.animateTo(1f, spring(dampingRatio = 0.74f, stiffness = 230f))
+            }
+            launch {
+                delay(95L)
+                primInflate.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 240f))
+            }
+            launch {
+                delay(165L)
+                compSep.animateTo(1f, spring(dampingRatio = 0.74f, stiffness = 210f))
+            }
+            launch {
+                delay(195L)
+                compInflate.animateTo(1f, spring(dampingRatio = 0.74f, stiffness = 225f))
+            }
+        } else {
+            launch { compInflate.animateTo(0f, tween(210)) }
+            launch { compSep.animateTo(0f, tween(240)) }
+            launch { primInflate.animateTo(0f, tween(240)) }
+            launch {
+                delay(40L)
+                primDetach.animateTo(0f, tween(280))
+            }
+            launch {
+                delay(70L)
+                edgeBulge.animateTo(0.75f, tween(110))
+                edgeBulge.animateTo(0f, tween(170))
+            }
         }
     }
-    LaunchedEffect(hideRightToken, volDragging) {
-        if (showRightHud && !volDragging) {
-            delay(1150L)
-            showRightHud = false
+
+    val brightEnergy by animateFloatAsState(
+        targetValue = if (activeBar == "bright") 1f else 0f,
+        animationSpec = tween(durationMillis = if (activeBar == "bright") 110 else 360),
+        label = "dualBrightEnergy"
+    )
+    val volEnergy by animateFloatAsState(
+        targetValue = if (activeBar == "vol") 1f else 0f,
+        animationSpec = tween(durationMillis = if (activeBar == "vol") 110 else 360),
+        label = "dualVolEnergy"
+    )
+
+    LaunchedEffect(hideToken, activeBar, hudOpen) {
+        if (hudOpen && activeBar == null) {
+            delay(2300L)
+            hudOpen = false
         }
     }
 
@@ -755,162 +884,339 @@ fun FullscreenVideoVerticalHudOverlay(
         runCatching { am.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0) }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        // 좌측 35% 영역: 세로 드래그로 화면 밝기 조절
+    fun handleBarDrag(kind: String, dragAmount: Float, travelPx: Float) {
+        val delta = -dragAmount / travelPx.coerceAtLeast(220f)
+        val spd = (abs(delta) * 24f).coerceIn(0f, 1.5f)
+        if (kind == "bright") {
+            brightSpeed = spd
+            val raw = brightnessVal + delta
+            when {
+                raw < 0f -> {
+                    brightnessVal = 0f
+                    scope.launch { brightOverPull.snapTo((brightOverPull.value + dragAmount * 0.25f).coerceIn(0f, 32f)) }
+                }
+                raw > 1f -> {
+                    brightnessVal = 1f
+                    scope.launch { brightOverPull.snapTo((brightOverPull.value + dragAmount * 0.25f).coerceIn(-32f, 0f)) }
+                }
+                else -> {
+                    brightnessVal = raw
+                    scope.launch { brightOverPull.snapTo(0f) }
+                }
+            }
+            applyBrightness(brightnessVal)
+        } else {
+            volSpeed = spd
+            val raw = volumeVal + delta
+            when {
+                raw < 0f -> {
+                    volumeVal = 0f
+                    scope.launch { volOverPull.snapTo((volOverPull.value + dragAmount * 0.25f).coerceIn(0f, 32f)) }
+                }
+                raw > 1f -> {
+                    volumeVal = 1f
+                    scope.launch { volOverPull.snapTo((volOverPull.value + dragAmount * 0.25f).coerceIn(-32f, 0f)) }
+                }
+                else -> {
+                    volumeVal = raw
+                    scope.launch { volOverPull.snapTo(0f) }
+                }
+            }
+            applyVolume(volumeVal)
+        }
+    }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val totalW = with(density) { maxWidth.toPx() }
+        val totalH = with(density) { maxHeight.toPx() }
+        val capW = with(density) { 70.dp.toPx() }
+        val capH = with(density) { 194.dp.toPx() }
+        val capGap = with(density) { 22.dp.toPx() }
+        val edgeMargin = with(density) { 30.dp.toPx() }
+
+        // 좌측 세로 스와이프 제스처 영역 -> 좌측에서 밝기(활성) + 볼륨(짝꿍) 함께 물방울 모핑 등장
         Box(
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .fillMaxHeight(0.80f)
+                .fillMaxHeight(0.82f)
                 .width(120.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragStart = {
                             brightnessVal = readCurrentBrightness()
-                            brightDragging = true
-                            showLeftHud = true
+                            volumeVal = readCurrentVolume()
+                            if (!hudOpen || !hudOnLeft) {
+                                hudOnLeft = true
+                                hudOpen = true
+                            }
+                            activeBar = "bright"
                         },
                         onDragEnd = {
-                            brightDragging = false
+                            activeBar = null
                             brightSpeed = 0f
-                            hideLeftToken++
+                            hideToken++
                             scope.launch { brightOverPull.animateTo(0f, EgoMotion.responsiveSpring()) }
                         },
                         onDragCancel = {
-                            brightDragging = false
+                            activeBar = null
                             brightSpeed = 0f
-                            hideLeftToken++
+                            hideToken++
                             scope.launch { brightOverPull.animateTo(0f, EgoMotion.responsiveSpring()) }
                         },
                         onVerticalDrag = { change, dragAmount ->
                             change.consume()
-                            val delta = -dragAmount / (size.height.coerceAtLeast(240).toFloat() * 0.72f)
-                            val raw = brightnessVal + delta
-                            brightSpeed = (abs(delta) * 24f).coerceIn(0f, 1.5f)
-                            when {
-                                raw < 0f -> {
-                                    brightnessVal = 0f
-                                    scope.launch { brightOverPull.snapTo((brightOverPull.value + dragAmount * 0.25f).coerceIn(0f, 36f)) }
-                                }
-                                raw > 1f -> {
-                                    brightnessVal = 1f
-                                    scope.launch { brightOverPull.snapTo((brightOverPull.value + dragAmount * 0.25f).coerceIn(-36f, 0f)) }
-                                }
-                                else -> {
-                                    brightnessVal = raw
-                                    scope.launch { brightOverPull.snapTo(0f) }
-                                }
-                            }
-                            applyBrightness(brightnessVal)
+                            handleBarDrag("bright", dragAmount, size.height * 0.72f)
                         }
                     )
                 }
         )
 
-        // 우측 35% 영역: 세로 드래그로 미디어 볼륨 조절
+        // 우측 세로 스와이프 제스처 영역 -> 우측에서 볼륨(활성) + 밝기(짝꿍) 함께 물방울 모핑 등장
         Box(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .fillMaxHeight(0.80f)
+                .fillMaxHeight(0.82f)
                 .width(120.dp)
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragStart = {
+                            brightnessVal = readCurrentBrightness()
                             volumeVal = readCurrentVolume()
-                            volDragging = true
-                            showRightHud = true
+                            if (!hudOpen || hudOnLeft) {
+                                hudOnLeft = false
+                                hudOpen = true
+                            }
+                            activeBar = "vol"
                         },
                         onDragEnd = {
-                            volDragging = false
+                            activeBar = null
                             volSpeed = 0f
-                            hideRightToken++
+                            hideToken++
                             scope.launch { volOverPull.animateTo(0f, EgoMotion.responsiveSpring()) }
                         },
                         onDragCancel = {
-                            volDragging = false
+                            activeBar = null
                             volSpeed = 0f
-                            hideRightToken++
+                            hideToken++
                             scope.launch { volOverPull.animateTo(0f, EgoMotion.responsiveSpring()) }
                         },
                         onVerticalDrag = { change, dragAmount ->
                             change.consume()
-                            val delta = -dragAmount / (size.height.coerceAtLeast(240).toFloat() * 0.72f)
-                            val raw = volumeVal + delta
-                            volSpeed = (abs(delta) * 24f).coerceIn(0f, 1.5f)
-                            when {
-                                raw < 0f -> {
-                                    volumeVal = 0f
-                                    scope.launch { volOverPull.snapTo((volOverPull.value + dragAmount * 0.25f).coerceIn(0f, 36f)) }
-                                }
-                                raw > 1f -> {
-                                    volumeVal = 1f
-                                    scope.launch { volOverPull.snapTo((volOverPull.value + dragAmount * 0.25f).coerceIn(-36f, 0f)) }
-                                }
-                                else -> {
-                                    volumeVal = raw
-                                    scope.launch { volOverPull.snapTo(0f) }
-                                }
-                            }
-                            applyVolume(volumeVal)
+                            handleBarDrag("vol", dragAmount, size.height * 0.72f)
                         }
                     )
                 }
         )
 
-        // 좌측 세로 밝기 캡슐 HUD
-        AnimatedVisibility(
-            visible = showLeftHud,
-            enter = fadeIn(tween(130)),
-            exit = fadeOut(tween(240)),
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 28.dp)
-        ) {
-            Box(contentAlignment = Alignment.TopCenter) {
-                Text(
-                    text = "${(brightnessVal * 100).roundToInt()}%",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.92f),
-                    modifier = Modifier.offset(y = (-24).dp)
-                )
-                VerticalHarmonyCapsuleSlider(
-                    value = brightnessVal,
-                    isBrightness = true,
-                    activeEnergy = brightEnergy,
-                    speed = brightSpeed,
-                    overPullPx = brightOverPull.value,
-                    lightIntensity = lightIntensity,
-                    particleDensity = particleDensity
-                )
-            }
-        }
+        val pDet = primDetach.value
+        val pInf = primInflate.value
+        val cSep = compSep.value
+        val cInf = compInflate.value
+        val eBlg = edgeBulge.value
 
-        // 우측 세로 볼륨 캡슐 HUD
-        AnimatedVisibility(
-            visible = showRightHud,
-            enter = fadeIn(tween(130)),
-            exit = fadeOut(tween(240)),
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 28.dp)
-        ) {
-            Box(contentAlignment = Alignment.TopCenter) {
-                Text(
-                    text = "${(volumeVal * 100).roundToInt()}%",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.92f),
-                    modifier = Modifier.offset(y = (-24).dp)
-                )
-                VerticalHarmonyCapsuleSlider(
-                    value = volumeVal,
-                    isBrightness = false,
-                    activeEnergy = volEnergy,
-                    speed = volSpeed,
-                    overPullPx = volOverPull.value,
-                    lightIntensity = lightIntensity,
-                    particleDensity = particleDensity
-                )
+        if (pDet > 0.01f || eBlg > 0.01f) {
+            val cy = totalH * 0.5f
+            val primFinalCx = if (hudOnLeft) (edgeMargin + capW * 0.5f) else (totalW - edgeMargin - capW * 0.5f)
+            val compFinalCx = if (hudOnLeft) (primFinalCx + capW + capGap) else (primFinalCx - capW - capGap)
+            val startCx = if (hudOnLeft) -16f else (totalW + 16f)
+
+            val pCx = startCx + (primFinalCx - startCx) * pDet
+            val pW = (34f + (capW - 34f) * pInf.coerceIn(0f, 1f)) * (pDet * 3f).coerceIn(0f, 1f)
+            val pH = (44f + (capH - 44f) * pInf.coerceAtLeast(0f)) * (pDet * 3f).coerceIn(0f, 1f)
+
+            val cCx = pCx + (compFinalCx - pCx) * cSep
+            val cVis = (cSep * 2.5f).coerceIn(0f, 1f)
+            val cW = (34f + (capW - 34f) * cInf.coerceIn(0f, 1f)) * cVis
+            val cH = (44f + (capH - 44f) * cInf.coerceAtLeast(0f)) * cVis
+
+            // 분리 완료 시(cSep > 0.68) 메타볼 블러를 0으로 넘겨 두 캡슐이 물갈퀴 없이 칼같이 독립 마감!
+            val crispAlpha = ((cSep - 0.68f) / 0.26f).coerceIn(0f, 1f)
+            val metaAlpha = (1f - crispAlpha).coerceIn(0f, 1f)
+
+            // 1) Android 13+ 실제 메타볼(Blur + Alpha Threshold ColorMatrix) 표면장력 융합/분리 레이어
+            if (metaAlpha > 0.02f) {
+                val metaballEffect = remember {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        val blur = AndroidRenderEffect.createBlurEffect(22f, 22f, Shader.TileMode.DECAL)
+                        val cm = ColorMatrix(
+                            floatArrayOf(
+                                1f, 0f, 0f, 0f, 0f,
+                                0f, 1f, 0f, 0f, 0f,
+                                0f, 0f, 1f, 0f, 0f,
+                                0f, 0f, 0f, 26f, -11.5f * 255f
+                            )
+                        )
+                        val threshold = AndroidRenderEffect.createColorFilterEffect(ColorMatrixColorFilter(cm), blur)
+                        threshold.asComposeRenderEffect()
+                    } else null
+                }
+
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = metaAlpha * 0.72f
+                            if (metaballEffect != null) renderEffect = metaballEffect
+                        }
+                ) {
+                    val eW = (28.dp.toPx() * eBlg).coerceAtLeast(0f)
+                    val eH = (96.dp.toPx() * eBlg).coerceAtLeast(0f)
+                    val eX = if (hudOnLeft) -12f else (size.width - eW + 12f)
+                    val metaCol = Color(0xFF28354A)
+
+                    if (eW > 1f && eH > 1f) {
+                        drawRoundRect(
+                            color = metaCol,
+                            topLeft = Offset(eX, cy - eH * 0.5f),
+                            size = Size(eW, eH),
+                            cornerRadius = CornerRadius(eW * 0.5f, eW * 0.5f)
+                        )
+                    }
+                    if (pW > 4f && pH > 4f) {
+                        drawRoundRect(
+                            color = metaCol,
+                            topLeft = Offset(pCx - pW * 0.5f, cy - pH * 0.5f),
+                            size = Size(pW, pH),
+                            cornerRadius = CornerRadius(pW * 0.5f, pW * 0.5f)
+                        )
+                    }
+                    if (cW > 4f && cH > 4f) {
+                        drawRoundRect(
+                            color = metaCol,
+                            topLeft = Offset(cCx - cW * 0.5f, cy - cH * 0.5f),
+                            size = Size(cW, cH),
+                            cornerRadius = CornerRadius(cW * 0.5f, cW * 0.5f)
+                        )
+                    }
+                }
+            }
+
+            // 2) 독립 마감된 밝기·볼륨 듀얼 캡슐 (손을 떼고 짝꿍 캡슐을 바로 터치·드래그 가능!)
+            val primaryIsBright = hudOnLeft
+            val primScaleX = (pW / capW).coerceIn(0.35f, 1.15f)
+            val primScaleY = (pH / capH).coerceIn(0.25f, 1.15f)
+            val compScaleX = (cW / capW).coerceIn(0.35f, 1.15f)
+            val compScaleY = (cH / capH).coerceIn(0.25f, 1.15f)
+
+            val primReveal = ((pInf - 0.16f) / 0.58f).coerceIn(0f, 1f)
+            val compReveal = ((cInf - 0.18f) / 0.58f).coerceIn(0f, 1f)
+
+            // 메인 캡슐
+            if (primReveal > 0.02f) {
+                val pKind = if (primaryIsBright) "bright" else "vol"
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset((pCx - capW * 0.5f).roundToInt(), (cy - capH * 0.5f).roundToInt()) }
+                        .graphicsLayer {
+                            scaleX = primScaleX
+                            scaleY = primScaleY
+                            alpha = primReveal
+                        }
+                        .pointerInput(pKind) {
+                            detectVerticalDragGestures(
+                                onDragStart = {
+                                    activeBar = pKind
+                                    hudOpen = true
+                                },
+                                onDragEnd = {
+                                    activeBar = null
+                                    brightSpeed = 0f; volSpeed = 0f
+                                    hideToken++
+                                    scope.launch {
+                                        brightOverPull.animateTo(0f, EgoMotion.responsiveSpring())
+                                        volOverPull.animateTo(0f, EgoMotion.responsiveSpring())
+                                    }
+                                },
+                                onDragCancel = {
+                                    activeBar = null
+                                    brightSpeed = 0f; volSpeed = 0f
+                                    hideToken++
+                                },
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    handleBarDrag(pKind, dragAmount, capH * 1.15f)
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    val pctVal = if (primaryIsBright) brightnessVal else volumeVal
+                    Text(
+                        text = "${(pctVal * 100).roundToInt()}%",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.92f * crispAlpha),
+                        modifier = Modifier.offset(y = (-24).dp)
+                    )
+                    VerticalHarmonyCapsuleSlider(
+                        value = pctVal,
+                        isBrightness = primaryIsBright,
+                        activeEnergy = if (primaryIsBright) brightEnergy else volEnergy,
+                        speed = if (primaryIsBright) brightSpeed else volSpeed,
+                        overPullPx = if (primaryIsBright) brightOverPull.value else volOverPull.value,
+                        lightIntensity = lightIntensity,
+                        particleDensity = particleDensity
+                    )
+                }
+            }
+
+            // 짝꿍 캡슐 (손 떼고 바로 터치·드래그로 조절 가능!)
+            if (compReveal > 0.02f) {
+                val cKind = if (primaryIsBright) "vol" else "bright"
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset((cCx - capW * 0.5f).roundToInt(), (cy - capH * 0.5f).roundToInt()) }
+                        .graphicsLayer {
+                            scaleX = compScaleX
+                            scaleY = compScaleY
+                            alpha = compReveal
+                        }
+                        .pointerInput(cKind) {
+                            detectVerticalDragGestures(
+                                onDragStart = {
+                                    activeBar = cKind
+                                    hudOpen = true
+                                },
+                                onDragEnd = {
+                                    activeBar = null
+                                    brightSpeed = 0f; volSpeed = 0f
+                                    hideToken++
+                                    scope.launch {
+                                        brightOverPull.animateTo(0f, EgoMotion.responsiveSpring())
+                                        volOverPull.animateTo(0f, EgoMotion.responsiveSpring())
+                                    }
+                                },
+                                onDragCancel = {
+                                    activeBar = null
+                                    brightSpeed = 0f; volSpeed = 0f
+                                    hideToken++
+                                },
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    handleBarDrag(cKind, dragAmount, capH * 1.15f)
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    val pctVal = if (primaryIsBright) volumeVal else brightnessVal
+                    Text(
+                        text = "${(pctVal * 100).roundToInt()}%",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.92f * crispAlpha),
+                        modifier = Modifier.offset(y = (-24).dp)
+                    )
+                    VerticalHarmonyCapsuleSlider(
+                        value = pctVal,
+                        isBrightness = !primaryIsBright,
+                        activeEnergy = if (primaryIsBright) volEnergy else brightEnergy,
+                        speed = if (primaryIsBright) volSpeed else brightSpeed,
+                        overPullPx = if (primaryIsBright) volOverPull.value else brightOverPull.value,
+                        lightIntensity = lightIntensity,
+                        particleDensity = particleDensity
+                    )
+                }
             }
         }
     }
