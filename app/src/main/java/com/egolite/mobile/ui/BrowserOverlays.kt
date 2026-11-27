@@ -55,6 +55,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -65,6 +67,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -99,20 +103,25 @@ import kotlin.math.roundToInt
 fun BrowserMenuDragButton(
     showChromeMenu: Boolean,
     chromeMenuItems: List<ChromeMenuItemSpec>,
+    tileBounds: Map<String, Rect>,
     activeIconColor: Color,
     onSetShowMenu: (Boolean) -> Unit,
-    onSetHoveredIndex: (Int) -> Unit
+    onSetHoveredKey: (String?) -> Unit
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
-    val menuItemHeightPx = with(density) { 44.dp.toPx() }
-    val menuDragStartPx = with(density) { 26.dp.toPx() }
+    val menuDragStartPx = with(density) { 18.dp.toPx() }
     val latestShowMenu by rememberUpdatedState(showChromeMenu)
     val latestMenuItems by rememberUpdatedState(chromeMenuItems)
+    val latestBounds by rememberUpdatedState(tileBounds)
+    var buttonRootPos by remember { mutableStateOf(Offset.Zero) }
 
     Box(
         modifier = Modifier
             .size(38.dp)
+            .onGloballyPositioned { coords ->
+                if (coords.isAttached) buttonRootPos = coords.positionInRoot()
+            }
             .clip(CircleShape)
             .pointerInput(Unit) {
                 awaitEachGesture {
@@ -123,48 +132,44 @@ fun BrowserMenuDragButton(
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     }
                     var dragged = false
-                    var lastHover = -1
+                    var lastHoverKey: String? = null
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         val itemsNow = latestMenuItems
                         if (!change.pressed) {
-                            if (dragged && lastHover in itemsNow.indices) {
-                                val chosen = itemsNow[lastHover]
-                                onSetHoveredIndex(-1)
-                                if (chosen.zoomPercent == null) {
+                            if (dragged && lastHoverKey != null) {
+                                val chosen = itemsNow.firstOrNull { it.key == lastHoverKey }
+                                onSetHoveredKey(null)
+                                if (chosen != null && chosen.zoomPercent == null) {
                                     onSetShowMenu(false)
                                     chosen.onClick()
                                 }
                             } else if (dragged || wasAlreadyOpen) {
                                 onSetShowMenu(false)
-                                onSetHoveredIndex(-1)
+                                onSetHoveredKey(null)
                             } else {
-                                onSetHoveredIndex(-1)
+                                onSetHoveredKey(null)
                             }
                             break
                         }
                         val dy = change.position.y - down.position.y
                         val dx = change.position.x - down.position.x
-                        val menuWidthPx = with(density) { 260.dp.toPx() }
-                        val totalMenuHeightPx = itemsNow.size * menuItemHeightPx
-                        if (abs(dy) > menuDragStartPx * 0.5f || abs(dx) > menuDragStartPx * 0.5f) {
+                        if (abs(dy) > menuDragStartPx || abs(dx) > menuDragStartPx) {
                             dragged = true
                         }
-                        val inMenuBounds = dy > menuDragStartPx &&
-                            dy <= (menuDragStartPx + totalMenuHeightPx) &&
-                            dx >= -menuWidthPx &&
-                            dx <= with(density) { 42.dp.toPx() }
-                        if (inMenuBounds) {
-                            val idx = ((dy - menuDragStartPx) / menuItemHeightPx).toInt()
-                            if (idx in itemsNow.indices && idx != lastHover) {
-                                lastHover = idx
-                                onSetHoveredIndex(idx)
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        if (dragged) {
+                            val rootPt = buttonRootPos + change.position
+                            val hitKey = latestBounds.entries.firstOrNull { (_, r) ->
+                                rootPt.x in r.left..r.right && rootPt.y in r.top..r.bottom
+                            }?.key
+                            if (hitKey != lastHoverKey) {
+                                lastHoverKey = hitKey
+                                onSetHoveredKey(hitKey)
+                                if (hitKey != null) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
                             }
-                        } else if (lastHover != -1) {
-                            lastHover = -1
-                            onSetHoveredIndex(-1)
                         }
                     }
                 }
@@ -475,6 +480,7 @@ fun BrowserFullscreenVideoOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .zIndex(55f)
                 .background(Color.Black)
         ) {
             AndroidView(
