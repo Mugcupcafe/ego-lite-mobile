@@ -49,7 +49,10 @@ data class DownloadBannerState(
     val visible: Boolean = false,
     val isCompleted: Boolean = false,
     val activeCount: Int = 1,
-    val record: DownloadRecord? = null
+    val record: DownloadRecord? = null,
+    val progress: Float = 0f,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = 0L
 )
 
 data class DuplicateDownloadPrompt(
@@ -358,8 +361,8 @@ object DownloadCenter {
         val ctx = appContext ?: return
         scope.launch {
             val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return@launch
-            repeat(180) {
-                delay(650L)
+            repeat(360) {
+                delay(320L)
                 val q = DownloadManager.Query().setFilterById(systemId)
                 var done = false
                 runCatching {
@@ -381,6 +384,16 @@ object DownloadCenter {
                                 persistRecords(updated)
                                 updated.firstOrNull { it.id == recordId }?.let { showCompletedBanner(it) }
                                 done = true
+                            } else if (status == DownloadManager.STATUS_RUNNING || status == DownloadManager.STATUS_PENDING) {
+                                val progNow = if (totalBytes > 0L) (dlBytes.toFloat() / totalBytes.toFloat()).coerceIn(0.02f, 0.99f) else 0.35f
+                                val cur = _banner.value
+                                if (cur.visible && !cur.isCompleted && cur.record?.id == recordId) {
+                                    _banner.value = cur.copy(
+                                        progress = progNow,
+                                        downloadedBytes = dlBytes,
+                                        totalBytes = totalBytes
+                                    )
+                                }
                             } else if (status == DownloadManager.STATUS_FAILED) {
                                 val updated = _records.value.map { r ->
                                     if (r.id == recordId) r.copy(status = DownloadStatus.FAILED) else r
