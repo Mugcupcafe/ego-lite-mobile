@@ -84,6 +84,19 @@ import com.egolite.mobile.browser.LangOption
 import com.egolite.mobile.browser.TranslationManager
 import com.egolite.mobile.model.TranslationEngine
 import com.egolite.mobile.model.TranslationPopupState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.platform.LocalDensity
+import com.egolite.mobile.browser.SpaceManager
+import com.egolite.mobile.model.ProgressBarStyle
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun ChromeStyleTranslatePopup(
@@ -103,6 +116,11 @@ fun ChromeStyleTranslatePopup(
     var capsuleRect by remember { mutableStateOf<Rect?>(null) }
     val capsuleCaptureLayer = rememberGraphicsLayer()
     val capsuleCaptureScope = rememberCoroutineScope()
+    val prefs by SpaceManager.preferences.collectAsState()
+    val density = LocalDensity.current
+    val dismissThresholdPx = with(density) { 92.dp.toPx() }
+    val swipeX = remember(state.visible) { Animatable(0f) }
+
     fun dismissCapsuleWithCapture() {
         capsuleCaptureScope.launch {
             val bmp = runCatching { capsuleCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
@@ -113,141 +131,231 @@ fun ChromeStyleTranslatePopup(
 
     AnimatedVisibility(
         visible = state.visible,
-        enter = fadeIn(tween(140)) + slideInVertically(animationSpec = EgoMotion.intOffsetSpring) { -it } + scaleIn(animationSpec = EgoMotion.bouncySpring(), initialScale = 0.86f),
+        enter = slideInVertically(EgoMotion.intOffsetSpring) { -it } + fadeIn(tween(180)),
         exit = ExitTransition.None
     ) {
-        // 슬림 알약 캡슐형 번역 바
+        val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+        val cardBg = if (isDark) Color(0xFF292C33) else Color(0xFFF3F6FC)
+        val invTextCol = if (isDark) Color(0xFF090D16) else Color.White
+        val trProg = state.progress.coerceIn(0.06f, 0.99f)
+        val trActive = state.isTranslating
+
+        // 다운로드 배너와 동일한 22dp 알약 카드 + 좌우 스와이프 닫기 + 하모니OS 7 방식 B 번역 진행 광감
         Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = cardBg,
             shadowElevation = 8.dp,
-            tonalElevation = 4.dp,
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface,
             modifier = Modifier
+                .widthIn(min = 320.dp, max = 460.dp)
                 .padding(horizontal = 12.dp, vertical = 4.dp)
                 .onGloballyPositioned { coords -> capsuleRect = coords.boundsInRoot() }
                 .drawWithContent {
                     capsuleCaptureLayer.record { this@drawWithContent.drawContent() }
                     drawLayer(capsuleCaptureLayer)
                 }
-                .harmonyRimGlow(enabled = true, cornerRadius = 22.dp, glowColor = MaterialTheme.colorScheme.primary)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .graphicsLayer {
+                    translationX = swipeX.value
+                    alpha = (1f - (abs(swipeX.value) / (dismissThresholdPx * 2.2f))).coerceIn(0.15f, 1f)
+                }
+                .pointerInput(state.visible) {
+                    val vt = VelocityTracker()
+                    detectHorizontalDragGestures(
+                        onDragStart = { vt.resetTracking() },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            vt.addPosition(change.uptimeMillis, change.position)
+                            capsuleCaptureScope.launch { swipeX.snapTo(swipeX.value + dragAmount) }
+                        },
+                        onDragEnd = {
+                            val vx = vt.calculateVelocity().x
+                            capsuleCaptureScope.launch {
+                                if (abs(swipeX.value) >= dismissThresholdPx || abs(vx) >= 950f) {
+                                    val dir = if (abs(vx) >= 950f) (if (vx >= 0f) 1f else -1f) else (if (swipeX.value >= 0f) 1f else -1f)
+                                    swipeX.animateTo(
+                                        targetValue = dir * dismissThresholdPx * 4.5f,
+                                        animationSpec = EgoMotion.responsiveSpring(),
+                                        initialVelocity = vx
+                                    )
+                                    dismissCapsuleWithCapture()
+                                } else {
+                                    swipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring(), initialVelocity = vx)
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            capsuleCaptureScope.launch { swipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring()) }
+                        }
+                    )
+                }
+                .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 22.dp, glowColor = MaterialTheme.colorScheme.primary)
         ) {
-            Row(
-                modifier = Modifier
-                    .height(40.dp)
-                    .animateContentSize(animationSpec = EgoMotion.intSizeSpring)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                if (state.isTranslating) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                } else {
-                    EgoIcon(
-                        imageVector = Icons.Default.Translate,
-                        contentDescription = null,
-                        tint = if (state.isTranslated) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(17.dp)
-                    , symbolSize = 17.dp)
-                }
+            Box(modifier = Modifier.fillMaxWidth()) {
+                // 하모니OS 7 방식 B 광감 진행바 (번역 진행률 실시간 반영, 완료 시 깔끔히 소멸)
+                HarmonyHorizontalProgressCanvas(
+                    style = ProgressBarStyle.HARMONY_OPTICAL,
+                    progress = if (trActive) trProg else 1f,
+                    isActive = trActive,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    lightIntensity = prefs.progressLightIntensity,
+                    particleDensity = prefs.progressParticleDensity,
+                    cornerRadiusDp = 22.dp,
+                    modifier = Modifier.matchParentSize()
+                )
 
-                // 출발어 칩
-                Row(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                        .clickable { pickingForSource = true }
-                        .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                @Composable
+                fun TranslateBannerContent(
+                    primaryCol: Color,
+                    onSurfCol: Color,
+                    mutedCol: Color,
+                    chipBgCol: Color,
+                    targetChipBgCol: Color
                 ) {
-                    Text(
-                        text = if (state.sourceLang == "auto") state.detectedLangLabel else TranslationManager.labelFor(state.sourceLang),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1
-                    )
-                    EgoIcon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(15.dp), symbolSize = 15.dp)
-                }
-
-                Text("→", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                // 도착어 칩
-                Row(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-                        .clickable { pickingForSource = false }
-                        .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = TranslationManager.labelFor(state.targetLang),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1
-                    )
-                    EgoIcon(
-                        Icons.Default.ArrowDropDown,
-                        contentDescription = null,
-                        modifier = Modifier.size(15.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    , symbolSize = 15.dp)
-                }
-
-                if (!state.isTranslating && !state.isTranslated && state.statusText.isNotBlank()) {
-                    Text(
-                        text = state.statusText,
-                        fontSize = 11.sp,
-                        color = EgoDangerRed,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                if (state.isTranslated) {
-                    Text(
-                        text = "원문",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
+                    Row(
                         modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onUndoRestore() }
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                    )
-                }
-
-                if (currentHost.isNotBlank()) {
-                    IconButton(
-                        onClick = onToggleAlwaysTranslate,
-                        modifier = Modifier.size(28.dp)
+                            .fillMaxWidth()
+                            .animateContentSize(animationSpec = EgoMotion.intSizeSpring)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         EgoIcon(
-                            imageVector = if (alwaysTranslateSite) Icons.Default.Star else Icons.Default.StarBorder,
-                            contentDescription = "이 사이트 항상 번역",
-                            tint = if (alwaysTranslateSite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(17.dp)
-                        , symbolSize = 17.dp)
+                            imageVector = Icons.Default.Translate,
+                            contentDescription = null,
+                            tint = if (state.isTranslated || trActive) primaryCol else mutedCol,
+                            modifier = Modifier.size(21.dp),
+                            symbolSize = 21.dp
+                        )
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                modifier = Modifier.horizontalScroll(rememberScrollState())
+                            ) {
+                                // 출발어 칩
+                                Row(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(chipBgCol)
+                                        .clickable { pickingForSource = true }
+                                        .padding(start = 8.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (state.sourceLang == "auto") state.detectedLangLabel else TranslationManager.labelFor(state.sourceLang),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = onSurfCol,
+                                        maxLines = 1
+                                    )
+                                    EgoIcon(Icons.Default.ArrowDropDown, contentDescription = null, tint = onSurfCol, modifier = Modifier.size(14.dp), symbolSize = 14.dp)
+                                }
+                                Text("→", fontSize = 11.5.sp, color = mutedCol)
+                                // 도착어 칩
+                                Row(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(targetChipBgCol)
+                                        .clickable { pickingForSource = false }
+                                        .padding(start = 8.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = TranslationManager.labelFor(state.targetLang),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = primaryCol,
+                                        maxLines = 1
+                                    )
+                                    EgoIcon(Icons.Default.ArrowDropDown, contentDescription = null, tint = primaryCol, modifier = Modifier.size(14.dp), symbolSize = 14.dp)
+                                }
+                            }
+
+                            val subLine = when {
+                                trActive -> "${state.statusText.ifBlank { "페이지 번역 중..." }} · ${(trProg * 100).roundToInt()}%"
+                                state.isTranslated -> "번역 완료 · 스와이프하여 닫기"
+                                state.statusText.isNotBlank() -> state.statusText
+                                else -> "번역 준비됨"
+                            }
+                            Text(
+                                text = subLine,
+                                fontSize = 11.5.sp,
+                                color = if (!trActive && !state.isTranslated && state.statusText.isNotBlank()) EgoDangerRed else mutedCol,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        if (state.isTranslated && !trActive) {
+                            Text(
+                                text = "원문",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = primaryCol,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable { onUndoRestore() }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        if (currentHost.isNotBlank()) {
+                            IconButton(
+                                onClick = onToggleAlwaysTranslate,
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                EgoIcon(
+                                    imageVector = if (alwaysTranslateSite) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = "이 사이트 항상 번역",
+                                    tint = if (alwaysTranslateSite) primaryCol else mutedCol,
+                                    modifier = Modifier.size(18.dp),
+                                    symbolSize = 18.dp
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable { dismissCapsuleWithCapture() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            EgoIcon(
+                                Icons.Default.Close,
+                                contentDescription = "닫기",
+                                modifier = Modifier.size(16.dp),
+                                tint = mutedCol,
+                                symbolSize = 16.dp
+                            )
+                        }
                     }
                 }
 
-                IconButton(
-                    onClick = { dismissCapsuleWithCapture() },
-                    modifier = Modifier.size(26.dp)
+                TranslateBannerContent(
+                    primaryCol = MaterialTheme.colorScheme.primary,
+                    onSurfCol = MaterialTheme.colorScheme.onSurface,
+                    mutedCol = MaterialTheme.colorScheme.onSurfaceVariant,
+                    chipBgCol = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    targetChipBgCol = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                )
+
+                // 방식 B: 지나간 영역은 선명한 검정 글자 유지, 100% 완료 시 자연스럽게 원복
+                HarmonyModeBClippedOverlay(
+                    enabled = trActive,
+                    progress = trProg,
+                    isActive = trActive
                 ) {
-                    EgoIcon(
-                        Icons.Default.Close,
-                        contentDescription = "닫기",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    , symbolSize = 16.dp)
+                    TranslateBannerContent(
+                        primaryCol = invTextCol,
+                        onSurfCol = invTextCol,
+                        mutedCol = invTextCol.copy(alpha = 0.85f),
+                        chipBgCol = invTextCol.copy(alpha = 0.14f),
+                        targetChipBgCol = invTextCol.copy(alpha = 0.18f)
+                    )
                 }
             }
         }
@@ -441,6 +549,7 @@ fun TranslateSettingsPopupDialog(
     onChangeDefaultTarget: (String) -> Unit,
     onToggleOfferTranslate: (Boolean) -> Unit,
     onToggleAlwaysTranslateSite: () -> Unit,
+    anchorRect: Rect? = null,
     onDismiss: (VanishSnapshot) -> Unit
 ) {
     val quickLangs = listOf(
@@ -470,43 +579,32 @@ fun TranslateSettingsPopupDialog(
                 detectTapGestures { offset -> dismissWithCapture(offset) }
             }
     ) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 50.dp, end = 24.dp)
-        ) {
-            AnimatedVisibility(
-                visible = cardVisible,
-                enter = fadeIn(tween(130)) + scaleIn(
-                    initialScale = 0.30f,
-                    transformOrigin = TransformOrigin(1f, 0f),
-                    animationSpec = EgoMotion.morphSpring()
-                ),
-                exit = fadeOut(tween(100)) + scaleOut(
-                    targetScale = 0.78f,
-                    transformOrigin = TransformOrigin(1f, 0f),
-                    animationSpec = tween(130)
-                )
+        HarmonyAnchoredMorphContainer(
+            anchorRect = anchorRect,
+            cardWidth = 336.dp,
+            fallbackTopPadding = 96.dp,
+            fallbackEndPadding = 24.dp
+        ) { morphCorner ->
+            val cardShape = RoundedCornerShape(morphCorner)
+            Surface(
+                shape = cardShape,
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                shadowElevation = 14.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
+                    .drawWithContent {
+                        captureLayer.record { this@drawWithContent.drawContent() }
+                        drawLayer(captureLayer)
+                    }
+                    .heightIn(max = 500.dp)
+                    .harmonyRimGlow(enabled = true, shape = cardShape, glowColor = MaterialTheme.colorScheme.primary)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), cardShape)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) {}
             ) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                    shadowElevation = 14.dp,
-                    modifier = Modifier
-                        .width(336.dp)
-                        .onGloballyPositioned { coords -> cardRect = coords.boundsInRoot() }
-                        .drawWithContent {
-                            captureLayer.record { this@drawWithContent.drawContent() }
-                            drawLayer(captureLayer)
-                        }
-                        .heightIn(max = 500.dp)
-                        .harmonyRimGlow(enabled = true, cornerRadius = 24.dp, glowColor = MaterialTheme.colorScheme.primary)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f), RoundedCornerShape(24.dp))
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) {}
-                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -629,7 +727,6 @@ fun TranslateSettingsPopupDialog(
                         }
                     }
                 }
-            }
         }
     }
 }
