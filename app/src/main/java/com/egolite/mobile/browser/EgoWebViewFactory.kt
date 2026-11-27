@@ -314,6 +314,7 @@ object EgoWebViewFactory {
         } else {
             webView.setBackgroundColor(Color.WHITE)
         }
+        webView.addJavascriptInterface(ExtensionManager.PageExtensionBridge(webView), "EgoExtBridge")
         webView.addJavascriptInterface(
             object {
                 @JavascriptInterface
@@ -589,6 +590,7 @@ object EgoWebViewFactory {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                view?.let { v -> ExtensionManager.injectMatchingExtensions(v, url, "start") }
                 val darkNow = darkModeProvider()
                 view?.setBackgroundColor(if (darkNow) Color.parseColor("#121316") else Color.WHITE)
                 if (view != null && WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
@@ -604,6 +606,7 @@ object EgoWebViewFactory {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                view?.let { v -> ExtensionManager.injectMatchingExtensions(v, url, "end") }
                 // React/SPA 오프-DOM <a download="..."> blob 다운로드 파일명 캡처 훅 (Codemagic/GitHub 등)
                 view?.evaluateJavascript(
                     "(function(){if(window.__egoDlHooked)return;window.__egoDlHooked=true;window.__egoBlobNames={};" +
