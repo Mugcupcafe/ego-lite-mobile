@@ -1489,348 +1489,47 @@ fun BrowserScreen() {
                         .padding(horizontal = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val homeJumpY = remember { Animatable(0f) }
-                    val homeScaleX = remember { Animatable(1f) }
-                    val homeScaleY = remember { Animatable(1f) }
-                    val homeWave = remember { Animatable(0f) }
-                    val navPrimaryColor = MaterialTheme.colorScheme.primary
-                    if (prefs.showHomeButton) {
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    homeScaleX.snapTo(1.16f); homeScaleY.snapTo(0.84f)
-                                    homeJumpY.animateTo(-5.5f, tween(110))
-                                    homeScaleX.animateTo(0.92f, tween(80))
-                                    homeScaleY.animateTo(1.12f, tween(80))
-                                    homeJumpY.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 460f))
-                                    homeScaleX.animateTo(1f, EgoMotion.bouncySpring())
-                                    homeScaleY.animateTo(1f, EgoMotion.bouncySpring())
-                                }
-                                scope.launch {
-                                    homeWave.snapTo(0f)
-                                    homeWave.animateTo(1f, tween(380))
-                                    homeWave.snapTo(0f)
-                                }
-                                SpaceManager.goHome(activeSpace.id)
-                            },
-                            modifier = Modifier
-                                .size(38.dp)
-                                .drawBehind {
-                                    val w = homeWave.value
-                                    if (w > 0.01f && w < 0.99f) {
-                                        drawCircle(
-                                            color = navPrimaryColor.copy(alpha = (1f - w) * 0.45f),
-                                            radius = size.minDimension * (0.24f + 0.34f * w),
-                                            style = Stroke(width = (2.2f * (1f - w)).dp.toPx())
-                                        )
-                                    }
-                                }
-                        ) {
-                            EgoIcon(
-                                Icons.Default.Home,
-                                contentDescription = "홈",
-                                tint = activeIconColor,
-                                modifier = Modifier.graphicsLayer {
-                                    translationY = homeJumpY.value * density.density
-                                    scaleX = homeScaleX.value
-                                    scaleY = homeScaleY.value
-                                },
-                                symbolSize = 20.dp
-                            )
-                        }
-                    }
-
-                    val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1 || activeTab.url != NEW_TAB_URL
-                    val backKickX = remember { Animatable(0f) }
-                    val backSquashX = remember { Animatable(1f) }
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                backSquashX.snapTo(0.82f)
-                                backKickX.animateTo(-6.5f, tween(95))
-                                backSquashX.animateTo(1.10f, tween(90))
-                                backKickX.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 480f))
-                                backSquashX.animateTo(1f, EgoMotion.bouncySpring())
-                            }
-                            SpaceManager.handleBackOrCloseTab(activeSpace.id)
-                        },
-                        enabled = canBackOrClose,
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        EgoIcon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "뒤로",
-                            tint = if (canBackOrClose) activeIconColor else mutedIconColor.copy(alpha = 0.45f),
-                            modifier = Modifier.graphicsLayer {
-                                translationX = backKickX.value * density.density
-                                scaleX = backSquashX.value
-                                scaleY = 2f - backSquashX.value.coerceIn(0.85f, 1.15f)
-                            },
-                            symbolSize = 20.dp
-                        )
-                    }
-
-                    val fwdKickX = remember { Animatable(0f) }
-                    val fwdSquashX = remember { Animatable(1f) }
-                    IconButton(
-                        onClick = {
-                            scope.launch {
-                                fwdSquashX.snapTo(0.82f)
-                                fwdKickX.animateTo(6.5f, tween(95))
-                                fwdSquashX.animateTo(1.10f, tween(90))
-                                fwdKickX.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 480f))
-                                fwdSquashX.animateTo(1f, EgoMotion.bouncySpring())
-                            }
-                            SpaceManager.goForward(activeSpace.id)
-                        },
-                        enabled = activeTab.canGoForward,
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        EgoIcon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "앞으로",
-                            tint = if (activeTab.canGoForward) activeIconColor else mutedIconColor.copy(alpha = 0.45f),
-                            modifier = Modifier.graphicsLayer {
-                                translationX = fwdKickX.value * density.density
-                                scaleX = fwdSquashX.value
-                                scaleY = 2f - fwdSquashX.value.coerceIn(0.85f, 1.15f)
-                            },
-                            symbolSize = 20.dp
-                        )
-                    }
-
-                    var refreshSpinTurns by remember { mutableIntStateOf(0) }
-                    val refreshSpinDeg by animateFloatAsState(
-                        targetValue = refreshSpinTurns * 360f,
-                        animationSpec = spring(dampingRatio = 0.62f, stiffness = 210f),
-                        label = "refreshSpinMorph"
+                    LeftNavToolbarButtons(
+                        showHomeButton = prefs.showHomeButton,
+                        canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1 || activeTab.url != NEW_TAB_URL,
+                        canGoForward = activeTab.canGoForward,
+                        activeIconColor = activeIconColor,
+                        mutedIconColor = mutedIconColor,
+                        onGoHome = { SpaceManager.goHome(activeSpace.id) },
+                        onBackOrClose = { SpaceManager.handleBackOrCloseTab(activeSpace.id) },
+                        onGoForward = { SpaceManager.goForward(activeSpace.id) },
+                        onReload = { SpaceManager.reload(activeSpace.id) }
                     )
-                    val refreshPop = remember { Animatable(1f) }
-                    val refreshWave = remember { Animatable(0f) }
-                    IconButton(
-                        onClick = {
-                            refreshSpinTurns++
-                            scope.launch {
-                                refreshPop.snapTo(0.82f)
-                                refreshPop.animateTo(1.20f, spring(dampingRatio = 0.48f, stiffness = 520f))
-                                refreshPop.animateTo(1f, EgoMotion.bouncySpring())
-                            }
-                            scope.launch {
-                                refreshWave.snapTo(0f)
-                                refreshWave.animateTo(1f, tween(420))
-                                refreshWave.snapTo(0f)
-                            }
-                            SpaceManager.reload(activeSpace.id)
-                        },
-                        modifier = Modifier
-                            .size(38.dp)
-                            .drawBehind {
-                                val w = refreshWave.value
-                                if (w > 0.01f && w < 0.99f) {
-                                    drawCircle(
-                                        color = navPrimaryColor.copy(alpha = (1f - w) * 0.42f),
-                                        radius = size.minDimension * (0.22f + 0.34f * w),
-                                        style = Stroke(width = (2.0f * (1f - w)).dp.toPx())
-                                    )
-                                }
-                            }
-                    ) {
-                        EgoIcon(
-                            Icons.Default.Refresh,
-                            contentDescription = "새로고침",
-                            tint = activeIconColor,
-                            modifier = Modifier.graphicsLayer {
-                                rotationZ = refreshSpinDeg
-                                scaleX = refreshPop.value
-                                scaleY = refreshPop.value
-                            },
-                            symbolSize = 20.dp
-                        )
-                    }
                 }
 
-                // 그룹 2: (주소창) — 인접 도형과 맞물리는 6dp 모서리 + 선택 탭과 동일 서피스 + 선택형 광감 진행바
+                // 그룹 2: (주소창) — 별도 Composable로 분리 (JVM 메서드 크기 최적화)
                 val existingBookmark = bookmarks.firstOrNull { it.url == activeTab.url }
-                val omniElasticPull = remember { Animatable(0f) }
-                val omniElasticScope = rememberCoroutineScope()
-                val showOmniOptical = prefs.progressShowInOmnibox && prefs.progressBarStyle != ProgressBarStyle.MATERIAL
-                val omniIsLoadingNow = activeTab.isLoading && activeTab.progress in 1..99
-                val omniProgFrac = (activeTab.progress / 100f).coerceIn(0f, 1f)
-                val omniAccent = if (activeSpace.type == SpaceType.AI) EgoEmerald else MaterialTheme.colorScheme.primary
-                val omniInvTextColor = if (isEffectiveDark) Color(0xFF090D16) else Color.White
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(40.dp)
-                        .graphicsLayer {
-                            alpha = if (showOmniboxOverlay) 0f else 1f
-                            if (prefs.toolbarElasticityEnabled) {
-                                val pull = omniElasticPull.value
-                                translationX = pull * 0.22f
-                                scaleX = (1f + kotlin.math.abs(pull) * 0.0008f).coerceAtMost(1.03f)
-                                scaleY = (1f - kotlin.math.abs(pull) * 0.0005f).coerceAtLeast(0.97f)
-                            }
-                        }
-                        .onGloballyPositioned { coords ->
-                            val pos = coords.positionInRoot()
-                            addressBarLeftPx = (pos.x - rootBoxLeftPx).coerceAtLeast(0f)
-                            addressBarTopPx = (pos.y - rootBoxTopPx).coerceAtLeast(0f)
-                            addressBarWidthPx = coords.size.width.toFloat()
-                        }
-                        .clip(m3CenterGroupShape)
-                        .background(toolbarChrome.groupSurface)
-                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3CenterGroupShape, glowColor = MaterialTheme.colorScheme.primary)
-                        .border(1.dp, m3GroupBorder, m3CenterGroupShape)
-                        .pointerInput(activeSpace.id, prefs.toolbarElasticityEnabled) {
-                            var dragSum = 0f
-                            detectHorizontalDragGestures(
-                                onDragEnd = {
-                                    if (dragSum > 70f) SpaceManager.switchTabByOffset(activeSpace.id, -1)
-                                    else if (dragSum < -70f) SpaceManager.switchTabByOffset(activeSpace.id, 1)
-                                    dragSum = 0f
-                                    omniElasticScope.launch { omniElasticPull.animateTo(0f, EgoMotion.responsiveSpring()) }
-                                },
-                                onDragCancel = {
-                                    dragSum = 0f
-                                    omniElasticScope.launch { omniElasticPull.animateTo(0f, EgoMotion.responsiveSpring()) }
-                                },
-                                onHorizontalDrag = { _, amount ->
-                                    dragSum += amount
-                                    if (prefs.toolbarElasticityEnabled) {
-                                        val rubber = kotlin.math.sign(dragSum) * 28f * (1f - kotlin.math.exp(-kotlin.math.abs(dragSum) / 90f))
-                                        omniElasticScope.launch { omniElasticPull.snapTo(rubber) }
-                                    }
-                                }
-                            )
-                        }
-                        .clickable { showOmniboxOverlay = true }
-                ) {
-                    if (showOmniOptical) {
-                        HarmonyHorizontalProgressCanvas(
-                            style = prefs.progressBarStyle,
-                            progress = omniProgFrac,
-                            isActive = omniIsLoadingNow,
-                            accentColor = omniAccent,
-                            lightIntensity = prefs.progressLightIntensity,
-                            particleDensity = prefs.progressParticleDensity,
-                            cornerRadiusDp = 6.dp,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                OmniboxCenterCapsule(
+                    activeTab = activeTab,
+                    activeSpaceId = activeSpace.id,
+                    isAiSpace = activeSpace.type == SpaceType.AI,
+                    isEffectiveDark = isEffectiveDark,
+                    showOmniboxOverlay = showOmniboxOverlay,
+                    prefs = prefs,
+                    existingBookmark = existingBookmark,
+                    groupSurface = toolbarChrome.groupSurface,
+                    groupBorder = m3GroupBorder,
+                    activeIconColor = activeIconColor,
+                    mutedIconColor = mutedIconColor,
+                    rootBoxLeftPx = rootBoxLeftPx,
+                    rootBoxTopPx = rootBoxTopPx,
+                    onBoundsMeasured = { l, t, w ->
+                        addressBarLeftPx = l
+                        addressBarTopPx = t
+                        addressBarWidthPx = w
+                    },
+                    onSwitchTabByOffset = { off -> SpaceManager.switchTabByOffset(activeSpace.id, off) },
+                    onOpenOmnibox = { showOmniboxOverlay = true },
+                    onClickBookmark = {
+                        if (existingBookmark != null) editingBookmark = existingBookmark
+                        else showAddBookmarkDialog = true
                     }
-
-                    @Composable
-                    fun OmniboxInnerRow(lockTint: Color, urlTint: Color, starTint: Color) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            EgoIcon(
-                                imageVector = if (activeTab.isIncognito) Icons.Default.VisibilityOff else Icons.Default.Lock,
-                                contentDescription = if (activeTab.isIncognito) "시크릿 모드" else null,
-                                modifier = Modifier.size(16.dp),
-                                tint = lockTint,
-                                symbolSize = 16.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            val isNewTab = activeTab.url == NEW_TAB_URL
-                            Text(
-                                text = if (isNewTab) "Google 검색 또는 URL 입력" else activeTab.url,
-                                fontSize = 14.sp,
-                                color = urlTint,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            val starBurst = remember { Animatable(0f) }
-                            val starSpin = remember { Animatable(0f) }
-                            val starSparkColor = MaterialTheme.colorScheme.primary
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .drawBehind {
-                                        val b = starBurst.value
-                                        if (b > 0.01f && b < 0.99f) {
-                                            val cx = size.width * 0.5f
-                                            val cy = size.height * 0.5f
-                                            val alpha = (1f - b) * 0.85f
-                                            for (ray in 0 until 6) {
-                                                val ang = (ray * 60.0 + 15.0) * Math.PI / 180.0
-                                                val r1 = size.minDimension * (0.18f + 0.30f * b)
-                                                val r2 = size.minDimension * (0.28f + 0.36f * b)
-                                                val cosA = kotlin.math.cos(ang).toFloat()
-                                                val sinA = kotlin.math.sin(ang).toFloat()
-                                                drawLine(
-                                                    color = starSparkColor.copy(alpha = alpha),
-                                                    start = Offset(cx + cosA * r1, cy + sinA * r1),
-                                                    end = Offset(cx + cosA * r2, cy + sinA * r2),
-                                                    strokeWidth = (2.0f * (1f - b * 0.6f)).dp.toPx()
-                                                )
-                                            }
-                                        }
-                                    }
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        scope.launch {
-                                            starSpin.snapTo(0f)
-                                            starSpin.animateTo(360f, spring(dampingRatio = 0.55f, stiffness = 320f))
-                                        }
-                                        scope.launch {
-                                            starBurst.snapTo(0f)
-                                            starBurst.animateTo(1f, tween(420))
-                                            starBurst.snapTo(0f)
-                                        }
-                                        if (existingBookmark != null) {
-                                            editingBookmark = existingBookmark
-                                        } else {
-                                            showAddBookmarkDialog = true
-                                        }
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                val starPopScale by animateFloatAsState(
-                                    targetValue = if (existingBookmark != null) 1.14f else 1.0f,
-                                    animationSpec = EgoMotion.bouncySpring(),
-                                    label = "bookmarkStarPop"
-                                )
-                                EgoIcon(
-                                    imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
-                                    contentDescription = "북마크 추가/수정",
-                                    tint = starTint,
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .graphicsLayer {
-                                            scaleX = starPopScale * (1f + 0.22f * kotlin.math.sin(starBurst.value * Math.PI).toFloat())
-                                            scaleY = starPopScale * (1f + 0.22f * kotlin.math.sin(starBurst.value * Math.PI).toFloat())
-                                            rotationZ = starSpin.value
-                                        },
-                                    symbolSize = 20.dp
-                                )
-                            }
-                        }
-                    }
-
-                    val isNewTab = activeTab.url == NEW_TAB_URL
-                    OmniboxInnerRow(
-                        lockTint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor,
-                        urlTint = if (isNewTab) mutedIconColor else activeIconColor,
-                        starTint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor
-                    )
-
-                    HarmonyModeBClippedOverlay(
-                        enabled = showOmniOptical && prefs.progressBarStyle == ProgressBarStyle.HARMONY_OPTICAL,
-                        progress = omniProgFrac,
-                        isActive = omniIsLoadingNow
-                    ) {
-                        OmniboxInnerRow(
-                            lockTint = omniInvTextColor.copy(alpha = 0.85f),
-                            urlTint = omniInvTextColor,
-                            starTint = omniInvTextColor
-                        )
-                    }
-                }
+                )
 
                 // 그룹 3: (MCP · AI · 광고차단 · 번역 · 다크모드 · 프로필 · 전체탭 · 메뉴)
                 Row(
@@ -2114,223 +1813,29 @@ fun BrowserScreen() {
                                 }
                             }
                         }
-                        "NEW_TAB" -> {
-                            if (prefs.showNewTabToolbarButton) {
-                                val ntSpin = remember { Animatable(0f) }
-                                val ntPop = remember { Animatable(1f) }
-                                val ntWave = remember { Animatable(0f) }
-                                val ntRingCol = MaterialTheme.colorScheme.primary
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            ntSpin.snapTo(0f)
-                                            ntSpin.animateTo(90f, spring(dampingRatio = 0.55f, stiffness = 360f))
+                        "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER" -> {
+                            RightExtraToolbarButton(
+                                tbKey = tbKey,
+                                prefs = prefs,
+                                isWebPage = isWebPage,
+                                showFindBar = showFindBar,
+                                activeIconColor = activeIconColor,
+                                mutedIconColor = mutedIconColor,
+                                activeTabTitle = activeTab.title,
+                                activeTabUrl = activeTab.url,
+                                onCreateTab = { SpaceManager.createTab(activeSpace.id, selectImmediately = true) },
+                                onToggleFindBar = { showFindBar = !showFindBar },
+                                onToggleDesktop = { SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) } },
+                                onOpenReader = {
+                                    scope.launch {
+                                        runCatching {
+                                            val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
+                                            val md = JSONObject(raw).optString("markdown", "")
+                                            readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
                                         }
-                                        scope.launch {
-                                            ntPop.snapTo(0.80f)
-                                            ntPop.animateTo(1.22f, spring(dampingRatio = 0.48f, stiffness = 540f))
-                                            ntPop.animateTo(1f, EgoMotion.bouncySpring())
-                                        }
-                                        scope.launch {
-                                            ntWave.snapTo(0f)
-                                            ntWave.animateTo(1f, tween(380))
-                                            ntWave.snapTo(0f)
-                                        }
-                                        SpaceManager.createTab(activeSpace.id, selectImmediately = true)
-                                    },
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .drawBehind {
-                                            val w = ntWave.value
-                                            if (w > 0.01f && w < 0.99f) {
-                                                drawCircle(
-                                                    color = ntRingCol.copy(alpha = (1f - w) * 0.48f),
-                                                    radius = size.minDimension * (0.22f + 0.34f * w),
-                                                    style = Stroke(width = (2.0f * (1f - w)).dp.toPx())
-                                                )
-                                            }
-                                        }
-                                ) {
-                                    EgoIcon(
-                                        Icons.Default.Add,
-                                        contentDescription = "새 탭",
-                                        tint = activeIconColor,
-                                        modifier = Modifier.graphicsLayer {
-                                            rotationZ = ntSpin.value
-                                            scaleX = ntPop.value
-                                            scaleY = ntPop.value
-                                        },
-                                        symbolSize = 20.dp
-                                    )
+                                    }
                                 }
-                            }
-                        }
-                        "SHARE" -> {
-                            if (prefs.showShareButton && isWebPage) {
-                                val shLaunch = remember { Animatable(0f) }
-                                val shWave = remember { Animatable(0f) }
-                                val shRingCol = MaterialTheme.colorScheme.primary
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            shLaunch.snapTo(0f)
-                                            shLaunch.animateTo(1f, tween(120))
-                                            shLaunch.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 440f))
-                                        }
-                                        scope.launch {
-                                            shWave.snapTo(0f)
-                                            shWave.animateTo(1f, tween(400))
-                                            shWave.snapTo(0f)
-                                        }
-                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
-                                            putExtra(Intent.EXTRA_TEXT, activeTab.url)
-                                        }
-                                        context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
-                                    },
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .drawBehind {
-                                            val w = shWave.value
-                                            if (w > 0.01f && w < 0.99f) {
-                                                drawCircle(
-                                                    color = shRingCol.copy(alpha = (1f - w) * 0.46f),
-                                                    radius = size.minDimension * (0.22f + 0.36f * w),
-                                                    style = Stroke(width = (2.0f * (1f - w)).dp.toPx())
-                                                )
-                                            }
-                                        }
-                                ) {
-                                    val l = shLaunch.value
-                                    EgoIcon(
-                                        Icons.Default.Share,
-                                        contentDescription = "공유",
-                                        tint = activeIconColor,
-                                        modifier = Modifier.graphicsLayer {
-                                            translationX = (4.2f * l) * density.density
-                                            translationY = (-4.5f * l) * density.density
-                                            rotationZ = -14f * l
-                                            scaleX = 1f + 0.16f * l
-                                            scaleY = 1f + 0.16f * l
-                                        },
-                                        symbolSize = 20.dp
-                                    )
-                                }
-                            }
-                        }
-                        "FIND" -> {
-                            if (prefs.showFindInPageButton && isWebPage) {
-                                val findTilt = remember { Animatable(0f) }
-                                val findZoom = remember { Animatable(1f) }
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            findTilt.snapTo(0f)
-                                            findTilt.animateTo(-18f, tween(85))
-                                            findTilt.animateTo(14f, tween(110))
-                                            findTilt.animateTo(0f, spring(dampingRatio = 0.50f, stiffness = 420f))
-                                        }
-                                        scope.launch {
-                                            findZoom.snapTo(0.84f)
-                                            findZoom.animateTo(1.24f, spring(dampingRatio = 0.48f, stiffness = 520f))
-                                            findZoom.animateTo(1f, EgoMotion.bouncySpring())
-                                        }
-                                        showFindBar = !showFindBar
-                                    },
-                                    modifier = Modifier.size(38.dp)
-                                ) {
-                                    EgoIcon(
-                                        Icons.Default.FindInPage,
-                                        contentDescription = "페이지 내 찾기",
-                                        tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor,
-                                        modifier = Modifier.graphicsLayer {
-                                            rotationZ = findTilt.value
-                                            scaleX = findZoom.value
-                                            scaleY = findZoom.value
-                                        },
-                                        symbolSize = 20.dp
-                                    )
-                                }
-                            }
-                        }
-                        "DESKTOP" -> {
-                            if (prefs.showDesktopSiteButton) {
-                                val dtFlipY = remember { Animatable(0f) }
-                                val dtStretch = remember { Animatable(0f) }
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            dtFlipY.snapTo(0f)
-                                            dtFlipY.animateTo(360f, spring(dampingRatio = 0.62f, stiffness = 300f))
-                                        }
-                                        scope.launch {
-                                            dtStretch.snapTo(0f)
-                                            dtStretch.animateTo(1f, tween(110))
-                                            dtStretch.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 440f))
-                                        }
-                                        SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
-                                    },
-                                    modifier = Modifier.size(38.dp)
-                                ) {
-                                    val st = dtStretch.value
-                                    EgoIcon(
-                                        Icons.Default.DesktopWindows,
-                                        contentDescription = "데스크톱 사이트 전환",
-                                        tint = if (prefs.desktopModeEnabled) MaterialTheme.colorScheme.primary else mutedIconColor,
-                                        filled = prefs.desktopModeEnabled,
-                                        modifier = Modifier.graphicsLayer {
-                                            rotationY = dtFlipY.value
-                                            scaleX = 1f + 0.22f * st
-                                            scaleY = 1f - 0.14f * st
-                                            cameraDistance = 12f * density.density
-                                        },
-                                        symbolSize = 20.dp
-                                    )
-                                }
-                            }
-                        }
-                        "READER" -> {
-                            if (prefs.showReaderModeButton && isWebPage) {
-                                val rdTiltX = remember { Animatable(0f) }
-                                val rdPop = remember { Animatable(1f) }
-                                IconButton(
-                                    onClick = {
-                                        scope.launch {
-                                            rdTiltX.snapTo(0f)
-                                            rdTiltX.animateTo(-28f, tween(110))
-                                            rdTiltX.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 420f))
-                                        }
-                                        scope.launch {
-                                            rdPop.snapTo(0.84f)
-                                            rdPop.animateTo(1.20f, spring(dampingRatio = 0.48f, stiffness = 500f))
-                                            rdPop.animateTo(1f, EgoMotion.bouncySpring())
-                                        }
-                                        scope.launch {
-                                            runCatching {
-                                                val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
-                                                val md = JSONObject(raw).optString("markdown", "")
-                                                readerMarkdown = md.ifBlank { "본문을 추출할 수 없는 페이지입니다." }
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.size(38.dp)
-                                ) {
-                                    EgoIcon(
-                                        Icons.Default.MenuBook,
-                                        contentDescription = "읽기 모드",
-                                        tint = activeIconColor,
-                                        modifier = Modifier.graphicsLayer {
-                                            rotationX = rdTiltX.value
-                                            translationY = (rdTiltX.value * 0.10f) * density.density
-                                            scaleX = rdPop.value
-                                            scaleY = rdPop.value
-                                            cameraDistance = 12f * density.density
-                                        },
-                                        symbolSize = 20.dp
-                                    )
-                                }
-                            }
+                            )
                         }
                         "PROFILE" -> {
                             if (prefs.showProfileAvatarButton) {
