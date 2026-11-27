@@ -57,6 +57,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
 import com.egolite.mobile.model.CardVanishStyle
+import com.egolite.mobile.model.ProgressBarStyle
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -67,6 +68,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.spring
 import androidx.compose.ui.zIndex
@@ -216,6 +218,12 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.browser.AdBlockEngine
 import com.egolite.mobile.browser.DownloadCenter
+import com.egolite.mobile.browser.ExtensionManager
+import com.egolite.mobile.browser.InstalledExtension
+import com.egolite.mobile.browser.FaviconCache
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawOutline
 import com.egolite.mobile.browser.BrowserActivityBridge
 import com.egolite.mobile.browser.BrowserScripts
 import org.json.JSONObject
@@ -286,6 +294,9 @@ fun BrowserScreen() {
     var returningSpaceId by remember { mutableStateOf<String?>(null) }
     var showMcpDrawer by remember { mutableStateOf(false) }
     var showChromeSettings by remember { mutableStateOf(false) }
+    val installedExtensions by ExtensionManager.extensions.collectAsState()
+    var activeExtPopup by remember { mutableStateOf<InstalledExtension?>(null) }
+    var managingExt by remember { mutableStateOf<InstalledExtension?>(null) }
     var showDownloadsScreen by remember { mutableStateOf(false) }
     val downloadBanner by DownloadCenter.banner.collectAsState()
     val duplicateDownloadPrompt by DownloadCenter.duplicatePrompt.collectAsState()
@@ -298,6 +309,13 @@ fun BrowserScreen() {
     var showFindBar by remember { mutableStateOf(false) }
     var showAdBlockDialog by remember { mutableStateOf(false) }
     var showTranslateSettingsDialog by remember { mutableStateOf(false) }
+    var mcpAnchorRect by remember { mutableStateOf<Rect?>(null) }
+    var adBlockAnchorRect by remember { mutableStateOf<Rect?>(null) }
+    var translateAnchorRect by remember { mutableStateOf<Rect?>(null) }
+    val adBlockPulseAnim = remember { Animatable(1f) }
+    val adBlockWaveAnim = remember { Animatable(0f) }
+    val translateFlipAnim = remember { Animatable(0f) }
+    val translateScaleAnim = remember { Animatable(1f) }
     var globalDustBursts by remember { mutableStateOf<List<DustVanishRequest>>(emptyList()) }
     var vanishingTopTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var collapsingTopTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -392,6 +410,7 @@ fun BrowserScreen() {
         translateState = translateState.copy(
             visible = true,
             isTranslating = true,
+            progress = 0.06f,
             sourceLang = src,
             targetLang = dst,
             statusText = "페이지 번역 중..."
@@ -402,11 +421,13 @@ fun BrowserScreen() {
                 sourceLang = src,
                 targetLang = dst,
                 engine = prefs.translationEngine,
-                onProgress = { msg -> translateState = translateState.copy(statusText = msg) }
+                onProgress = { msg -> translateState = translateState.copy(statusText = msg) },
+                onProgressFraction = { frac -> translateState = translateState.copy(progress = frac) }
             )
             translateState = translateState.copy(
                 isTranslating = false,
                 isTranslated = ok,
+                progress = if (ok) 1f else 0f,
                 statusText = if (ok) "번역됨" else detected,
                 detectedLangLabel = if (ok && src == "auto" && detected.isNotBlank() && detected != "auto") {
                     TranslationManager.labelFor(detected)
@@ -826,6 +847,7 @@ fun BrowserScreen() {
                         onCloseSpace = { id -> SpaceManager.closeAiSpace(id) },
                         onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
                         onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
+                        onGlobalDustVanish = { snap, accent -> emitDustSnapshot(snap, accent, 1.0f) },
                         onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
                     )
                 }
@@ -885,6 +907,7 @@ fun BrowserScreen() {
                             onCloseSpace = { id -> SpaceManager.closeAiSpace(id) },
                             onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
                             onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
+                            onGlobalDustVanish = { snap, accent -> emitDustSnapshot(snap, accent, 1.0f) },
                             onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
                         )
                     }
@@ -893,7 +916,7 @@ fun BrowserScreen() {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .height(46.dp)
                             .padding(start = (10.dp + tabStartPadding).coerceAtLeast(0.dp), end = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1035,7 +1058,7 @@ fun BrowserScreen() {
                                             translationX = neighborNudge.toPx() + animatedDragShiftPx
                                             alpha = when { tab.id in vanishingTopTabIds -> 0f; isBeingDragged -> 0.36f; else -> 1f }
                                         }
-                                        .height(36.dp)
+                                        .height(34.dp)
                                         .then(
                                             if (prefs.tabWidthMode == TabWidthMode.MANUAL) {
                                                 Modifier.width(prefs.manualTabWidthDp.coerceIn(110, 240).dp)
@@ -1048,6 +1071,63 @@ fun BrowserScreen() {
                                             if (isBeingDragged && isReorderingInBar) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                                             else tabBg
                                         )
+                                        .harmonyRimGlow(
+                                            enabled = prefs.rimGlowEnabled,
+                                            shape = tabShape,
+                                            glowColor = MaterialTheme.colorScheme.primary
+                                        )
+                                        .drawWithContent {
+                                            drawContent()
+                                            if (prefs.rimGlowEnabled && draggingTabId != null && !isBeingDragged) {
+                                                val tRect = tabBoundsMap[tab.id]
+                                                if (tRect != null) {
+                                                    val localPtr = dragPointerRoot - tRect.topLeft
+                                                    val dx = when {
+                                                        dragPointerRoot.x < tRect.left -> tRect.left - dragPointerRoot.x
+                                                        dragPointerRoot.x > tRect.right -> dragPointerRoot.x - tRect.right
+                                                        else -> 0f
+                                                    }
+                                                    val dy = when {
+                                                        dragPointerRoot.y < tRect.top -> tRect.top - dragPointerRoot.y
+                                                        dragPointerRoot.y > tRect.bottom -> dragPointerRoot.y - tRect.bottom
+                                                        else -> 0f
+                                                    }
+                                                    val dist = kotlin.math.hypot(dx, dy)
+                                                    val prox = (1f - dist / 210f).coerceIn(0f, 1f)
+                                                    if (prox > 0.01f) {
+                                                        val eff = prefs.rimGlowIntensity.coerceIn(0.5f, 2.5f)
+                                                        val outline = tabShape.createOutline(size, layoutDirection, this)
+                                                        val rad = (size.maxDimension * 0.72f).coerceIn(120f, 320f)
+                                                        drawOutline(
+                                                            outline = outline,
+                                                            brush = Brush.radialGradient(
+                                                                colors = listOf(
+                                                                    Color.White.copy(alpha = (0.14f * eff * prox).coerceAtMost(0.38f)),
+                                                                    ringColor.copy(alpha = (0.24f * eff * prox).coerceAtMost(0.52f)),
+                                                                    Color.Transparent
+                                                                ),
+                                                                center = localPtr,
+                                                                radius = rad
+                                                            ),
+                                                            style = Fill
+                                                        )
+                                                        drawOutline(
+                                                            outline = outline,
+                                                            brush = Brush.radialGradient(
+                                                                colors = listOf(
+                                                                    Color.White.copy(alpha = (0.88f * eff * prox).coerceAtMost(1f)),
+                                                                    ringColor.copy(alpha = (0.55f * eff * prox).coerceAtMost(0.92f)),
+                                                                    Color.Transparent
+                                                                ),
+                                                                center = localPtr,
+                                                                radius = rad * 0.9f
+                                                            ),
+                                                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.8.dp.toPx())
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
                                         .then(slotBorderMod)
                                         .pointerInput(tab.id) {
                                             awaitPointerEventScope {
@@ -1222,9 +1302,9 @@ fun BrowserScreen() {
                                         EgoIcon(
                                             imageVector = Icons.Default.VisibilityOff,
                                             contentDescription = "시크릿 탭",
-                                            modifier = Modifier.size(14.dp),
+                                            modifier = Modifier.size(15.dp),
                                             tint = MaterialTheme.colorScheme.primary
-                                        , symbolSize = 14.dp)
+                                        , symbolSize = 15.dp)
                                         Spacer(modifier = Modifier.width(5.dp))
                                     }
                                     if (tab.isPlayingAudio || tab.isMuted) {
@@ -1239,6 +1319,55 @@ fun BrowserScreen() {
                                         )
                                         Spacer(modifier = Modifier.width(5.dp))
                                     }
+                                    if (!tab.isIncognito && !(tab.isPlayingAudio || tab.isMuted)) {
+                                        val isInternalNew = tab.url == NEW_TAB_URL || tab.url.isBlank()
+                                        val isInternalDl = tab.url == "ego://downloads"
+                                        val isInternalHist = tab.url == "ego://history"
+                                        if (isInternalNew || isInternalDl || isInternalHist) {
+                                            val sysIcon = when {
+                                                isInternalDl -> Icons.Default.Download
+                                                isInternalHist -> Icons.Default.History
+                                                else -> Icons.Default.Home
+                                            }
+                                            EgoIcon(
+                                                imageVector = sysIcon,
+                                                contentDescription = null,
+                                                tint = if (isSelected) MaterialTheme.colorScheme.primary else mutedIconColor,
+                                                modifier = Modifier.size(15.dp),
+                                                symbolSize = 15.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                        } else {
+                                            var tabFavicon by remember(tab.url) {
+                                                mutableStateOf(FaviconCache.getMemoryCached(tab.url))
+                                            }
+                                            LaunchedEffect(tab.url) {
+                                                if (tabFavicon == null) {
+                                                    tabFavicon = FaviconCache.loadFavicon(context, tab.url)
+                                                }
+                                            }
+                                            val favBmp = tabFavicon
+                                            if (favBmp != null && !favBmp.isRecycled) {
+                                                Image(
+                                                    bitmap = favBmp.asImageBitmap(),
+                                                    contentDescription = null,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .size(16.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                )
+                                            } else {
+                                                EgoIcon(
+                                                    imageVector = Icons.Default.Public,
+                                                    contentDescription = null,
+                                                    tint = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f) else mutedIconColor,
+                                                    modifier = Modifier.size(15.dp),
+                                                    symbolSize = 15.dp
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                        }
+                                    }
                                     val displayTabTitle = tab.title.ifBlank { tab.url }
                                     val isDynamic = prefs.tabWidthMode == TabWidthMode.DYNAMIC
                                     Box(
@@ -1249,7 +1378,7 @@ fun BrowserScreen() {
                                     ) {
                                         Text(
                                             text = displayTabTitle,
-                                            fontSize = 13.sp,
+                                            fontSize = 12.5.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                             color = tabFg,
                                             maxLines = 1,
@@ -1309,7 +1438,7 @@ fun BrowserScreen() {
                                                 }
                                             },
                                         tint = if (isSelected) tabFg.copy(alpha = 0.78f) else mutedIconColor,
-                                        symbolSize = 16.dp
+                                        symbolSize = 15.dp
                                     )
                                 }
                                 }
@@ -1320,7 +1449,7 @@ fun BrowserScreen() {
                         Spacer(modifier = Modifier.width(4.dp))
                         IconButton(
                             onClick = { SpaceManager.createTab(activeSpace.id) },
-                            modifier = Modifier.size(36.dp).pressBounceScale()
+                            modifier = Modifier.size(34.dp).pressBounceScale()
                         ) {
                             EgoIcon(
                                 imageVector = Icons.Default.Add,
@@ -1335,14 +1464,14 @@ fun BrowserScreen() {
             // 2행: Material 3 Expressive Connected 3-그룹 툴바 (바깥 22dp · 인접 6dp, 3dp 간격, 선택 탭과 동일 색상)
             val toolbarChrome = LocalEgoChromeColors.current
             val m3GroupBorder = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.20f)
-            val m3LeftGroupShape = RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp, topEnd = 6.dp, bottomEnd = 6.dp)
+            val m3LeftGroupShape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 6.dp, bottomEnd = 6.dp)
             val m3CenterGroupShape = RoundedCornerShape(6.dp)
-            val m3RightGroupShape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 22.dp, bottomEnd = 22.dp)
+            val m3RightGroupShape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 20.dp, bottomEnd = 20.dp)
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(48.dp)
                     .background(toolbarChrome.backdropBg)
                     .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1351,82 +1480,197 @@ fun BrowserScreen() {
                 // 그룹 1: (홈 · 뒤로 · 앞으로 · 새로고침)
                 Row(
                     modifier = Modifier
-                        .height(42.dp)
+                        .height(40.dp)
                         .clip(m3LeftGroupShape)
                         .background(toolbarChrome.groupSurface)
-                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 18.dp, glowColor = MaterialTheme.colorScheme.primary)
+                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3LeftGroupShape, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3LeftGroupShape)
                         .padding(horizontal = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val homeJumpY = remember { Animatable(0f) }
+                    val homeScaleX = remember { Animatable(1f) }
+                    val homeScaleY = remember { Animatable(1f) }
+                    val homeWave = remember { Animatable(0f) }
+                    val navPrimaryColor = MaterialTheme.colorScheme.primary
                     if (prefs.showHomeButton) {
                         IconButton(
-                            onClick = { SpaceManager.goHome(activeSpace.id) },
-                            modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                            onClick = {
+                                scope.launch {
+                                    homeScaleX.snapTo(1.16f); homeScaleY.snapTo(0.84f)
+                                    homeJumpY.animateTo(-5.5f, tween(110))
+                                    homeScaleX.animateTo(0.92f, tween(80))
+                                    homeScaleY.animateTo(1.12f, tween(80))
+                                    homeJumpY.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 460f))
+                                    homeScaleX.animateTo(1f, EgoMotion.bouncySpring())
+                                    homeScaleY.animateTo(1f, EgoMotion.bouncySpring())
+                                }
+                                scope.launch {
+                                    homeWave.snapTo(0f)
+                                    homeWave.animateTo(1f, tween(380))
+                                    homeWave.snapTo(0f)
+                                }
+                                SpaceManager.goHome(activeSpace.id)
+                            },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .drawBehind {
+                                    val w = homeWave.value
+                                    if (w > 0.01f && w < 0.99f) {
+                                        drawCircle(
+                                            color = navPrimaryColor.copy(alpha = (1f - w) * 0.45f),
+                                            radius = size.minDimension * (0.24f + 0.34f * w),
+                                            style = Stroke(width = (2.2f * (1f - w)).dp.toPx())
+                                        )
+                                    }
+                                }
                         ) {
                             EgoIcon(
                                 Icons.Default.Home,
                                 contentDescription = "홈",
                                 tint = activeIconColor,
+                                modifier = Modifier.graphicsLayer {
+                                    translationY = homeJumpY.value * density.density
+                                    scaleX = homeScaleX.value
+                                    scaleY = homeScaleY.value
+                                },
                                 symbolSize = 20.dp
                             )
                         }
                     }
+
                     val canBackOrClose = activeTab.canGoBack || activeSpace.tabs.size > 1 || activeTab.url != NEW_TAB_URL
+                    val backKickX = remember { Animatable(0f) }
+                    val backSquashX = remember { Animatable(1f) }
                     IconButton(
-                        onClick = { SpaceManager.handleBackOrCloseTab(activeSpace.id) },
+                        onClick = {
+                            scope.launch {
+                                backSquashX.snapTo(0.82f)
+                                backKickX.animateTo(-6.5f, tween(95))
+                                backSquashX.animateTo(1.10f, tween(90))
+                                backKickX.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 480f))
+                                backSquashX.animateTo(1f, EgoMotion.bouncySpring())
+                            }
+                            SpaceManager.handleBackOrCloseTab(activeSpace.id)
+                        },
                         enabled = canBackOrClose,
-                        modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         EgoIcon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "뒤로",
                             tint = if (canBackOrClose) activeIconColor else mutedIconColor.copy(alpha = 0.45f),
+                            modifier = Modifier.graphicsLayer {
+                                translationX = backKickX.value * density.density
+                                scaleX = backSquashX.value
+                                scaleY = 2f - backSquashX.value.coerceIn(0.85f, 1.15f)
+                            },
                             symbolSize = 20.dp
                         )
                     }
+
+                    val fwdKickX = remember { Animatable(0f) }
+                    val fwdSquashX = remember { Animatable(1f) }
                     IconButton(
-                        onClick = { SpaceManager.goForward(activeSpace.id) },
+                        onClick = {
+                            scope.launch {
+                                fwdSquashX.snapTo(0.82f)
+                                fwdKickX.animateTo(6.5f, tween(95))
+                                fwdSquashX.animateTo(1.10f, tween(90))
+                                fwdKickX.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 480f))
+                                fwdSquashX.animateTo(1f, EgoMotion.bouncySpring())
+                            }
+                            SpaceManager.goForward(activeSpace.id)
+                        },
                         enabled = activeTab.canGoForward,
-                        modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         EgoIcon(
                             Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = "앞으로",
                             tint = if (activeTab.canGoForward) activeIconColor else mutedIconColor.copy(alpha = 0.45f),
+                            modifier = Modifier.graphicsLayer {
+                                translationX = fwdKickX.value * density.density
+                                scaleX = fwdSquashX.value
+                                scaleY = 2f - fwdSquashX.value.coerceIn(0.85f, 1.15f)
+                            },
                             symbolSize = 20.dp
                         )
                     }
+
                     var refreshSpinTurns by remember { mutableIntStateOf(0) }
                     val refreshSpinDeg by animateFloatAsState(
                         targetValue = refreshSpinTurns * 360f,
-                        animationSpec = spring(dampingRatio = 0.72f, stiffness = 240f),
+                        animationSpec = spring(dampingRatio = 0.62f, stiffness = 210f),
                         label = "refreshSpinMorph"
                     )
+                    val refreshPop = remember { Animatable(1f) }
+                    val refreshWave = remember { Animatable(0f) }
                     IconButton(
                         onClick = {
                             refreshSpinTurns++
+                            scope.launch {
+                                refreshPop.snapTo(0.82f)
+                                refreshPop.animateTo(1.20f, spring(dampingRatio = 0.48f, stiffness = 520f))
+                                refreshPop.animateTo(1f, EgoMotion.bouncySpring())
+                            }
+                            scope.launch {
+                                refreshWave.snapTo(0f)
+                                refreshWave.animateTo(1f, tween(420))
+                                refreshWave.snapTo(0f)
+                            }
                             SpaceManager.reload(activeSpace.id)
                         },
-                        modifier = Modifier.size(36.dp).pressBounceScale(0.86f)
+                        modifier = Modifier
+                            .size(38.dp)
+                            .drawBehind {
+                                val w = refreshWave.value
+                                if (w > 0.01f && w < 0.99f) {
+                                    drawCircle(
+                                        color = navPrimaryColor.copy(alpha = (1f - w) * 0.42f),
+                                        radius = size.minDimension * (0.22f + 0.34f * w),
+                                        style = Stroke(width = (2.0f * (1f - w)).dp.toPx())
+                                    )
+                                }
+                            }
                     ) {
                         EgoIcon(
                             Icons.Default.Refresh,
                             contentDescription = "새로고침",
                             tint = activeIconColor,
-                            modifier = Modifier.graphicsLayer { rotationZ = refreshSpinDeg },
+                            modifier = Modifier.graphicsLayer {
+                                rotationZ = refreshSpinDeg
+                                scaleX = refreshPop.value
+                                scaleY = refreshPop.value
+                            },
                             symbolSize = 20.dp
                         )
                     }
                 }
 
-                // 그룹 2: (주소창) — 인접 도형과 맞물리는 6dp 모서리 + 선택 탭과 동일 서피스
+                // 그룹 2: (주소창) — 인접 도형과 맞물리는 6dp 모서리 + 선택 탭과 동일 서피스 + 선택형 광감 진행바
                 val existingBookmark = bookmarks.firstOrNull { it.url == activeTab.url }
-                Row(
+                val omniElasticPull = remember { Animatable(0f) }
+                val omniElasticScope = rememberCoroutineScope()
+                val showOmniOptical = prefs.progressShowInOmnibox && prefs.progressBarStyle != ProgressBarStyle.MATERIAL
+                val omniIsLoadingNow = activeTab.isLoading && activeTab.progress in 1..99
+                val omniProgFrac = (activeTab.progress / 100f).coerceIn(0f, 1f)
+                val omniAccent = if (activeSpace.type == SpaceType.AI) EgoEmerald else MaterialTheme.colorScheme.primary
+                val omniInvTextColor = if (isEffectiveDark) Color(0xFF090D16) else Color.White
+
+                Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(42.dp)
-                        .graphicsLayer { alpha = if (showOmniboxOverlay) 0f else 1f }
+                        .height(40.dp)
+                        .graphicsLayer {
+                            alpha = if (showOmniboxOverlay) 0f else 1f
+                            if (prefs.toolbarElasticityEnabled) {
+                                val pull = omniElasticPull.value
+                                translationX = pull * 0.22f
+                                scaleX = (1f + kotlin.math.abs(pull) * 0.0008f).coerceAtMost(1.03f)
+                                scaleY = (1f - kotlin.math.abs(pull) * 0.0005f).coerceAtLeast(0.97f)
+                            }
+                        }
                         .onGloballyPositioned { coords ->
                             val pos = coords.positionInRoot()
                             addressBarLeftPx = (pos.x - rootBoxLeftPx).coerceAtLeast(0f)
@@ -1435,76 +1679,154 @@ fun BrowserScreen() {
                         }
                         .clip(m3CenterGroupShape)
                         .background(toolbarChrome.groupSurface)
-                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 6.dp, glowColor = MaterialTheme.colorScheme.primary)
+                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3CenterGroupShape, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3CenterGroupShape)
-                        .pointerInput(activeSpace.id) {
+                        .pointerInput(activeSpace.id, prefs.toolbarElasticityEnabled) {
                             var dragSum = 0f
                             detectHorizontalDragGestures(
                                 onDragEnd = {
                                     if (dragSum > 70f) SpaceManager.switchTabByOffset(activeSpace.id, -1)
                                     else if (dragSum < -70f) SpaceManager.switchTabByOffset(activeSpace.id, 1)
                                     dragSum = 0f
+                                    omniElasticScope.launch { omniElasticPull.animateTo(0f, EgoMotion.responsiveSpring()) }
                                 },
-                                onHorizontalDrag = { _, amount -> dragSum += amount }
+                                onDragCancel = {
+                                    dragSum = 0f
+                                    omniElasticScope.launch { omniElasticPull.animateTo(0f, EgoMotion.responsiveSpring()) }
+                                },
+                                onHorizontalDrag = { _, amount ->
+                                    dragSum += amount
+                                    if (prefs.toolbarElasticityEnabled) {
+                                        val rubber = kotlin.math.sign(dragSum) * 28f * (1f - kotlin.math.exp(-kotlin.math.abs(dragSum) / 90f))
+                                        omniElasticScope.launch { omniElasticPull.snapTo(rubber) }
+                                    }
+                                }
                             )
                         }
                         .clickable { showOmniboxOverlay = true }
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    EgoIcon(
-                        imageVector = if (activeTab.isIncognito) Icons.Default.VisibilityOff else Icons.Default.Lock,
-                        contentDescription = if (activeTab.isIncognito) "시크릿 모드" else null,
-                        modifier = Modifier.size(15.dp),
-                        tint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor,
-                        symbolSize = 15.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    val isNewTab = activeTab.url == NEW_TAB_URL
-                    Text(
-                        text = if (isNewTab) "Google 검색 또는 URL 입력" else activeTab.url,
-                        fontSize = 14.sp,
-                        color = if (isNewTab) mutedIconColor else activeIconColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .pressBounceScale(0.86f)
-                            .clip(CircleShape)
-                            .clickable {
-                                if (existingBookmark != null) {
-                                    editingBookmark = existingBookmark
-                                } else {
-                                    showAddBookmarkDialog = true
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val starPopScale by animateFloatAsState(
-                            targetValue = if (existingBookmark != null) 1.14f else 1.0f,
-                            animationSpec = EgoMotion.bouncySpring(),
-                            label = "bookmarkStarPop"
+                    if (showOmniOptical) {
+                        HarmonyHorizontalProgressCanvas(
+                            style = prefs.progressBarStyle,
+                            progress = omniProgFrac,
+                            isActive = omniIsLoadingNow,
+                            accentColor = omniAccent,
+                            lightIntensity = prefs.progressLightIntensity,
+                            particleDensity = prefs.progressParticleDensity,
+                            cornerRadiusDp = 6.dp,
+                            modifier = Modifier.fillMaxSize()
                         )
-                        val starPopTilt by animateFloatAsState(
-                            targetValue = if (existingBookmark != null) 12f else 0f,
-                            animationSpec = EgoMotion.bouncySpring(),
-                            label = "bookmarkStarTilt"
-                        )
-                        EgoIcon(
-                            imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
-                            contentDescription = "북마크 추가/수정",
-                            tint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor,
+                    }
+
+                    @Composable
+                    fun OmniboxInnerRow(lockTint: Color, urlTint: Color, starTint: Color) {
+                        Row(
                             modifier = Modifier
-                                .size(19.dp)
-                                .graphicsLayer {
-                                    scaleX = starPopScale
-                                    scaleY = starPopScale
-                                    rotationZ = starPopTilt
-                                },
-                            symbolSize = 19.dp
+                                .fillMaxSize()
+                                .padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            EgoIcon(
+                                imageVector = if (activeTab.isIncognito) Icons.Default.VisibilityOff else Icons.Default.Lock,
+                                contentDescription = if (activeTab.isIncognito) "시크릿 모드" else null,
+                                modifier = Modifier.size(16.dp),
+                                tint = lockTint,
+                                symbolSize = 16.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            val isNewTab = activeTab.url == NEW_TAB_URL
+                            Text(
+                                text = if (isNewTab) "Google 검색 또는 URL 입력" else activeTab.url,
+                                fontSize = 14.sp,
+                                color = urlTint,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            val starBurst = remember { Animatable(0f) }
+                            val starSpin = remember { Animatable(0f) }
+                            val starSparkColor = MaterialTheme.colorScheme.primary
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .drawBehind {
+                                        val b = starBurst.value
+                                        if (b > 0.01f && b < 0.99f) {
+                                            val cx = size.width * 0.5f
+                                            val cy = size.height * 0.5f
+                                            val alpha = (1f - b) * 0.85f
+                                            for (ray in 0 until 6) {
+                                                val ang = (ray * 60.0 + 15.0) * Math.PI / 180.0
+                                                val r1 = size.minDimension * (0.18f + 0.30f * b)
+                                                val r2 = size.minDimension * (0.28f + 0.36f * b)
+                                                val cosA = kotlin.math.cos(ang).toFloat()
+                                                val sinA = kotlin.math.sin(ang).toFloat()
+                                                drawLine(
+                                                    color = starSparkColor.copy(alpha = alpha),
+                                                    start = Offset(cx + cosA * r1, cy + sinA * r1),
+                                                    end = Offset(cx + cosA * r2, cy + sinA * r2),
+                                                    strokeWidth = (2.0f * (1f - b * 0.6f)).dp.toPx()
+                                                )
+                                            }
+                                        }
+                                    }
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        scope.launch {
+                                            starSpin.snapTo(0f)
+                                            starSpin.animateTo(360f, spring(dampingRatio = 0.55f, stiffness = 320f))
+                                        }
+                                        scope.launch {
+                                            starBurst.snapTo(0f)
+                                            starBurst.animateTo(1f, tween(420))
+                                            starBurst.snapTo(0f)
+                                        }
+                                        if (existingBookmark != null) {
+                                            editingBookmark = existingBookmark
+                                        } else {
+                                            showAddBookmarkDialog = true
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val starPopScale by animateFloatAsState(
+                                    targetValue = if (existingBookmark != null) 1.14f else 1.0f,
+                                    animationSpec = EgoMotion.bouncySpring(),
+                                    label = "bookmarkStarPop"
+                                )
+                                EgoIcon(
+                                    imageVector = if (existingBookmark != null) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = "북마크 추가/수정",
+                                    tint = starTint,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .graphicsLayer {
+                                            scaleX = starPopScale * (1f + 0.22f * kotlin.math.sin(starBurst.value * Math.PI).toFloat())
+                                            scaleY = starPopScale * (1f + 0.22f * kotlin.math.sin(starBurst.value * Math.PI).toFloat())
+                                            rotationZ = starSpin.value
+                                        },
+                                    symbolSize = 20.dp
+                                )
+                            }
+                        }
+                    }
+
+                    val isNewTab = activeTab.url == NEW_TAB_URL
+                    OmniboxInnerRow(
+                        lockTint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor,
+                        urlTint = if (isNewTab) mutedIconColor else activeIconColor,
+                        starTint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor
+                    )
+
+                    HarmonyModeBClippedOverlay(
+                        enabled = showOmniOptical && prefs.progressBarStyle == ProgressBarStyle.HARMONY_OPTICAL,
+                        progress = omniProgFrac,
+                        isActive = omniIsLoadingNow
+                    ) {
+                        OmniboxInnerRow(
+                            lockTint = omniInvTextColor.copy(alpha = 0.85f),
+                            urlTint = omniInvTextColor,
+                            starTint = omniInvTextColor
                         )
                     }
                 }
@@ -1512,10 +1834,10 @@ fun BrowserScreen() {
                 // 그룹 3: (MCP · AI · 광고차단 · 번역 · 다크모드 · 프로필 · 전체탭 · 메뉴)
                 Row(
                     modifier = Modifier
-                        .height(42.dp)
+                        .height(40.dp)
                         .clip(m3RightGroupShape)
                         .background(toolbarChrome.groupSurface)
-                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 18.dp, glowColor = MaterialTheme.colorScheme.primary)
+                        .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = m3RightGroupShape, glowColor = MaterialTheme.colorScheme.primary)
                         .border(1.dp, m3GroupBorder, m3RightGroupShape)
                         .padding(horizontal = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -1532,7 +1854,9 @@ fun BrowserScreen() {
                             if (prefs.showMcpBadgeButton) {
                                 Box(
                                     modifier = Modifier
-                                        .size(42.dp)
+                                        .size(38.dp)
+                                        .onGloballyPositioned { coords -> mcpAnchorRect = coords.boundsInRoot() }
+                                        .pressBounceScale(0.86f)
                                         .clip(CircleShape)
                                         .clickable { showMcpDrawer = true },
                                     contentAlignment = Alignment.Center
@@ -1578,7 +1902,7 @@ fun BrowserScreen() {
                                             tint = if (showAiCommandPopup) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                                             filled = showAiCommandPopup,
                                             modifier = Modifier.size(19.dp),
-                                            symbolSize = 19.dp
+                                            symbolSize = 20.dp
                                         )
                                         if (mcpPendingCount > 0) {
                                             Box(
@@ -1596,12 +1920,34 @@ fun BrowserScreen() {
                         }
                         "ADBLOCK" -> {
                             if (prefs.showAdBlockButton) {
+                                val shieldWaveColor = MaterialTheme.colorScheme.primary
                                 Box(
                                     modifier = Modifier
-                                        .size(42.dp)
+                                        .size(38.dp)
+                                        .onGloballyPositioned { coords -> adBlockAnchorRect = coords.boundsInRoot() }
+                                        .drawBehind {
+                                            val w = adBlockWaveAnim.value
+                                            if (w > 0.01f && w < 0.99f) {
+                                                drawCircle(
+                                                    color = shieldWaveColor.copy(alpha = (1f - w) * 0.65f),
+                                                    radius = size.minDimension * (0.28f + 0.36f * w),
+                                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = (2.4.dp.toPx() * (1f - w * 0.6f)))
+                                                )
+                                            }
+                                        }
                                         .clip(CircleShape)
                                         .combinedClickable(
                                             onClick = {
+                                                scope.launch {
+                                                    adBlockPulseAnim.snapTo(0.76f)
+                                                    adBlockPulseAnim.animateTo(1.22f, animationSpec = spring(dampingRatio = 0.45f, stiffness = 620f))
+                                                    adBlockPulseAnim.animateTo(1f, animationSpec = EgoMotion.bouncySpring())
+                                                }
+                                                scope.launch {
+                                                    adBlockWaveAnim.snapTo(0f)
+                                                    adBlockWaveAnim.animateTo(1f, animationSpec = tween(420))
+                                                    adBlockWaveAnim.snapTo(0f)
+                                                }
                                                 if (currentHost.isNotBlank() && adBlockState.globalEnabled) {
                                                     AdBlockEngine.toggleWhitelistForHost(currentHost)
                                                 } else {
@@ -1611,7 +1957,10 @@ fun BrowserScreen() {
                                                 }
                                                 SpaceManager.reload(activeSpace.id)
                                             },
-                                            onLongClick = { showAdBlockDialog = true }
+                                            onLongClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                showAdBlockDialog = true
+                                            }
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -1619,7 +1968,34 @@ fun BrowserScreen() {
                                         imageVector = Icons.Default.Shield,
                                         contentDescription = "광고 차단 (길게 눌러 상세 설정)",
                                         tint = if (isSiteAdBlockOn) MaterialTheme.colorScheme.primary else mutedIconColor,
-                                        filled = isSiteAdBlockOn
+                                        filled = isSiteAdBlockOn,
+                                        modifier = Modifier
+                                            .drawBehind {
+                                                val w = adBlockWaveAnim.value
+                                                if (w > 0.01f && w < 0.99f) {
+                                                    val c = if (isSiteAdBlockOn) EgoEmerald else Color(0xFF94A3B8)
+                                                    drawCircle(
+                                                        color = c.copy(alpha = (1f - w) * 0.55f),
+                                                        radius = size.minDimension * (0.45f + 0.65f * w),
+                                                        style = Stroke(width = (2.4f * (1f - w)).dp.toPx())
+                                                    )
+                                                    val w2 = ((w - 0.18f) / 0.82f).coerceIn(0f, 1f)
+                                                    if (w2 > 0.01f) {
+                                                        drawCircle(
+                                                            color = Color.White.copy(alpha = (1f - w2) * 0.42f),
+                                                            radius = size.minDimension * (0.35f + 0.55f * w2),
+                                                            style = Stroke(width = (1.5f * (1f - w2)).dp.toPx())
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            .graphicsLayer {
+                                                scaleX = adBlockPulseAnim.value
+                                                scaleY = adBlockPulseAnim.value
+                                                rotationY = kotlin.math.sin(adBlockWaveAnim.value * Math.PI * 2.0).toFloat() * 24f
+                                                cameraDistance = 12f * density.density
+                                            },
+                                        symbolSize = 20.dp
                                     )
                                     if (isSiteAdBlockOn && pageBlockedCount > 0) {
                                         Box(
@@ -1645,10 +2021,20 @@ fun BrowserScreen() {
                             if (prefs.showTranslateButton) {
                                 Box(
                                     modifier = Modifier
-                                        .size(42.dp)
+                                        .size(38.dp)
+                                        .onGloballyPositioned { coords -> translateAnchorRect = coords.boundsInRoot() }
                                         .clip(CircleShape)
                                         .combinedClickable(
                                             onClick = {
+                                                scope.launch {
+                                                    translateFlipAnim.snapTo(0f)
+                                                    translateFlipAnim.animateTo(360f, animationSpec = spring(dampingRatio = 0.68f, stiffness = 320f))
+                                                }
+                                                scope.launch {
+                                                    translateScaleAnim.snapTo(0.80f)
+                                                    translateScaleAnim.animateTo(1.18f, animationSpec = spring(dampingRatio = 0.50f, stiffness = 560f))
+                                                    translateScaleAnim.animateTo(1f, animationSpec = EgoMotion.bouncySpring())
+                                                }
                                                 if (translateState.visible) {
                                                     translateState = translateState.copy(visible = false)
                                                 } else {
@@ -1662,10 +2048,36 @@ fun BrowserScreen() {
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
+                                    val trOrbitColor = MaterialTheme.colorScheme.primary
                                     EgoIcon(
                                         imageVector = Icons.Default.Translate,
                                         contentDescription = "페이지 번역 (길게 눌러 번역 설정)",
-                                        tint = if (translateState.isTranslated) MaterialTheme.colorScheme.primary else activeIconColor
+                                        tint = if (translateState.isTranslated || translateState.isTranslating) trOrbitColor else activeIconColor,
+                                        modifier = Modifier
+                                            .drawBehind {
+                                                if (translateState.isTranslating) {
+                                                    val p = translateState.progress.coerceIn(0.08f, 1f)
+                                                    drawCircle(
+                                                        color = trOrbitColor.copy(alpha = 0.25f),
+                                                        radius = size.minDimension * 0.72f,
+                                                        style = Stroke(width = 1.6.dp.toPx())
+                                                    )
+                                                    drawArc(
+                                                        color = trOrbitColor,
+                                                        startAngle = -90f,
+                                                        sweepAngle = 360f * p,
+                                                        useCenter = false,
+                                                        style = Stroke(width = 2.0.dp.toPx())
+                                                    )
+                                                }
+                                            }
+                                            .graphicsLayer {
+                                                rotationY = translateFlipAnim.value
+                                                scaleX = translateScaleAnim.value
+                                                scaleY = translateScaleAnim.value
+                                                cameraDistance = 12f * density.density
+                                            },
+                                        symbolSize = 20.dp
                                     )
                                 }
                             }
@@ -1674,7 +2086,7 @@ fun BrowserScreen() {
                             if (prefs.showDarkModeButton) {
                                 IconButton(
                                     onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
-                                    modifier = Modifier.size(42.dp).pressBounceScale()
+                                    modifier = Modifier.size(38.dp).pressBounceScale()
                                 ) {
                                     val themeSpinDeg by animateFloatAsState(
                                         targetValue = if (isEffectiveDark) 180f else 0f,
@@ -1703,18 +2115,72 @@ fun BrowserScreen() {
                         }
                         "NEW_TAB" -> {
                             if (prefs.showNewTabToolbarButton) {
+                                val ntSpin = remember { Animatable(0f) }
+                                val ntPop = remember { Animatable(1f) }
+                                val ntWave = remember { Animatable(0f) }
+                                val ntRingCol = MaterialTheme.colorScheme.primary
                                 IconButton(
-                                    onClick = { SpaceManager.createTab(activeSpace.id, selectImmediately = true) },
-                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                    onClick = {
+                                        scope.launch {
+                                            ntSpin.snapTo(0f)
+                                            ntSpin.animateTo(90f, spring(dampingRatio = 0.55f, stiffness = 360f))
+                                        }
+                                        scope.launch {
+                                            ntPop.snapTo(0.80f)
+                                            ntPop.animateTo(1.22f, spring(dampingRatio = 0.48f, stiffness = 540f))
+                                            ntPop.animateTo(1f, EgoMotion.bouncySpring())
+                                        }
+                                        scope.launch {
+                                            ntWave.snapTo(0f)
+                                            ntWave.animateTo(1f, tween(380))
+                                            ntWave.snapTo(0f)
+                                        }
+                                        SpaceManager.createTab(activeSpace.id, selectImmediately = true)
+                                    },
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .drawBehind {
+                                            val w = ntWave.value
+                                            if (w > 0.01f && w < 0.99f) {
+                                                drawCircle(
+                                                    color = ntRingCol.copy(alpha = (1f - w) * 0.48f),
+                                                    radius = size.minDimension * (0.22f + 0.34f * w),
+                                                    style = Stroke(width = (2.0f * (1f - w)).dp.toPx())
+                                                )
+                                            }
+                                        }
                                 ) {
-                                    EgoIcon(Icons.Default.Add, contentDescription = "새 탭", tint = activeIconColor)
+                                    EgoIcon(
+                                        Icons.Default.Add,
+                                        contentDescription = "새 탭",
+                                        tint = activeIconColor,
+                                        modifier = Modifier.graphicsLayer {
+                                            rotationZ = ntSpin.value
+                                            scaleX = ntPop.value
+                                            scaleY = ntPop.value
+                                        },
+                                        symbolSize = 20.dp
+                                    )
                                 }
                             }
                         }
                         "SHARE" -> {
                             if (prefs.showShareButton && isWebPage) {
+                                val shLaunch = remember { Animatable(0f) }
+                                val shWave = remember { Animatable(0f) }
+                                val shRingCol = MaterialTheme.colorScheme.primary
                                 IconButton(
                                     onClick = {
+                                        scope.launch {
+                                            shLaunch.snapTo(0f)
+                                            shLaunch.animateTo(1f, tween(120))
+                                            shLaunch.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 440f))
+                                        }
+                                        scope.launch {
+                                            shWave.snapTo(0f)
+                                            shWave.animateTo(1f, tween(400))
+                                            shWave.snapTo(0f)
+                                        }
                                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                             type = "text/plain"
                                             putExtra(Intent.EXTRA_SUBJECT, activeTab.title)
@@ -1722,41 +2188,123 @@ fun BrowserScreen() {
                                         }
                                         context.startActivity(Intent.createChooser(shareIntent, "링크 공유"))
                                     },
-                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .drawBehind {
+                                            val w = shWave.value
+                                            if (w > 0.01f && w < 0.99f) {
+                                                drawCircle(
+                                                    color = shRingCol.copy(alpha = (1f - w) * 0.46f),
+                                                    radius = size.minDimension * (0.22f + 0.36f * w),
+                                                    style = Stroke(width = (2.0f * (1f - w)).dp.toPx())
+                                                )
+                                            }
+                                        }
                                 ) {
-                                    EgoIcon(Icons.Default.Share, contentDescription = "공유", tint = activeIconColor)
+                                    val l = shLaunch.value
+                                    EgoIcon(
+                                        Icons.Default.Share,
+                                        contentDescription = "공유",
+                                        tint = activeIconColor,
+                                        modifier = Modifier.graphicsLayer {
+                                            translationX = (4.2f * l) * density.density
+                                            translationY = (-4.5f * l) * density.density
+                                            rotationZ = -14f * l
+                                            scaleX = 1f + 0.16f * l
+                                            scaleY = 1f + 0.16f * l
+                                        },
+                                        symbolSize = 20.dp
+                                    )
                                 }
                             }
                         }
                         "FIND" -> {
                             if (prefs.showFindInPageButton && isWebPage) {
+                                val findTilt = remember { Animatable(0f) }
+                                val findZoom = remember { Animatable(1f) }
                                 IconButton(
-                                    onClick = { showFindBar = !showFindBar },
-                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                    onClick = {
+                                        scope.launch {
+                                            findTilt.snapTo(0f)
+                                            findTilt.animateTo(-18f, tween(85))
+                                            findTilt.animateTo(14f, tween(110))
+                                            findTilt.animateTo(0f, spring(dampingRatio = 0.50f, stiffness = 420f))
+                                        }
+                                        scope.launch {
+                                            findZoom.snapTo(0.84f)
+                                            findZoom.animateTo(1.24f, spring(dampingRatio = 0.48f, stiffness = 520f))
+                                            findZoom.animateTo(1f, EgoMotion.bouncySpring())
+                                        }
+                                        showFindBar = !showFindBar
+                                    },
+                                    modifier = Modifier.size(38.dp)
                                 ) {
-                                    EgoIcon(Icons.Default.FindInPage, contentDescription = "페이지 내 찾기", tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor)
+                                    EgoIcon(
+                                        Icons.Default.FindInPage,
+                                        contentDescription = "페이지 내 찾기",
+                                        tint = if (showFindBar) MaterialTheme.colorScheme.primary else activeIconColor,
+                                        modifier = Modifier.graphicsLayer {
+                                            rotationZ = findTilt.value
+                                            scaleX = findZoom.value
+                                            scaleY = findZoom.value
+                                        },
+                                        symbolSize = 20.dp
+                                    )
                                 }
                             }
                         }
                         "DESKTOP" -> {
                             if (prefs.showDesktopSiteButton) {
+                                val dtFlipY = remember { Animatable(0f) }
+                                val dtStretch = remember { Animatable(0f) }
                                 IconButton(
-                                    onClick = { SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) } },
-                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                    onClick = {
+                                        scope.launch {
+                                            dtFlipY.snapTo(0f)
+                                            dtFlipY.animateTo(360f, spring(dampingRatio = 0.62f, stiffness = 300f))
+                                        }
+                                        scope.launch {
+                                            dtStretch.snapTo(0f)
+                                            dtStretch.animateTo(1f, tween(110))
+                                            dtStretch.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 440f))
+                                        }
+                                        SpaceManager.updatePreferences { it.copy(desktopModeEnabled = !it.desktopModeEnabled) }
+                                    },
+                                    modifier = Modifier.size(38.dp)
                                 ) {
+                                    val st = dtStretch.value
                                     EgoIcon(
                                         Icons.Default.DesktopWindows,
                                         contentDescription = "데스크톱 사이트 전환",
                                         tint = if (prefs.desktopModeEnabled) MaterialTheme.colorScheme.primary else mutedIconColor,
-                                        filled = prefs.desktopModeEnabled
+                                        filled = prefs.desktopModeEnabled,
+                                        modifier = Modifier.graphicsLayer {
+                                            rotationY = dtFlipY.value
+                                            scaleX = 1f + 0.22f * st
+                                            scaleY = 1f - 0.14f * st
+                                            cameraDistance = 12f * density.density
+                                        },
+                                        symbolSize = 20.dp
                                     )
                                 }
                             }
                         }
                         "READER" -> {
                             if (prefs.showReaderModeButton && isWebPage) {
+                                val rdTiltX = remember { Animatable(0f) }
+                                val rdPop = remember { Animatable(1f) }
                                 IconButton(
                                     onClick = {
+                                        scope.launch {
+                                            rdTiltX.snapTo(0f)
+                                            rdTiltX.animateTo(-28f, tween(110))
+                                            rdTiltX.animateTo(0f, spring(dampingRatio = 0.48f, stiffness = 420f))
+                                        }
+                                        scope.launch {
+                                            rdPop.snapTo(0.84f)
+                                            rdPop.animateTo(1.20f, spring(dampingRatio = 0.48f, stiffness = 500f))
+                                            rdPop.animateTo(1f, EgoMotion.bouncySpring())
+                                        }
                                         scope.launch {
                                             runCatching {
                                                 val raw = SpaceManager.evaluateJsInExactSpace(activeSpace.id, BrowserScripts.MARKDOWN_EXTRACT_JS)
@@ -1765,9 +2313,21 @@ fun BrowserScreen() {
                                             }
                                         }
                                     },
-                                    modifier = Modifier.size(40.dp).pressBounceScale()
+                                    modifier = Modifier.size(38.dp)
                                 ) {
-                                    EgoIcon(Icons.Default.MenuBook, contentDescription = "읽기 모드", tint = activeIconColor)
+                                    EgoIcon(
+                                        Icons.Default.MenuBook,
+                                        contentDescription = "읽기 모드",
+                                        tint = activeIconColor,
+                                        modifier = Modifier.graphicsLayer {
+                                            rotationX = rdTiltX.value
+                                            translationY = (rdTiltX.value * 0.10f) * density.density
+                                            scaleX = rdPop.value
+                                            scaleY = rdPop.value
+                                            cameraDistance = 12f * density.density
+                                        },
+                                        symbolSize = 20.dp
+                                    )
                                 }
                             }
                         }
@@ -1775,7 +2335,7 @@ fun BrowserScreen() {
                             if (prefs.showProfileAvatarButton) {
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(38.dp)
                                         .pressBounceScale()
                                         .clip(CircleShape)
                                         .clickable {
@@ -1790,14 +2350,14 @@ fun BrowserScreen() {
                                             contentDescription = "Google 프로필",
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
-                                                .size(26.dp)
+                                                .size(24.dp)
                                                 .clip(CircleShape)
                                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
                                         )
                                     } else {
                                         Box(
                                             modifier = Modifier
-                                                .size(26.dp)
+                                                .size(24.dp)
                                                 .clip(CircleShape)
                                                 .background(MaterialTheme.colorScheme.primaryContainer),
                                             contentAlignment = Alignment.Center
@@ -1817,9 +2377,27 @@ fun BrowserScreen() {
                 }
 
                 // 다크모드 우측: 크롬형 모든 탭 보기 버튼 ([N] 사각 카운터)
+                ExtensionToolbarButtons(
+                    extensions = installedExtensions,
+                    activeIconColor = activeIconColor,
+                    onTapExtension = { ext ->
+                        if (ext.popupPath != null) {
+                            activeExtPopup = ext
+                        } else {
+                            val wv = SpaceManager.getActiveWebView(activeSpace.id)
+                            if (wv != null) {
+                                ExtensionManager.injectMatchingExtensions(wv, activeTab.url, "end", forceExtId = ext.id)
+                                Toast.makeText(context, "${ext.name} 실행됨", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "실행할 웹페이지가 없습니다", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    onLongPressExtension = { ext -> managingExt = ext }
+                )
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(38.dp)
                         .pressBounceScale()
                         .clip(CircleShape)
                         .clickable { showAllTabsDialog = true },
@@ -1827,7 +2405,7 @@ fun BrowserScreen() {
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(22.dp)
+                            .size(20.dp)
                             .border(2.dp, activeIconColor, RoundedCornerShape(5.dp)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1846,7 +2424,7 @@ fun BrowserScreen() {
                 val latestMenuItems by rememberUpdatedState(chromeMenuItems)
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .pointerInput(Unit) {
                             awaitEachGesture {
@@ -1978,11 +2556,13 @@ fun BrowserScreen() {
                 )
             }
 
-            IsolatedTabProgressBar(
-                isLoading = activeTab.isLoading,
-                progress = activeTab.progress,
-                isAiSpace = activeSpace.type == SpaceType.AI
-            )
+            if (prefs.progressBarStyle == ProgressBarStyle.MATERIAL || !prefs.progressShowInOmnibox) {
+                IsolatedTabProgressBar(
+                    isLoading = activeTab.isLoading,
+                    progress = activeTab.progress,
+                    isAiSpace = activeSpace.type == SpaceType.AI
+                )
+            }
 
             // AI Space Takeover 제어권 바
             if (activeSpace.type == SpaceType.AI &&
@@ -2130,7 +2710,11 @@ fun BrowserScreen() {
                         onOpenOmnibox = { showOmniboxOverlay = true },
                         onNavigate = { url -> SpaceManager.navigate(activeSpace.id, url) },
                         onEditBookmark = { bm -> editingBookmark = bm },
-                        onAddBookmark = { showAddBookmarkDialog = true }
+                        onAddBookmark = { showAddBookmarkDialog = true },
+                        onOpenInNewTab = { url -> SpaceManager.createTab(activeSpace.id, initialUrl = url, selectImmediately = false) },
+                        onOpenInIncognito = { url -> SpaceManager.createTab(activeSpace.id, initialUrl = url, incognito = true, selectImmediately = true) },
+                        onDeleteBookmark = { bm -> SpaceManager.removeBookmark(bm.id) },
+                        onDustVanish = { snap -> emitDustSnapshot(snap, popupDustColor, 0.90f) }
                     )
                 }
                 // AI Space 하단 young-newt-20 MCP 동작 표기 캡슐 HUD (비작동 IDLE 시 자동 숨김)
@@ -2155,7 +2739,7 @@ fun BrowserScreen() {
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 10.dp, top = 7.dp)
+                .padding(start = 10.dp, top = 6.dp)
                 .zIndex(15f)
                 .onGloballyPositioned { coords ->
                     val b = coords.boundsInRoot()
@@ -2219,21 +2803,55 @@ fun BrowserScreen() {
             val exactTabWidthDp = with(density) { exactTabWidthPx.toDp() }
             val pillHalfW = (exactTabWidthPx / 2f).roundToInt()
             val pillHalfH = with(density) { 18.dp.roundToPx() }
+            val floatingGlowColor = MaterialTheme.colorScheme.primary
+            val floatingEff = prefs.rimGlowIntensity.coerceIn(0.5f, 2.5f)
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.primaryContainer,
-                shadowElevation = 14.dp,
+                shadowElevation = 16.dp,
                 modifier = Modifier
                     .offset { IntOffset(localX - pillHalfW, localY - pillHalfH) }
                     .height(36.dp)
                     .width(if (badgeText != null) (exactTabWidthDp + 56.dp).coerceAtMost(268.dp) else exactTabWidthDp)
-                    .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    .zIndex(45f)
+                    .drawBehind {
+                        if (prefs.rimGlowEnabled) {
+                            val cx = size.width * 0.5f
+                            val cy = size.height * 0.5f
+                            val auraR = (size.width * 0.68f).coerceIn(110f, 260f)
+                            // 플로팅 탭 뒤쪽 방사형 공간 광원 후광 (HarmonyOS 7 Spatial Drag Aura)
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = (0.28f * floatingEff).coerceAtMost(0.55f)),
+                                        floatingGlowColor.copy(alpha = (0.42f * floatingEff).coerceAtMost(0.75f)),
+                                        floatingGlowColor.copy(alpha = (0.14f * floatingEff).coerceAtMost(0.30f)),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(cx, cy),
+                                    radius = auraR
+                                ),
+                                radius = auraR,
+                                center = Offset(cx, cy)
+                            )
+                        }
+                    }
+                    .border(
+                        width = 1.6.dp,
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = if (prefs.rimGlowEnabled) 0.85f else 0.35f),
+                                floatingGlowColor,
+                                Color.White.copy(alpha = if (prefs.rimGlowEnabled) 0.65f else 0.25f)
+                            )
+                        ),
+                        shape = CircleShape
+                    )
                     .graphicsLayer {
                         val s = if (inDropMode) 0.96f else 1.06f
                         scaleX = s
                         scaleY = s
                     }
-                    .zIndex(45f)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 14.dp),
@@ -2479,6 +3097,7 @@ fun BrowserScreen() {
                         ).show()
                     }
                 },
+                anchorRect = translateAnchorRect,
                 onDismiss = { snap -> emitDustSnapshot(snap, popupDustColor, 0.90f); showTranslateSettingsDialog = false }
             )
         }
@@ -2493,6 +3112,7 @@ fun BrowserScreen() {
                 currentHost = currentHost,
                 activeTabId = activeTab.id,
                 onReloadPage = { SpaceManager.reload(activeSpace.id) },
+                anchorRect = adBlockAnchorRect,
                 onDismiss = { snap -> emitDustSnapshot(snap, popupDustColor, 0.90f); showAdBlockDialog = false }
             )
         }
@@ -2574,6 +3194,11 @@ fun BrowserScreen() {
                         }
                     }
                 )
+                FullscreenVideoVerticalHudOverlay(
+                    enabled = prefs.videoVerticalHudEnabled,
+                    lightIntensity = prefs.videoHudLightIntensity,
+                    particleDensity = prefs.videoHudParticleDensity
+                )
             }
         }
 
@@ -2596,6 +3221,7 @@ fun BrowserScreen() {
             exit = if (prefs.cardVanishStyle != CardVanishStyle.OFF) ExitTransition.None else fadeOut(tween(110))
         ) {
             McpSettingsDrawer(
+                anchorRect = mcpAnchorRect,
                 onDismiss = { snap ->
                     emitDustSnapshot(snap, popupDustColor, 0.90f)
                     showMcpDrawer = false
@@ -2639,6 +3265,39 @@ fun BrowserScreen() {
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(120f)
+            )
+        }
+
+        // 동적 크롬 확장 롱프레스 퀵 관리 & 팝업 UI
+        managingExt?.let { ext ->
+            ExtensionQuickManageDialog(
+                ext = ext,
+                onRunNow = {
+                    val wv = SpaceManager.getActiveWebView(activeSpace.id)
+                    if (wv != null) {
+                        ExtensionManager.injectMatchingExtensions(wv, activeTab.url, "end", forceExtId = ext.id)
+                        Toast.makeText(context, "${ext.name} 강제 실행됨", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onToggleEnabled = { on ->
+                    ExtensionManager.toggleEnabled(ext.id, on)
+                    managingExt = ext.copy(enabled = on)
+                },
+                onHideFromToolbar = {
+                    ExtensionManager.toggleShowInToolbar(ext.id, false)
+                    Toast.makeText(context, "${ext.name} 툴바에서 숨김", Toast.LENGTH_SHORT).show()
+                },
+                onDelete = {
+                    ExtensionManager.deleteExtension(ext.id)
+                    Toast.makeText(context, "${ext.name} 삭제됨", Toast.LENGTH_SHORT).show()
+                },
+                onDismiss = { managingExt = null }
+            )
+        }
+        activeExtPopup?.let { ext ->
+            ExtensionPopupWebViewDialog(
+                ext = ext,
+                onDismiss = { activeExtPopup = null }
             )
         }
 
