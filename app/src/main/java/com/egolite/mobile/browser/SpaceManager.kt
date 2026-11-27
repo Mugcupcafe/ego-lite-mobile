@@ -591,6 +591,16 @@ object SpaceManager {
         mainHandler.post { webViews[tabId]?.goForward() }
     }
 
+    fun openBookmarksTab(spaceId: String) {
+        val sp = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        val existing = sp.tabs.firstOrNull { it.url == "ego://bookmarks" }
+        if (existing != null) {
+            selectTab(spaceId, existing.id)
+        } else {
+            createTab(spaceId, initialUrl = "ego://bookmarks", selectImmediately = true)
+        }
+    }
+
     fun openDownloadsTab(spaceId: String) {
         val sp = _spaces.value.firstOrNull { it.id == spaceId } ?: return
         val existing = sp.tabs.firstOrNull { it.url == "ego://downloads" }
