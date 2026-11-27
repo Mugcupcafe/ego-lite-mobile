@@ -109,7 +109,7 @@ fun ChromeBookmarkBar(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .height(38.dp)
+            .height(34.dp)
             .background(MaterialTheme.colorScheme.surface)
             .padding(horizontal = 10.dp)
     ) {
@@ -179,7 +179,7 @@ fun ChromeBookmarkBar(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = folderName,
-                            fontSize = 13.sp,
+                            fontSize = 12.5.sp,
                             color = activeIconColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -192,7 +192,7 @@ fun ChromeBookmarkBar(
                     ) {
                         if (folderItems.isEmpty()) {
                             DropdownMenuItem(
-                                text = { Text("비어 있음", fontSize = 13.sp, color = mutedIconColor) },
+                                text = { Text("비어 있음", fontSize = 12.5.sp, color = mutedIconColor) },
                                 onClick = { expanded = false }
                             )
                         } else {
@@ -202,7 +202,7 @@ fun ChromeBookmarkBar(
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             BookmarkMiniFavicon(bm)
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(bm.title, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(bm.title, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
                                     },
                                     onClick = {
@@ -234,7 +234,7 @@ fun ChromeBookmarkBar(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = bm.title,
-                            fontSize = 13.sp,
+                            fontSize = 12.5.sp,
                             color = activeIconColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -396,7 +396,7 @@ fun ChromeBookmarkBar(
             Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = "모든 북마크",
-                fontSize = 13.sp,
+                fontSize = 12.5.sp,
                 color = activeIconColor,
                 maxLines = 1
             )
@@ -406,7 +406,7 @@ fun ChromeBookmarkBar(
 }
 
 @Composable
-fun BookmarkMiniFavicon(bm: BookmarkItem, sizeDp: Int = 18) {
+fun BookmarkMiniFavicon(bm: BookmarkItem, sizeDp: Int = 16) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var iconBitmap by remember(bm.url) { mutableStateOf(com.egolite.mobile.browser.FaviconCache.getMemoryCached(bm.url)) }
     androidx.compose.runtime.LaunchedEffect(bm.url) {
