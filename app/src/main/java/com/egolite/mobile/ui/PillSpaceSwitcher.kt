@@ -206,26 +206,7 @@ fun M3ExpressiveBuddyAvatar(
     // Natural random blink when idle/done and not squinting
     var blinkScaleY by remember { mutableFloatStateOf(1f) }
     LaunchedEffect(blinkSeed, isSquinting, isWorking) {
-        if (smoothErrorEyes > 0.45f) {
-            val exSep = r * 0.28f
-            val sz = r * 0.16f
-            val sw = (r * 0.11f).coerceAtLeast(1.8f)
-            listOf(-1f, 1f).forEach { s ->
-                val ex = cx + s * exSep + eyeGlanceX
-                val ey = cy + smoothEyeY
-                drawLine(eyeInk, Offset(ex - sz, ey - sz), Offset(ex + sz, ey + sz), strokeWidth = sw, cap = StrokeCap.Round)
-                drawLine(eyeInk, Offset(ex + sz, ey - sz), Offset(ex - sz, ey + sz), strokeWidth = sw, cap = StrokeCap.Round)
-            }
-        } else if (smoothHappyEyes > 0.45f) {
-            val exSep = r * 0.28f
-            val sz = r * 0.17f
-            val sw = (r * 0.11f).coerceAtLeast(1.8f)
-            listOf(-1f, 1f).forEach { s ->
-                val ex = cx + s * exSep + eyeGlanceX
-                val ey = cy + smoothEyeY
-                drawArc(eyeInk, startAngle = 205f, sweepAngle = 130f, useCenter = false, topLeft = Offset(ex - sz, ey - sz * 0.5f), size = Size(sz * 2f, sz * 2f), style = Stroke(width = sw, cap = StrokeCap.Round))
-            }
-        } else if (effectiveSquinting) {
+        if (isSquinting) {
             blinkScaleY = 1f
             return@LaunchedEffect
         }
@@ -401,12 +382,12 @@ fun M3ExpressiveBuddyAvatar(
 
         // Subtle aura glow when AI is actively working
         if (glowPulse > 0.01f) {
-            val auraPath = buildMorphedBuddyPath(baseShape, targetShape, morphProgress, cx, cy, r * 1.13f)
+            val auraPath = buildMorphedBuddyPath(baseShape, effectiveTargetShape, effectiveMorphProgress, cx, cy, r * 1.13f)
             drawPath(path = auraPath, color = color.copy(alpha = glowPulse))
         }
 
         // Main M3 geometric body
-        val bodyPath = buildMorphedBuddyPath(baseShape, targetShape, morphProgress, cx, cy, r)
+        val bodyPath = buildMorphedBuddyPath(baseShape, effectiveTargetShape, effectiveMorphProgress, cx, cy, r)
         drawPath(path = bodyPath, color = color)
 
         // Subtle specular top highlight for tactile depth
@@ -420,8 +401,34 @@ fun M3ExpressiveBuddyAvatar(
         val eyeOffsetX = r * 0.30f
         val eyeCenterY = cy - r * 0.02f
         val glancePx = eyeGlanceX.dp.toPx()
+        val glancePy = smoothEyeY.dp.toPx()
 
-        if (isSquinting) {
+        if (smoothErrorEyes > 0.45f) {
+            val sz = r * 0.16f
+            val sw = (this.size.minDimension * 0.075f).coerceAtLeast(1.8.dp.toPx())
+            listOf(-1f, 1f).forEach { s ->
+                val ex = cx + s * eyeOffsetX + glancePx
+                val ey = eyeCenterY + glancePy
+                drawLine(eyeInk, Offset(ex - sz, ey - sz), Offset(ex + sz, ey + sz), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(eyeInk, Offset(ex + sz, ey - sz), Offset(ex - sz, ey + sz), strokeWidth = sw, cap = StrokeCap.Round)
+            }
+        } else if (smoothHappyEyes > 0.45f) {
+            val sz = r * 0.17f
+            val sw = (this.size.minDimension * 0.075f).coerceAtLeast(1.8.dp.toPx())
+            listOf(-1f, 1f).forEach { s ->
+                val ex = cx + s * eyeOffsetX + glancePx
+                val ey = eyeCenterY + glancePy
+                drawArc(
+                    color = eyeInk,
+                    startAngle = 205f,
+                    sweepAngle = 130f,
+                    useCenter = false,
+                    topLeft = Offset(ex - sz, ey - sz * 0.5f),
+                    size = Size(sz * 2f, sz * 2f),
+                    style = Stroke(width = sw, cap = StrokeCap.Round)
+                )
+            }
+        } else if (effectiveSquinting) {
             val sw = (this.size.minDimension * 0.078f).coerceAtLeast(1.8.dp.toPx())
             val arm = r * 0.17f
             val lx = cx - eyeOffsetX
