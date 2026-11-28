@@ -1,4 +1,11 @@
 package com.egolite.mobile.ui
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.AnimatedVisibility
 
 import android.content.Intent
 import androidx.compose.animation.core.Animatable
@@ -277,7 +284,11 @@ fun RowScope.OmniboxCenterCapsule(
     onBoundsMeasured: (left: Float, top: Float, width: Float) -> Unit,
     onSwitchTabByOffset: (Int) -> Unit,
     onOpenOmnibox: () -> Unit,
-    onClickBookmark: () -> Unit
+    onClickBookmark: () -> Unit,
+    showAiCommand: Boolean = false,
+    aiCommandExpanded: Boolean = false,
+    aiPendingCount: Int = 0,
+    onClickAiCommand: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val m3CenterGroupShape = remember { RoundedCornerShape(6.dp) }
@@ -368,7 +379,11 @@ fun RowScope.OmniboxCenterCapsule(
             lockTint = if (activeTab.isIncognito) MaterialTheme.colorScheme.primary else mutedIconColor,
             urlTint = if (isNewTab) mutedIconColor else activeIconColor,
             starTint = if (existingBookmark != null) MaterialTheme.colorScheme.primary else mutedIconColor,
-            onClickBookmark = onClickBookmark
+            onClickBookmark = onClickBookmark,
+            showAiCommand = showAiCommand,
+            aiCommandExpanded = aiCommandExpanded,
+            aiPendingCount = aiPendingCount,
+            onClickAiCommand = onClickAiCommand
         )
 
         HarmonyModeBClippedOverlay(
@@ -385,7 +400,11 @@ fun RowScope.OmniboxCenterCapsule(
                 lockTint = omniInvTextColor.copy(alpha = 0.85f),
                 urlTint = omniInvTextColor,
                 starTint = omniInvTextColor,
-                onClickBookmark = onClickBookmark
+                onClickBookmark = onClickBookmark,
+                showAiCommand = showAiCommand,
+                aiCommandExpanded = aiCommandExpanded,
+                aiPendingCount = aiPendingCount,
+                onClickAiCommand = onClickAiCommand
             )
         }
     }
@@ -399,7 +418,11 @@ private fun OmniboxInnerRowContent(
     lockTint: Color,
     urlTint: Color,
     starTint: Color,
-    onClickBookmark: () -> Unit
+    onClickBookmark: () -> Unit,
+    showAiCommand: Boolean = false,
+    aiCommandExpanded: Boolean = false,
+    aiPendingCount: Int = 0,
+    onClickAiCommand: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     Row(
@@ -484,6 +507,18 @@ private fun OmniboxInnerRowContent(
                         rotationZ = starSpin.value
                     },
                 symbolSize = 20.dp
+            )
+        }
+        // MCP 연결 시 북마크 아이콘을 왼쪽으로 밀고 주소창 우측에 AI 명령 아이콘 슬라이드 등장
+        AnimatedVisibility(
+            visible = showAiCommand,
+            enter = fadeIn(tween(180)) + expandHorizontally(animationSpec = EgoMotion.intSizeSpring) + scaleIn(initialScale = 0.72f, animationSpec = EgoMotion.bouncySpring()),
+            exit = fadeOut(tween(140)) + shrinkHorizontally(animationSpec = tween(180)) + scaleOut(targetScale = 0.72f, animationSpec = tween(140))
+        ) {
+            AiCommandToolbarButton(
+                expanded = aiCommandExpanded,
+                pendingCount = aiPendingCount,
+                onClick = onClickAiCommand
             )
         }
     }
