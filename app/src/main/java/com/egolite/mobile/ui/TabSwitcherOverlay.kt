@@ -90,6 +90,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.browser.SpaceManager
 import kotlinx.coroutines.launch
 import com.egolite.mobile.model.AiSpaceStatus
@@ -232,7 +233,7 @@ fun ChromeTabSwitcherOverlay(
             ChromeMenuItemSpec("새 탭", Icons.Default.AddBox) {
                 onCreateTab(personalSpace.id, false)
             },
-            ChromeMenuItemSpec("새 창 (AI Space)", Icons.Default.SmartToy, accentColor = EgoEmerald) {
+            ChromeMenuItemSpec("새 창 (AI 공간)", Icons.Default.SmartToy, accentColor = EgoEmerald) {
                 onCreateAiSpace()
             },
             ChromeMenuItemSpec("새 시크릿 창", Icons.Default.VisibilityOff) {
@@ -338,7 +339,7 @@ fun ChromeTabSwitcherOverlay(
                         ) {
                             EgoIcon(
                                 imageVector = Icons.Default.Add,
-                                contentDescription = if (selectedSection == 0) "새 탭" else "새 AI Space",
+                                contentDescription = if (selectedSection == 0) "새 탭" else "새 AI 공간",
                                 tint = addBtnTint,
                                 modifier = Modifier.size(22.dp)
                             , symbolSize = 22.dp)
@@ -381,7 +382,7 @@ fun ChromeTabSwitcherOverlay(
                                     )
                                 }
                                 Text(
-                                    text = "Personal",
+                                    text = GoogleAccountManager.state.collectAsState().value.let { if (it.isSignedIn && it.displayName.isNotBlank()) it.displayName else "내 공간" },
                                     fontSize = 12.5.sp,
                                     fontWeight = if (selectedSection == 0) FontWeight.Bold else FontWeight.Medium,
                                     color = if (selectedSection == 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
@@ -400,12 +401,12 @@ fun ChromeTabSwitcherOverlay(
                             ) {
                                 EgoIcon(
                                     imageVector = Icons.Default.GridView,
-                                    contentDescription = "AI Space 탭 그룹",
+                                    contentDescription = "AI 공간 탭 그룹",
                                     tint = if (selectedSection == 1) EgoEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(17.dp)
                                 , symbolSize = 17.dp)
                                 Text(
-                                    text = "AI Space (${aiSpaces.size})",
+                                    text = "AI 공간 (${aiSpaces.size})",
                                     fontSize = 12.5.sp,
                                     fontWeight = if (selectedSection == 1) FontWeight.Bold else FontWeight.Medium,
                                     color = if (selectedSection == 1) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
@@ -662,14 +663,14 @@ fun ChromeTabSwitcherOverlay(
                                 , symbolSize = 56.dp)
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Text(
-                                    text = "여기에서 AI Space 탭 그룹을 확인할 수 있습니다",
+                                    text = "여기에서 AI 공간 탭 그룹을 확인할 수 있습니다",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "AI Space를 생성하면 공간별 탭이 자동으로 그룹화됩니다.",
+                                    text = "AI 공간을 생성하면 공간별 탭이 자동으로 그룹화됩니다.",
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -683,7 +684,7 @@ fun ChromeTabSwitcherOverlay(
                                         .clickable { onCreateAiSpace() }
                                 ) {
                                     Text(
-                                        text = "+ 새 AI Space 만들기",
+                                        text = "+ 새 AI 공간 만들기",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = EgoEmerald,
@@ -764,7 +765,7 @@ fun ChromeTabSwitcherOverlay(
                                                 ) {
                                                     EgoIcon(
                                                         imageVector = Icons.Default.Close,
-                                                        contentDescription = "AI Space 닫기",
+                                                        contentDescription = "AI 공간 닫기",
                                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         modifier = Modifier.size(17.dp)
                                                     , symbolSize = 17.dp)
