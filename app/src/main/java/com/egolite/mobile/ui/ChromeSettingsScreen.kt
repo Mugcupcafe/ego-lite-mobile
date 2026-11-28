@@ -86,6 +86,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.AddToHomeScreen
+import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Save
+import com.egolite.mobile.browser.ExtensionManager
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Settings
@@ -2071,28 +2078,19 @@ private fun ToolbarCustomPreviewCard(
 ) {
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val installedExts by ExtensionManager.extensions.collectAsState()
+    val googleAccount by GoogleAccountManager.state.collectAsState()
+    val googleAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
+    var renamingExtId by remember { mutableStateOf<String?>(null) }
+    val extById = remember(installedExts) { installedExts.associateBy { it.id } }
+
     val defaultOrder = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
     val normalizedOrder = remember(prefs.toolbarButtonOrder) {
-        val known = prefs.toolbarButtonOrder.filter { it in defaultOrder }
+        val known = prefs.toolbarButtonOrder.filter { it in defaultOrder || it.startsWith("QS:") }
         known + defaultOrder.filter { it !in known }
     }
-    val enabledKeys = remember(normalizedOrder, prefs) {
-        normalizedOrder.filter { key ->
-            when (key) {
-                "MCP" -> prefs.showMcpBadgeButton
-                "AI" -> prefs.showAiCommandButton
-                "ADBLOCK" -> prefs.showAdBlockButton
-                "TRANSLATE" -> prefs.showTranslateButton
-                "DARKMODE" -> prefs.showDarkModeButton
-                "NEW_TAB" -> prefs.showNewTabToolbarButton
-                "SHARE" -> prefs.showShareButton
-                "FIND" -> prefs.showFindInPageButton
-                "DESKTOP" -> prefs.showDesktopSiteButton
-                "READER" -> prefs.showReaderModeButton
-                "PROFILE" -> prefs.showProfileAvatarButton
-                else -> false
-            }
-        }
+    val enabledKeys = remember(normalizedOrder, prefs, installedExts) {
+        getVisibleToolbarKeys(prefs)
     }
 
     var draggingKey by remember { mutableStateOf<String?>(null) }
@@ -2239,8 +2237,9 @@ private fun ToolbarCustomPreviewCard(
                                                         val moved = removeAt(from)
                                                         add(to, moved)
                                                     }
-                                                    val disabledRest = latestFullOrder.filter { it !in reorderedEnabled }
-                                                    onReorder(reorderedEnabled + disabledRest)
+                                                    val reorderedCore = reorderedEnabled.filter { !it.startsWith("EXT:") }
+                                                    val disabledRest = latestFullOrder.filter { it !in reorderedCore }
+                                                    onReorder(reorderedCore + disabledRest)
                                                 }
                                                 draggingKey = null
                                                 dragStartIdx = -1
@@ -2265,9 +2264,42 @@ private fun ToolbarCustomPreviewCard(
                                         cutoutColor = if (isDragging) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                                         symbolSize = 18.dp
                                     )
+                                } else if (key.startsWith("EXT:")) {
+                                    val ext = extById[key.removePrefix("EXT:")]
+                                    ExtensionIconBadge(
+                                        iconPath = ext?.iconPath,
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        sizeDp = 18
+                                    )
+                                } else if (key == "PROFILE" && googleAccount.isSignedIn && googleAvatar != null) {
+                                    androidx.compose.foundation.Image(
+                                        bitmap = googleAvatar!!.asImageBitmap(),
+                                        contentDescription = "프로필",
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier.size(22.dp).clip(CircleShape)
+                                    )
                                 } else {
+                                    val resolvedIcon = if (key.startsWith("QS:")) {
+                                        when (key.removePrefix("QS:")) {
+                                            "incognito" -> Icons.Default.VisibilityOff
+                                            "bmbar" -> Icons.Default.Bookmarks
+                                            "bookmark" -> Icons.Default.Star
+                                            "site" -> Icons.Default.Tune
+                                            "history" -> Icons.Default.History
+                                            "download" -> Icons.Default.Download
+                                            "recent" -> Icons.Default.Tab
+                                            "clear" -> Icons.Default.DeleteOutline
+                                            "settings" -> Icons.Default.Settings
+                                            "default_app" -> Icons.Default.Language
+                                            "copy_link" -> Icons.Default.ContentCopy
+                                            "add_home" -> Icons.Default.AddToHomeScreen
+                                            "save_mht" -> Icons.Default.Save
+                                            "print" -> Icons.Default.Print
+                                            else -> Icons.Default.Tune
+                                        }
+                                    } else iconVec
                                     EgoIcon(
-                                        imageVector = iconVec,
+                                        imageVector = resolvedIcon,
                                         contentDescription = key,
                                         modifier = Modifier.size(18.dp),
                                         tint = tintCol,
@@ -2298,8 +2330,9 @@ private fun ToolbarCustomPreviewCard(
                 "mcp:2", "default_app:2"
             )
         }
-        val qsCatalog = remember {
-            listOf(
+        val qsCatalog = remember(installedExts, googleAccount) {
+            val profileLabel = if (googleAccount.isSignedIn && googleAccount.displayName.isNotBlank()) googleAccount.displayName else "Google 계정"
+            val baseList = listOf(
                 Triple("zoom", "페이지 확대", Icons.Default.Search),
                 Triple("newtab", "새 탭", Icons.Default.Add),
                 Triple("incognito", "시크릿 창", Icons.Default.VisibilityOff),
@@ -2317,27 +2350,40 @@ private fun ToolbarCustomPreviewCard(
                 Triple("reader", "리더 모드", Icons.Default.MenuBook),
                 Triple("clear", "기록 삭제", Icons.Default.DeleteOutline),
                 Triple("settings", "설정", Icons.Default.Settings),
-                Triple("mcp", "MCP 연결", Icons.Default.Hub),
-                Triple("default_app", "기본 브라우저", Icons.Default.Language)
+                Triple("mcp", "MCP · 터널", Icons.Default.Hub),
+                Triple("default_app", "기본 브라우저", Icons.Default.Language),
+                Triple("adblock", "광고 차단", Icons.Default.Shield),
+                Triple("translate", "번역", Icons.Default.Translate),
+                Triple("profile", profileLabel, Icons.Default.Person),
+                Triple("copy_link", "링크 복사", Icons.Default.ContentCopy),
+                Triple("add_home", "홈 화면에 추가", Icons.Default.AddToHomeScreen),
+                Triple("save_mht", "오프라인 저장", Icons.Default.Save),
+                Triple("print", "인쇄 / PDF", Icons.Default.Print)
             )
+            val extList = installedExts.map { ext ->
+                Triple("ext:${ext.id}", ext.displayName, Icons.Default.Extension)
+            }
+            baseList + extList
         }
         val qsCatalogMap = remember(qsCatalog) { qsCatalog.associateBy { it.first } }
-        // 빠른메뉴 키 <-> 주소창 툴바 키 1:1 매핑 (양방향 이동 지원)
-        val qsToToolbarKey = remember {
-            mapOf(
-                "newtab" to "NEW_TAB",
-                "aispace" to "AI",
-                "dark" to "DARKMODE",
-                "share" to "SHARE",
-                "find" to "FIND",
-                "desktop" to "DESKTOP",
-                "reader" to "READER",
-                "mcp" to "MCP"
-            )
-        }
-        val toolbarToQsKey = remember(qsToToolbarKey) { qsToToolbarKey.entries.associate { (k, v) -> v to k } }
 
         fun setToolbarKeyEnabled(tbKey: String, enabled: Boolean) {
+            if (tbKey.startsWith("EXT:")) {
+                ExtensionManager.toggleShowInToolbar(tbKey.removePrefix("EXT:"), enabled)
+                return
+            }
+            if (tbKey.startsWith("QS:")) {
+                SpaceManager.updatePreferences { p ->
+                    val nextOrd = p.toolbarButtonOrder.toMutableList()
+                    if (enabled) {
+                        if (tbKey !in nextOrd) nextOrd.add(tbKey)
+                    } else {
+                        nextOrd.removeAll { it == tbKey }
+                    }
+                    p.copy(toolbarButtonOrder = nextOrd)
+                }
+                return
+            }
             SpaceManager.updatePreferences { p ->
                 when (tbKey) {
                     "MCP" -> p.copy(showMcpBadgeButton = enabled)
@@ -2395,9 +2441,9 @@ private fun ToolbarCustomPreviewCard(
             SpaceManager.updatePreferences { it.copy(quickMenuLayout = next) }
         }
 
-        // 툴바 -> 빠른메뉴로 바로 내리기 칩 행
-        val transferableToolbarKeys = remember(enabledKeys, toolbarToQsKey) {
-            enabledKeys.filter { it in toolbarToQsKey }
+        // 툴바 -> 빠른메뉴로 바로 내리기 칩 행 (크롬 확장 EXT:* 및 커스텀 QS:* 포함 완전 동기화)
+        val transferableToolbarKeys = remember(enabledKeys) {
+            enabledKeys.filter { resolveQsKeyFromTb(it) != null }
         }
         if (transferableToolbarKeys.isNotEmpty()) {
             Row(
@@ -2414,7 +2460,7 @@ private fun ToolbarCustomPreviewCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 transferableToolbarKeys.forEach { tbKey ->
-                    val qsKey = toolbarToQsKey[tbKey] ?: return@forEach
+                    val qsKey = resolveQsKeyFromTb(tbKey) ?: return@forEach
                     val meta = qsCatalogMap[qsKey]
                     Surface(
                         shape = CircleShape,
@@ -2718,7 +2764,7 @@ private fun ToolbarCustomPreviewCard(
                                 val meta = qsCatalogMap[key]
                                 val label = meta?.second ?: key
                                 val iconVec = meta?.third ?: Icons.Default.Tune
-                                val matchingTbKey = qsToToolbarKey[key]
+                                val matchingTbKey = if (key != "zoom") resolveTbKeyFromQs(key) else null
                                 val isSingle = sp == 1
                                 val tileShape = RoundedCornerShape(35.dp)
 
@@ -2792,9 +2838,21 @@ private fun ToolbarCustomPreviewCard(
                                                 else Modifier
                                             )
                                     ) {
+                                        val extItem = if (key.startsWith("ext:")) extById[key.removePrefix("ext:")] else null
                                         if (isSingle) {
                                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                                EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp), symbolSize = 22.dp)
+                                                if (extItem != null) {
+                                                    ExtensionIconBadge(iconPath = extItem.iconPath, tint = MaterialTheme.colorScheme.onSurface, sizeDp = 22)
+                                                } else if (key == "profile" && googleAccount.isSignedIn && googleAvatar != null) {
+                                                    androidx.compose.foundation.Image(
+                                                        bitmap = googleAvatar!!.asImageBitmap(),
+                                                        contentDescription = label,
+                                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                        modifier = Modifier.size(28.dp).clip(CircleShape)
+                                                    )
+                                                } else {
+                                                    EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp), symbolSize = 22.dp)
+                                                }
                                             }
                                         } else {
                                             Row(
@@ -2805,16 +2863,37 @@ private fun ToolbarCustomPreviewCard(
                                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                                             ) {
                                                 Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                                                    EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(21.dp), symbolSize = 21.dp)
+                                                    if (extItem != null) {
+                                                        ExtensionIconBadge(iconPath = extItem.iconPath, tint = MaterialTheme.colorScheme.onSurface, sizeDp = 21)
+                                                    } else if (key == "profile" && googleAccount.isSignedIn && googleAvatar != null) {
+                                                        androidx.compose.foundation.Image(
+                                                            bitmap = googleAvatar!!.asImageBitmap(),
+                                                            contentDescription = label,
+                                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                            modifier = Modifier.size(28.dp).clip(CircleShape)
+                                                        )
+                                                    } else {
+                                                        EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(21.dp), symbolSize = 21.dp)
+                                                    }
                                                 }
-                                                Text(
-                                                    text = label,
-                                                    fontSize = 12.5.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = label,
+                                                        fontSize = 12.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    if (key == "profile" && googleAccount.isSignedIn) {
+                                                        Text(
+                                                            text = "Google 계정",
+                                                            fontSize = 11.sp,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -2856,6 +2935,24 @@ private fun ToolbarCustomPreviewCard(
                                             contentAlignment = Alignment.Center
                                         ) {
                                             EgoIcon(Icons.Default.ArrowUpward, contentDescription = "상단 툴바로 이동", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp), symbolSize = 13.dp)
+                                        }
+                                    }
+
+                                    // 좌하단 주황색 연필 버튼: 크롬 확장 메뉴 이름 수정 (빠른메뉴 편집과 실시간 동기화)
+                                    if (key.startsWith("ext:")) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .size(21.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFFFF8F00))
+                                                .clickable {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    renamingExtId = key.removePrefix("ext:")
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            EgoIcon(Icons.Default.Edit, contentDescription = "확장 이름 변경", tint = Color.White, modifier = Modifier.size(12.dp), symbolSize = 12.dp)
                                         }
                                     }
 
@@ -2907,6 +3004,15 @@ private fun ToolbarCustomPreviewCard(
             }
             }
         } // end BoxWithConstraints
+    }
+
+    renamingExtId?.let { eid ->
+        extById[eid]?.let { ext ->
+            ExtensionRenameDialog(
+                ext = ext,
+                onDismiss = { renamingExtId = null }
+            )
+        }
     }
 }
 
