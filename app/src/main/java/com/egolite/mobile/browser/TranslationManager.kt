@@ -131,10 +131,28 @@ object TranslationManager {
         val originals = items.map { it.second }
 
         onProgressFraction(0.08f)
+        var streamedApplied = false
         var result = when (engine) {
             TranslationEngine.ONLINE_GOOGLE -> {
-                onProgress("번역 중...")
-                translateOnlineChunked(originals, sourceLang, targetLang, onProgressFraction)
+                onProgress("빠른 스트리밍 번역 중...")
+                translateOnlineChunked(
+                    texts = originals,
+                    sourceLang = sourceLang,
+                    targetLang = targetLang,
+                    onProgressFraction = onProgressFraction,
+                    onBatchReady = { startIdx, translatedSlice ->
+                        val partialArr = JSONArray()
+                        for (k in translatedSlice.indices) {
+                            val globalIdx = startIdx + k
+                            val nodeIdx = items.getOrNull(globalIdx)?.first ?: continue
+                            partialArr.put(JSONObject().put("i", nodeIdx).put("t", translatedSlice[k]))
+                        }
+                        if (partialArr.length() > 0) {
+                            streamedApplied = true
+                            SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.applyTranslationsJs(partialArr.toString()))
+                        }
+                    }
+                )
             }
             TranslationEngine.OFFLINE_MLKIT -> {
                 onProgress("오프라인 번역 중...")
@@ -151,6 +169,7 @@ object TranslationManager {
             val fallback = translateOfflineMlKit(originals, sourceLang, targetLang)
             if (fallback.okCount > 0) {
                 result = fallback
+                streamedApplied = false
             }
         }
 
@@ -158,13 +177,15 @@ object TranslationManager {
             return false to "번역 실패 (네트워크 확인)"
         }
 
-        val outArr = JSONArray()
-        for (idx in items.indices) {
-            val newText = result.texts.getOrNull(idx) ?: originals[idx]
-            outArr.put(JSONObject().put("i", items[idx].first).put("t", newText))
+        if (!streamedApplied) {
+            val outArr = JSONArray()
+            for (idx in items.indices) {
+                val newText = result.texts.getOrNull(idx) ?: originals[idx]
+                outArr.put(JSONObject().put("i", items[idx].first).put("t", newText))
+            }
+            onProgressFraction(0.96f)
+            SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.applyTranslationsJs(outArr.toString()))
         }
-        onProgressFraction(0.96f)
-        SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.applyTranslationsJs(outArr.toString()))
         onProgressFraction(1.0f)
         return true to result.detected
     }
@@ -173,6 +194,14 @@ object TranslationManager {
         runCatching {
             SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.RESTORE_ORIGINAL_TEXT_JS)
         }
+    }
+
+    suspend fun reapplyCachedTranslationInSpace(spaceId: String): Boolean {
+        return runCatching {
+            val raw = SpaceManager.evaluateJsInExactSpace(spaceId, BrowserScripts.REAPPLY_CACHED_TRANSLATION_JS)
+            val obj = JSONObject(raw)
+            obj.optBoolean("ok", false) && obj.optInt("applied", 0) > 0
+        }.getOrDefault(false)
     }
 
     private data class ChunkResult(
@@ -185,80 +214,52 @@ object TranslationManager {
         texts: List<String>,
         sourceLang: String,
         targetLang: String,
-        onProgressFraction: (Float) -> Unit = {}
+        onProgressFraction: (Float) -> Unit = {},
+        onBatchReady: suspend (Int, List<String>) -> Unit = { _, _ -> }
     ): ChunkResult = coroutineScope {
-        // GET URL 길이 및 레이트 리밋을 고려한 안전한 소청크 분할 (최대 6문장, 480자 이하)
-        val chunks = mutableListOf<List<String>>()
+        // 고속 대청크 분할 (최대 16문장, 1350자 이하) + 시작 인덱스 보존
+        val chunks = mutableListOf<Pair<Int, List<String>>>()
         var cur = mutableListOf<String>()
+        var curStartIdx = 0
         var curChars = 0
-        for (t in texts) {
+        for ((idx, t) in texts.withIndex()) {
             val clean = t.replace("\r", " ").replace("\n", " ").trim()
-            if (cur.isNotEmpty() && (cur.size >= 6 || curChars + clean.length > 480)) {
-                chunks.add(cur)
+            if (cur.isNotEmpty() && (cur.size >= 16 || curChars + clean.length > 1350)) {
+                chunks.add(curStartIdx to cur)
                 cur = mutableListOf()
+                curStartIdx = idx
                 curChars = 0
             }
             cur.add(clean)
             curChars += clean.length + 1
         }
-        if (cur.isNotEmpty()) chunks.add(cur)
+        if (cur.isNotEmpty()) chunks.add(curStartIdx to cur)
 
         var detected = sourceLang
         var totalOk = 0
 
-        // 동시 2개씩 병렬 처리 + 짧은 간격으로 429 레이트 리밋 방지
+        // 동시 4개씩 병렬 처리 + 도착한 배치부터 즉시 DOM 스트리밍 반영
         val allTranslated = mutableListOf<String>()
-        val batches = chunks.chunked(2)
+        val batches = chunks.chunked(4)
         val totalBatches = batches.size.coerceAtLeast(1)
         for ((batchIdx, batch) in batches.withIndex()) {
-            if (batchIdx > 0) delay(45L)
-            val batchResults = batch.map { chunk ->
-                async(Dispatchers.IO) { translateOnlineBatchWithFallback(chunk, sourceLang, targetLang) }
+            if (batchIdx > 0) delay(15L)
+            val batchResults = batch.map { (startIdx, chunk) ->
+                async(Dispatchers.IO) { startIdx to translateOnlineBatchWithFallback(chunk, sourceLang, targetLang) }
             }.awaitAll()
-            for (res in batchResults) {
+            for ((startIdx, res) in batchResults) {
                 if (res.detected.isNotBlank() && res.detected != "auto" && detected == "auto") {
                     detected = res.detected
                 }
                 totalOk += res.okCount
                 allTranslated.addAll(res.texts)
+                if (res.okCount > 0) {
+                    onBatchReady(startIdx, res.texts)
+                }
             }
-            val frac = 0.12f + 0.80f * ((batchIdx + 1).toFloat() / totalBatches.toFloat())
-            onProgressFraction(frac.coerceIn(0.12f, 0.94f))
+            onProgressFraction(0.10f + 0.86f * ((batchIdx + 1).toFloat() / totalBatches.toFloat()))
         }
         ChunkResult(allTranslated, detected, totalOk)
-    }
-
-    private suspend fun translateOnlineBatchWithFallback(
-        chunk: List<String>,
-        sourceLang: String,
-        targetLang: String
-    ): ChunkResult {
-        val joined = chunk.joinToString("\n")
-        val direct = callGoogleTranslateWithFallback(joined, sourceLang, targetLang)
-        if (direct != null) {
-            val (translatedFull, detected) = direct
-            val lines = translatedFull.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-            if (lines.size == chunk.size) {
-                return ChunkResult(lines, detected, chunk.size)
-            }
-        }
-
-        // 줄 수가 어긋나면 문장별 개별 번역으로 안전하게 폴백
-        var detected = sourceLang
-        var okCount = 0
-        val fallbackList = chunk.map { single ->
-            val res = callGoogleTranslateWithFallback(single, sourceLang, targetLang)
-            if (res != null) {
-                if (res.second.isNotBlank() && res.second != "auto" && detected == "auto") {
-                    detected = res.second
-                }
-                okCount++
-                res.first.trim().ifBlank { single }
-            } else {
-                single
-            }
-        }
-        return ChunkResult(fallbackList, detected, okCount)
     }
 
     private suspend fun callGoogleTranslateWithFallback(
