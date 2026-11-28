@@ -13,8 +13,8 @@ android {
         applicationId = "com.egolite.mobile"
         minSdk = 29
         targetSdk = 35
-        versionCode = 136
-        versionName = "1.0.3.c"
+        versionCode = 137
+        versionName = "1.0.3.d"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
