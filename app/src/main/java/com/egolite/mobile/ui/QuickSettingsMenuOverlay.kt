@@ -90,6 +90,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -199,7 +203,7 @@ private fun buildSectionIsolatedBlocks(
         val occupancy = mutableListOf<BooleanArray>()
 
         for (placed in currentSectionTiles) {
-            val sp = placed.span.coerceIn(1, 4)
+            val sp = if (placed.spec.zoomPercent != null) 4 else placed.span.coerceIn(1, 4)
             var foundRow = -1
             var foundCol = -1
             outer@ for (r in occupancy.indices) {
@@ -270,6 +274,7 @@ fun QuickSettingsBrowserMenuOverlay(
     onClearTileBounds: () -> Unit,
     onSaveLayout: (List<String>) -> Unit,
     onSetZoomPercent: (Int) -> Unit = {},
+    onEditModeChanged: (Boolean) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -281,6 +286,9 @@ fun QuickSettingsBrowserMenuOverlay(
             editMode = false
             onClearTileBounds()
         }
+    }
+    LaunchedEffect(editMode, visible) {
+        onEditModeChanged(visible && editMode)
     }
 
     val itemByKey = remember(items) { items.associateBy { it.key } }
@@ -321,7 +329,7 @@ fun QuickSettingsBrowserMenuOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = topPadding, end = endPadding, start = 12.dp, bottom = 12.dp),
+            .padding(top = if (editMode) 4.dp else topPadding, end = endPadding, start = 12.dp, bottom = 12.dp),
         contentAlignment = Alignment.TopEnd
     ) {
         AnimatedVisibility(
@@ -370,7 +378,7 @@ fun QuickSettingsBrowserMenuOverlay(
                     ) {
                         if (editMode) {
                             Text(
-                                text = "메뉴 · 툴바 편집",
+                                text = "메뉴 편집",
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -446,19 +454,114 @@ fun QuickSettingsBrowserMenuOverlay(
 
                     if (editMode) {
                         Text(
-                            text = "툴바·타일을 길게 눌러 위치 이동 · 우하단 핸들로 1×1~1×4 크기 조절",
+                            text = "길게 눌러 원하는 위치까지 드래그 이동 · 위로 끌어 주소창 툴바로 이동 · 우하단 핸들 크기 조절",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 5.dp)
                         )
-                        QsToolbarEditStrip()
-                        Spacer(modifier = Modifier.height(8.dp))
                     } else {
                         Spacer(modifier = Modifier.height(6.dp))
                     }
 
-                    // 3열 섹션 격리 스크롤 영역
+                    // 4열 섹션 격리 영역 + 안정적 부모 레벨 영구 드래그 오버레이 (리컴포지션 시에도 드래그 절대 끊기지 않음!)
                     val colWidthPx = with(density) { 84.dp.toPx() }
+                    val tileRootBounds = remember { mutableStateMapOf<String, Rect>() }
+                    var gridRootPos by remember { mutableStateOf(Offset.Zero) }
+                    var draggingKey by remember { mutableStateOf<String?>(null) }
+                    var dragFingerLocal by remember { mutableStateOf(Offset.Zero) }
+                    var lastSwapMs by remember { mutableStateOf(0L) }
+                    val latestEntries by rememberUpdatedState(parsedEntries)
+                    val latestHidden by rememberUpdatedState(hiddenKeys)
+                    val qsToTbKey = remember {
+                        mapOf(
+                            "newtab" to "NEW_TAB", "aispace" to "AI", "dark" to "DARKMODE",
+                            "share" to "SHARE", "find" to "FIND", "desktop" to "DESKTOP",
+                            "reader" to "READER", "mcp" to "MCP"
+                        )
+                    }
+                    LaunchedEffect(editMode) {
+                        if (!editMode) {
+                            draggingKey = null
+                            tileRootBounds.clear()
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coords ->
+                                if (coords.isAttached) gridRootPos = coords.positionInRoot()
+                            }
+                            .then(
+                                if (editMode) {
+                                    Modifier.pointerInput("qs_persistent_grid_drag") {
+                                        val topEscapePx = (-22).dp.toPx()
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = { startLocal ->
+                                                val rootPt = gridRootPos + startLocal
+                                                val hitKey = tileRootBounds.entries.firstOrNull { (_, r) -> r.contains(rootPt) }?.key
+                                                if (hitKey != null) {
+                                                    draggingKey = hitKey
+                                                    dragFingerLocal = startLocal
+                                                    lastSwapMs = 0L
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                val dk = draggingKey
+                                                val fy = dragFingerLocal.y
+                                                draggingKey = null
+                                                // 상단 주소창 툴바 쪽으로 위로 끌어올리면 실제 툴바로 즉시 이동!
+                                                if (dk != null && dk != "zoom" && fy < topEscapePx) {
+                                                    val tbKey = qsToTbKey[dk]
+                                                    if (tbKey != null) {
+                                                        SpaceManager.updatePreferences { p ->
+                                                            when (tbKey) {
+                                                                "MCP" -> p.copy(showMcpBadgeButton = true)
+                                                                "AI" -> p.copy(showAiCommandButton = true)
+                                                                "DARKMODE" -> p.copy(showDarkModeButton = true)
+                                                                "NEW_TAB" -> p.copy(showNewTabToolbarButton = true)
+                                                                "SHARE" -> p.copy(showShareButton = true)
+                                                                "FIND" -> p.copy(showFindInPageButton = true)
+                                                                "DESKTOP" -> p.copy(showDesktopSiteButton = true)
+                                                                "READER" -> p.copy(showReaderModeButton = true)
+                                                                else -> p
+                                                            }
+                                                        }
+                                                        val mut = latestEntries.toMutableList()
+                                                        mut.removeAll { it is QsLayoutEntry.Tile && it.key == dk }
+                                                        commit(mut, latestHidden + dk)
+                                                    }
+                                                }
+                                            },
+                                            onDragCancel = { draggingKey = null },
+                                            onDrag = { change, dragAmount ->
+                                                val dk = draggingKey ?: return@detectDragGesturesAfterLongPress
+                                                change.consume()
+                                                dragFingerLocal += dragAmount
+                                                val nowMs = System.currentTimeMillis()
+                                                if (nowMs - lastSwapMs < 220L) return@detectDragGesturesAfterLongPress
+                                                val rootPt = gridRootPos + dragFingerLocal
+                                                val overKey = tileRootBounds.entries.firstOrNull { (k, r) -> k != dk && r.contains(rootPt) }?.key
+                                                if (overKey != null) {
+                                                    val curList = latestEntries
+                                                    val fromIdx = curList.indexOfFirst { it is QsLayoutEntry.Tile && it.key == dk }
+                                                    val toIdx = curList.indexOfFirst { it is QsLayoutEntry.Tile && it.key == overKey }
+                                                    if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+                                                        lastSwapMs = nowMs
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        val mut = curList.toMutableList()
+                                                        val item = mut.removeAt(fromIdx)
+                                                        mut.add(toIdx, item)
+                                                        commit(mut)
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+                                } else Modifier
+                            )
+                    ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -542,14 +645,16 @@ fun QuickSettingsBrowserMenuOverlay(
                                                             spec = placed.spec,
                                                             span = sp,
                                                             editMode = editMode,
-                                                            isHovered = !editMode && hoveredKey == placed.spec.key,
+                                                            isHovered = (!editMode && hoveredKey == placed.spec.key) || (editMode && draggingKey == placed.spec.key),
                                                             colWidthPx = colWidthPx,
                                                             modifier = Modifier
                                                                 .weight(sp.toFloat())
                                                                 .fillMaxHeight()
                                                                 .onGloballyPositioned { coords ->
                                                                     if (coords.isAttached) {
-                                                                        onTileBoundsUpdated(placed.spec.key, coords.boundsInRoot())
+                                                                        val br = coords.boundsInRoot()
+                                                                        onTileBoundsUpdated(placed.spec.key, br)
+                                                                        tileRootBounds[placed.spec.key] = br
                                                                     }
                                                                 },
                                                             onClick = {
@@ -634,6 +739,49 @@ fun QuickSettingsBrowserMenuOverlay(
                                 }
                             }
                         }
+                    }
+
+                    // 손가락을 따라다니는 플로팅 드래그 고스트 (손을 떼기 전까지 절대 내려가지 않음!)
+                    val activeDragKey = draggingKey
+                    if (editMode && activeDragKey != null) {
+                        val dragSpec = itemByKey[activeDragKey]
+                        val goingToToolbar = activeDragKey != "zoom" && dragFingerLocal.y < with(density) { (-22).dp.toPx() } && activeDragKey in qsToTbKey
+                        if (dragSpec != null) {
+                            Surface(
+                                shape = RoundedCornerShape(22.dp),
+                                color = if (goingToToolbar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
+                                shadowElevation = 14.dp,
+                                modifier = Modifier
+                                    .offset {
+                                        IntOffset(
+                                            (dragFingerLocal.x - 42.dp.toPx()).roundToInt(),
+                                            (dragFingerLocal.y - 26.dp.toPx()).roundToInt()
+                                        )
+                                    }
+                                    .zIndex(40f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    EgoIcon(
+                                        imageVector = dragSpec.icon,
+                                        contentDescription = null,
+                                        tint = if (goingToToolbar) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(20.dp),
+                                        symbolSize = 20.dp
+                                    )
+                                    Text(
+                                        text = if (goingToToolbar) "주소창 툴바로 이동" else dragSpec.title,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (goingToToolbar) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
                     }
                 }
             }
@@ -755,35 +903,7 @@ private fun QsMenuTile(
                                 color = if (zoomDraggingRow) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
                                 shape = RoundedCornerShape(35.dp)
                             )
-                            .pointerInput("zoom_row_drag") {
-                                val stepY = 44.dp.toPx()
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        zoomDraggingRow = true
-                                        zoomDragAccumY = 0f
-                                        zoomLiftY = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    },
-                                    onDragEnd = { zoomDraggingRow = false; zoomDragAccumY = 0f; zoomLiftY = 0f },
-                                    onDragCancel = { zoomDraggingRow = false; zoomDragAccumY = 0f; zoomLiftY = 0f },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        zoomDragAccumY += dragAmount.y
-                                        zoomLiftY = (zoomLiftY + dragAmount.y * 0.35f).coerceIn(-38f, 38f)
-                                        if (zoomDragAccumY <= -stepY) {
-                                            zoomDragAccumY = 0f
-                                            zoomLiftY = 0f
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            latestOnMoveDelta(-1)
-                                        } else if (zoomDragAccumY >= stepY) {
-                                            zoomDragAccumY = 0f
-                                            zoomLiftY = 0f
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            latestOnMoveDelta(1)
-                                        }
-                                    }
-                                )
-                            }
+
                     } else Modifier
                 )
         ) {
@@ -821,67 +941,7 @@ private fun QsMenuTile(
                 translationY = if (isTileLifted) liftOffsetY else 0f
             }
             .then(
-                if (editMode) {
-                    Modifier.pointerInput("tile_drag_${spec.key}") {
-                        val stepX = (colWidthPx * 0.62f).coerceAtLeast(44f)
-                        val stepY = 56.dp.toPx()
-                        detectDragGesturesAfterLongPress(
-                            onDragStart = {
-                                isTileLifted = true
-                                liftOffsetX = 0f
-                                liftOffsetY = 0f
-                                dragAccumX = 0f
-                                dragAccumY = 0f
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            },
-                            onDragEnd = {
-                                isTileLifted = false
-                                liftOffsetX = 0f
-                                liftOffsetY = 0f
-                                dragAccumX = 0f
-                                dragAccumY = 0f
-                            },
-                            onDragCancel = {
-                                isTileLifted = false
-                                liftOffsetX = 0f
-                                liftOffsetY = 0f
-                                dragAccumX = 0f
-                                dragAccumY = 0f
-                            },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                liftOffsetX = (liftOffsetX + dragAmount.x * 0.45f).coerceIn(-64f, 64f)
-                                liftOffsetY = (liftOffsetY + dragAmount.y * 0.45f).coerceIn(-64f, 64f)
-                                dragAccumX += dragAmount.x
-                                dragAccumY += dragAmount.y
-                                when {
-                                    dragAccumX >= stepX -> {
-                                        dragAccumX = 0f; liftOffsetX = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        latestOnMoveDelta(1)
-                                    }
-                                    dragAccumX <= -stepX -> {
-                                        dragAccumX = 0f; liftOffsetX = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        latestOnMoveDelta(-1)
-                                    }
-                                    dragAccumY >= stepY -> {
-                                        dragAccumY = 0f; liftOffsetY = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        latestOnMoveDelta(2)
-                                    }
-                                    dragAccumY <= -stepY -> {
-                                        dragAccumY = 0f; liftOffsetY = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        latestOnMoveDelta(-2)
-                                    }
-                                }
-                            }
-                        )
-                    }
-                } else {
-                    Modifier.clickable { onClick() }
-                }
+if (!editMode) Modifier.clickable { onClick() } else Modifier
             )
     ) {
         // 내부 클립된 타일 본체
@@ -1104,221 +1164,3 @@ private fun QsTinyCircleBtn(
 }
 
 
-/**
- * 빠른메뉴 편집 모드 상단에 표시되는 주소창 툴바 아이콘 직접 편집 스트립.
- * - 아이콘을 길게 눌러 좌우 드래그로 툴바 순서 실시간 변경
- * - 좌상단 '-' 버튼으로 툴바에서 빼기 / 하단 숨김 칩 탭으로 즉시 복원
- */
-@Composable
-private fun QsToolbarEditStrip() {
-    val prefs by SpaceManager.preferences.collectAsState()
-    val haptic = LocalHapticFeedback.current
-    val density = LocalDensity.current
-    val defaultOrder = remember {
-        listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
-    }
-    val normalizedOrder = remember(prefs.toolbarButtonOrder) {
-        val known = prefs.toolbarButtonOrder.filter { it in defaultOrder }
-        known + defaultOrder.filter { it !in known }
-    }
-    fun isToolbarKeyEnabled(key: String): Boolean = when (key) {
-        "MCP" -> prefs.showMcpBadgeButton
-        "AI" -> prefs.showAiCommandButton
-        "ADBLOCK" -> prefs.showAdBlockButton
-        "TRANSLATE" -> prefs.showTranslateButton
-        "DARKMODE" -> prefs.showDarkModeButton
-        "NEW_TAB" -> prefs.showNewTabToolbarButton
-        "SHARE" -> prefs.showShareButton
-        "FIND" -> prefs.showFindInPageButton
-        "DESKTOP" -> prefs.showDesktopSiteButton
-        "READER" -> prefs.showReaderModeButton
-        "PROFILE" -> prefs.showProfileAvatarButton
-        else -> false
-    }
-    fun setToolbarKeyEnabled(key: String, enabled: Boolean) {
-        SpaceManager.updatePreferences { p ->
-            when (key) {
-                "MCP" -> p.copy(showMcpBadgeButton = enabled)
-                "AI" -> p.copy(showAiCommandButton = enabled)
-                "ADBLOCK" -> p.copy(showAdBlockButton = enabled)
-                "TRANSLATE" -> p.copy(showTranslateButton = enabled)
-                "DARKMODE" -> p.copy(showDarkModeButton = enabled)
-                "NEW_TAB" -> p.copy(showNewTabToolbarButton = enabled)
-                "SHARE" -> p.copy(showShareButton = enabled)
-                "FIND" -> p.copy(showFindInPageButton = enabled)
-                "DESKTOP" -> p.copy(showDesktopSiteButton = enabled)
-                "READER" -> p.copy(showReaderModeButton = enabled)
-                "PROFILE" -> p.copy(showProfileAvatarButton = enabled)
-                else -> p
-            }
-        }
-    }
-    fun keyMeta(key: String): Pair<androidx.compose.ui.graphics.vector.ImageVector, String> = when (key) {
-        "MCP" -> Icons.Default.LinkOff to "MCP"
-        "AI" -> Icons.Default.AutoAwesome to "AI 명령"
-        "ADBLOCK" -> Icons.Default.Shield to "광고차단"
-        "TRANSLATE" -> Icons.Default.Translate to "번역"
-        "DARKMODE" -> Icons.Default.DarkMode to "다크"
-        "NEW_TAB" -> Icons.Default.Add to "새 탭"
-        "SHARE" -> Icons.Default.Share to "공유"
-        "FIND" -> Icons.Default.FindInPage to "찾기"
-        "DESKTOP" -> Icons.Default.DesktopWindows to "데스크톱"
-        "READER" -> Icons.Default.MenuBook to "리더"
-        else -> Icons.Default.Person to "프로필"
-    }
-
-    val enabledKeys = remember(normalizedOrder, prefs) { normalizedOrder.filter { isToolbarKeyEnabled(it) } }
-    val hiddenKeys = remember(normalizedOrder, prefs) { normalizedOrder.filter { !isToolbarKeyEnabled(it) } }
-    val latestEnabled by rememberUpdatedState(enabledKeys)
-    val latestFull by rememberUpdatedState(normalizedOrder)
-    val stepPx = with(density) { 42.dp.toPx() }
-
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                text = "주소창 툴바 아이콘 (길게 눌러 좌우 이동 · − 빼기)",
-                fontSize = 10.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                enabledKeys.forEach { key ->
-                    val (iconVec, label) = keyMeta(key)
-                    var dragging by remember(key) { mutableStateOf(false) }
-                    var offsetX by remember(key) { mutableFloatStateOf(0f) }
-                    var accumX by remember(key) { mutableFloatStateOf(0f) }
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .zIndex(if (dragging) 12f else 0f)
-                            .graphicsLayer {
-                                translationX = if (dragging) offsetX else 0f
-                                scaleX = if (dragging) 1.16f else 1f
-                                scaleY = if (dragging) 1.16f else 1f
-                            }
-                            .pointerInput("qs_tb_$key") {
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = {
-                                        dragging = true
-                                        offsetX = 0f
-                                        accumX = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    },
-                                    onDragEnd = { dragging = false; offsetX = 0f; accumX = 0f },
-                                    onDragCancel = { dragging = false; offsetX = 0f; accumX = 0f },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        offsetX = (offsetX + dragAmount.x * 0.55f).coerceIn(-56f, 56f)
-                                        accumX += dragAmount.x
-                                        val dir = when {
-                                            accumX >= stepPx -> 1
-                                            accumX <= -stepPx -> -1
-                                            else -> 0
-                                        }
-                                        if (dir != 0) {
-                                            accumX = 0f
-                                            offsetX = 0f
-                                            val curEn = latestEnabled
-                                            val idx = curEn.indexOf(key)
-                                            val targetEnIdx = (idx + dir).coerceIn(0, curEn.lastIndex)
-                                            if (idx >= 0 && targetEnIdx != idx) {
-                                                val targetKey = curEn[targetEnIdx]
-                                                val mut = latestFull.toMutableList()
-                                                val fi = mut.indexOf(key)
-                                                val ti = mut.indexOf(targetKey)
-                                                if (fi >= 0 && ti >= 0) {
-                                                    mut.removeAt(fi)
-                                                    mut.add(ti, key)
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = mut) }
-                                                }
-                                            }
-                                        }
-                                    }
-                                )
-                            }
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (dragging) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surface
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            EgoIcon(
-                                imageVector = iconVec,
-                                contentDescription = label,
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(17.dp),
-                                symbolSize = 17.dp
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .size(15.dp)
-                                .clip(CircleShape)
-                                .background(EgoDangerRed)
-                                .clickable { setToolbarKeyEnabled(key, false) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            EgoIcon(
-                                imageVector = Icons.Default.Remove,
-                                contentDescription = "툴바에서 빼기",
-                                tint = Color.White,
-                                modifier = Modifier.size(10.dp),
-                                symbolSize = 10.dp
-                            )
-                        }
-                    }
-                }
-            }
-            if (hiddenKeys.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    hiddenKeys.forEach { hKey ->
-                        val (iconVec, label) = keyMeta(hKey)
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                            modifier = Modifier.clickable { setToolbarKeyEnabled(hKey, true) }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                EgoIcon(iconVec, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp), symbolSize = 12.dp)
-                                Text("+ $label", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurface)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
