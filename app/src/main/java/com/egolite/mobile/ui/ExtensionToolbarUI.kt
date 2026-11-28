@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.PlayArrow
@@ -48,6 +49,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -115,6 +118,7 @@ fun ExtensionSettingsBottomSection() {
     val context = LocalContext.current
     val extensions by ExtensionManager.extensions.collectAsState()
     val pendingReport by ExtensionManager.pendingReport.collectAsState()
+    var renamingExt by remember { mutableStateOf<InstalledExtension?>(null) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
@@ -152,7 +156,7 @@ fun ExtensionSettingsBottomSection() {
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = ext.name,
+                                text = ext.displayName,
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -172,6 +176,26 @@ fun ExtensionSettingsBottomSection() {
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                    }
+                    IconButton(
+                        onClick = { renamingExt = ext },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFF8F00)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            EgoIcon(
+                                Icons.Default.Edit,
+                                contentDescription = "확장 이름 변경",
+                                tint = Color.White,
+                                modifier = Modifier.size(13.dp),
+                                symbolSize = 13.dp
+                            )
+                        }
                     }
                     Switch(
                         checked = ext.enabled,
@@ -245,6 +269,13 @@ fun ExtensionSettingsBottomSection() {
     }
 
     // 호환성 자동 진단 다이얼로그
+    renamingExt?.let { ext ->
+        ExtensionRenameDialog(
+            ext = ext,
+            onDismiss = { renamingExt = null }
+        )
+    }
+
     pendingReport?.let { report ->
         ExtensionCompatReportDialog(
             report = report,
