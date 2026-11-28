@@ -795,7 +795,7 @@ fun QuickSettingsBrowserMenuOverlay(
                     val zoomSpec = itemByKey["zoom"]
                     val zoomEntrySpan = (parsedEntries.firstOrNull { it is QsLayoutEntry.Tile && it.key == "zoom" } as? QsLayoutEntry.Tile)?.span ?: 4
                     if (zoomSpec != null && zoomEntrySpan == 1 && !editMode) {
-                        AnimatedVisibility(
+                        androidx.compose.animation.AnimatedVisibility(
                             visible = showCompactZoomSlider,
                             enter = expandVertically(spring(dampingRatio = 0.78f, stiffness = 320f)) + fadeIn(tween(180)),
                             exit = shrinkVertically(tween(200)) + fadeOut(tween(150)),
