@@ -118,8 +118,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.egolite.mobile.account.GoogleAccountManager
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.model.AiSpaceStatus
+import com.egolite.mobile.model.McpActionMotion
 import com.egolite.mobile.model.BrowserSpace
 import com.egolite.mobile.model.MonitorPosition
 import com.egolite.mobile.model.SpaceType
@@ -523,28 +525,7 @@ fun AiLiveMonitorTray(
                         horizontalArrangement = Arrangement.End
                     ) {
                         if (canAddAiSpace) {
-                            IconButton(
-                                onClick = onCreateAiSpace,
-                                modifier = Modifier.size(32.dp).pressBounceScale()
-                            ) {
-                                EgoIcon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = "새 AI 공간",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                , symbolSize = 18.dp)
-                            }
-                        }
-                        IconButton(
-                            onClick = onCollapse,
-                            modifier = Modifier.size(32.dp).pressBounceScale()
-                        ) {
-                            EgoIcon(
-                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = "AI 모니터 접기",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            , symbolSize = 20.dp)
+                            LuxuryRinglessPlusButton(onClick = onCreateAiSpace)
                         }
                     }
                 }
@@ -610,46 +591,7 @@ fun AiLiveMonitorTray(
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (canAddAiSpace) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                modifier = Modifier
-                                    .pressBounceScale()
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                                    .clip(CircleShape)
-                                    .clickable { onCreateAiSpace() }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                ) {
-                                    EgoIcon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = "AI Space 추가",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(14.dp)
-                                    , symbolSize = 14.dp)
-                                    Text(
-                                        text = "새 AI 공간",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                        }
-                        IconButton(
-                            onClick = onCollapse,
-                            modifier = Modifier.size(32.dp).pressBounceScale()
-                        ) {
-                            EgoIcon(
-                                imageVector = Icons.Default.KeyboardArrowUp,
-                                contentDescription = "AI 모니터 접기",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
-                            , symbolSize = 20.dp)
+                            LuxuryRinglessPlusButton(onClick = onCreateAiSpace)
                         }
                     }
                 }
@@ -873,7 +815,13 @@ private fun MonitorSpaceCard(
         else -> ""
     }
 
-    val displayName = if (isPersonal) "Personal" else connectedAiName.ifBlank { space.name }
+    val googleAccount by GoogleAccountManager.state.collectAsState()
+    val personalLabel = if (googleAccount.isSignedIn && googleAccount.displayName.isNotBlank()) {
+        googleAccount.displayName
+    } else {
+        "내 공간"
+    }
+    val displayName = if (isPersonal) personalLabel else connectedAiName.ifBlank { space.name.replace("AI Space", "AI 공간") }
 
     // 0.8x 속도 M3 Expressive Spring Cascade (블러 링 제거, 선명한 대각선 스프링 캐스케이드 등장)
     val initSlideX = if (isReturning) (if (isLeftSidebar) 28f else 0f) else (if (isLeftSidebar) -14f else -18f)
@@ -1074,11 +1022,12 @@ private fun MonitorSpaceCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.5.dp)
-                            .clip(CircleShape)
-                            .background(if (isWorking || isPersonal) spaceColor else spaceColor.copy(alpha = 0.55f))
+                    AnimatedSpawnSpaceBuddy(
+                        spaceId = space.id,
+                        isPersonal = isPersonal,
+                        spaceColor = spaceColor,
+                        aiStatus = space.aiStatus,
+                        actionMotion = space.aiActionMotion
                     )
                     Text(
                         text = displayName,
@@ -1594,5 +1543,171 @@ private fun AiCardBottomSandWaveOverlay(
             grainPaint.color = (alphaInt shl 24) or (pr shl 16) or (pg shl 8) or pb
             native.drawRect(px, py, px + sz, py + sz, grainPaint)
         }
+    }
+}
+
+
+/**
+ * 원링·테두리 없는 순수 '+' 기호 전용 동적 눌림 버튼 (압축 + 90도 스프링 회전 + 발광)
+ */
+@Composable
+private fun LuxuryRinglessPlusButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val scaleAnim = remember { Animatable(1f) }
+    val rotAnim = remember { Animatable(0f) }
+
+    Box(
+        modifier = modifier
+            .size(34.dp)
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                scope.launch {
+                    scaleAnim.animateTo(0.70f, tween(95, easing = FastOutSlowInEasing))
+                    launch {
+                        rotAnim.animateTo(
+                            rotAnim.value + 90f,
+                            spring(dampingRatio = 0.62f, stiffness = 360f)
+                        )
+                    }
+                    scaleAnim.animateTo(1.18f, spring(dampingRatio = 0.55f, stiffness = 420f))
+                    scaleAnim.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 360f))
+                }
+                onClick()
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        EgoIcon(
+            imageVector = Icons.Default.Add,
+            contentDescription = "새 AI 공간 추가",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .size(21.dp)
+                .graphicsLayer {
+                    scaleX = scaleAnim.value
+                    scaleY = scaleAnim.value
+                    rotationZ = rotAnim.value
+                },
+            symbolSize = 21.dp
+        )
+    }
+}
+
+/**
+ * 펼쳐진 라이브 모니터 카드 내부 AI 이름 좌측 캐릭터 + 8종 랜덤 동적 모프 등장 애니메이션
+ * 1: 리퀴드 드롭 / 2: 원형→셰이프 / 3: 실키 3D 리프 플립 / 4: 라이트 수렴
+ * 5: 페탈 블룸 / 6: 마그네틱 글라이드 / 7: 프로스트 스윕 / 8: 에어리 글래스 팝
+ */
+@Composable
+private fun AnimatedSpawnSpaceBuddy(
+    spaceId: String,
+    isPersonal: Boolean,
+    spaceColor: Color,
+    aiStatus: AiSpaceStatus,
+    actionMotion: McpActionMotion = McpActionMotion.IDLE
+) {
+    val animVariant = remember(spaceId) { if (isPersonal) 0 else Random.nextInt(1, 9) }
+    val progress = remember(spaceId) { Animatable(if (isPersonal) 1f else 0f) }
+    val shape = remember(spaceId, isPersonal) {
+        if (isPersonal) M3BuddyShape.CIRCLE else buddyShapeForSpace(spaceId, (spaceId.hashCode() and 0x7) + 1)
+    }
+
+    LaunchedEffect(spaceId) {
+        if (!isPersonal) {
+            progress.snapTo(0f)
+            progress.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(dampingRatio = 0.62f, stiffness = 240f)
+            )
+        }
+    }
+
+    val p = progress.value
+    val v = when (animVariant) {
+        1 -> { // ① 리퀴드 드롭 모프
+            val inv = 1f - p
+            val stretchY = 1f + inv * 0.45f - sin(p * PI.toFloat()) * 0.22f
+            val squashX = 1f - inv * 0.30f + sin(p * PI.toFloat()) * 0.24f
+            FloatArray(8).apply {
+                this[0] = squashX; this[1] = stretchY; this[3] = -26f * inv; this[6] = (p * 1.6f).coerceIn(0f, 1f); this[7] = inv
+            }
+        }
+        2 -> { // ② 원형→셰이프 모프
+            val inv = 1f - p
+            FloatArray(8).apply {
+                this[0] = 0.2f + 0.8f * p; this[1] = 0.2f + 0.8f * p; this[4] = -55f * inv; this[6] = p.coerceIn(0f, 1f); this[7] = inv
+            }
+        }
+        3 -> { // ③ 실키 3D 리프 플립
+            val inv = 1f - p
+            FloatArray(8).apply {
+                this[0] = 0.65f + 0.35f * p; this[1] = 0.65f + 0.35f * p; this[5] = -110f * inv; this[6] = p.coerceIn(0f, 1f)
+            }
+        }
+        4 -> { // ④ 라이트 수렴 모프
+            val inv = 1f - p
+            FloatArray(8).apply {
+                this[0] = 0.32f + 0.68f * p; this[1] = 0.32f + 0.68f * p; this[6] = (p * 1.3f).coerceIn(0f, 1f); this[7] = inv * 0.85f
+            }
+        }
+        5 -> { // ⑤ 페탈 블룸 모프
+            val inv = 1f - p
+            FloatArray(8).apply {
+                this[0] = 0.24f + 0.76f * p; this[1] = 0.24f + 0.76f * p; this[4] = -85f * inv; this[6] = p.coerceIn(0f, 1f); this[7] = inv
+            }
+        }
+        6 -> { // ⑥ 마그네틱 글라이드 모프
+            val inv = 1f - p
+            FloatArray(8).apply {
+                this[0] = 1f + inv * 0.28f; this[1] = 1f - inv * 0.22f; this[2] = 32f * inv; this[3] = -22f * inv; this[6] = (p * 1.4f).coerceIn(0f, 1f)
+            }
+        }
+        7 -> { // ⑦ 프로스트 디졸브 스윕
+            val inv = 1f - p
+            FloatArray(8).apply {
+                this[0] = 0.85f + 0.15f * p; this[1] = 0.85f + 0.15f * p; this[2] = -14f * inv; this[6] = p.coerceIn(0f, 1f)
+            }
+        }
+        8 -> { // ⑧ 에어리 글래스 팝
+            val pop = 0.24f + 0.76f * p + sin(p * PI.toFloat()) * 0.16f
+            FloatArray(8).apply {
+                this[0] = pop; this[1] = pop; this[6] = (p * 1.5f).coerceIn(0f, 1f); this[7] = (1f - p) * 0.6f
+            }
+        }
+        else -> FloatArray(8).apply { this[0] = 1f; this[1] = 1f; this[6] = 1f }
+    }
+    val sx = v[0]; val sy = v[1]; val tx = v[2]; val ty = v[3]; val rotZ = v[4]; val rotY = v[5]; val alp = v[6]; val morphP = v[7]
+
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .graphicsLayer {
+                scaleX = sx
+                scaleY = sy
+                translationX = tx
+                translationY = ty
+                rotationZ = rotZ
+                rotationY = rotY
+                alpha = alp
+                cameraDistance = 12f * density
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        M3ExpressiveBuddyAvatar(
+            color = spaceColor,
+            baseShape = shape,
+            targetShape = M3BuddyShape.CIRCLE,
+            morphProgress = morphP.coerceIn(0f, 1f),
+            aiStatus = aiStatus,
+            actionMotion = actionMotion,
+            size = 24.dp,
+            blinkSeed = spaceId.hashCode() and 0xFF
+        )
     }
 }
