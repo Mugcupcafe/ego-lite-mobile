@@ -61,6 +61,7 @@ import com.egolite.mobile.model.ProgressBarStyle
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
@@ -1738,98 +1739,35 @@ fun BrowserScreen() {
                         }
                         "TRANSLATE" -> {
                             if (prefs.showTranslateButton) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .onGloballyPositioned { coords -> translateAnchorRect = coords.boundsInRoot() }
-                                        .clip(CircleShape)
-                                        .combinedClickable(
-                                            onClick = {
-                                                scope.launch {
-                                                    translateFlipAnim.snapTo(0f)
-                                                    translateFlipAnim.animateTo(360f, animationSpec = spring(dampingRatio = 0.68f, stiffness = 320f))
-                                                }
-                                                scope.launch {
-                                                    translateScaleAnim.snapTo(0.80f)
-                                                    translateScaleAnim.animateTo(1.18f, animationSpec = spring(dampingRatio = 0.50f, stiffness = 560f))
-                                                    translateScaleAnim.animateTo(1f, animationSpec = EgoMotion.bouncySpring())
-                                                }
-                                                if (translateState.visible) {
-                                                    translateState = translateState.copy(visible = false)
-                                                } else {
-                                                    triggerTranslation(translateState.sourceLang, translateState.targetLang)
-                                                }
-                                            },
-                                            onLongClick = {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                showTranslateSettingsDialog = true
-                                            }
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    val trOrbitColor = MaterialTheme.colorScheme.primary
-                                    EgoIcon(
-                                        imageVector = Icons.Default.Translate,
-                                        contentDescription = "페이지 번역 (길게 눌러 번역 설정)",
-                                        tint = if (translateState.isTranslated || translateState.isTranslating) trOrbitColor else activeIconColor,
-                                        modifier = Modifier
-                                            .drawBehind {
-                                                if (translateState.isTranslating) {
-                                                    val p = translateState.progress.coerceIn(0.08f, 1f)
-                                                    drawCircle(
-                                                        color = trOrbitColor.copy(alpha = 0.25f),
-                                                        radius = size.minDimension * 0.72f,
-                                                        style = Stroke(width = 1.6.dp.toPx())
-                                                    )
-                                                    drawArc(
-                                                        color = trOrbitColor,
-                                                        startAngle = -90f,
-                                                        sweepAngle = 360f * p,
-                                                        useCenter = false,
-                                                        style = Stroke(width = 2.0.dp.toPx())
-                                                    )
-                                                }
-                                            }
-                                            .graphicsLayer {
-                                                rotationY = translateFlipAnim.value
-                                                scaleX = translateScaleAnim.value
-                                                scaleY = translateScaleAnim.value
-                                                cameraDistance = 12f * density.density
-                                            },
-                                        symbolSize = 20.dp
-                                    )
-                                }
+                                ToolbarTranslateButton(
+                                    isTranslated = translateState.isTranslated,
+                                    isTranslating = translateState.isTranslating,
+                                    progress = translateState.progress,
+                                    activeIconColor = activeIconColor,
+                                    flipAnim = translateFlipAnim,
+                                    scaleAnim = translateScaleAnim,
+                                    onAnchorRect = { translateAnchorRect = it },
+                                    onClick = {
+                                        if (translateState.visible) {
+                                            translateState = translateState.copy(visible = false)
+                                        } else {
+                                            triggerTranslation(translateState.sourceLang, translateState.targetLang)
+                                        }
+                                    },
+                                    onLongClick = { showTranslateSettingsDialog = true }
+                                )
                             }
                         }
                         "DARKMODE" -> {
                             if (prefs.showDarkModeButton) {
-                                IconButton(
-                                    onClick = { val next = !isEffectiveDark; SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) } },
-                                    modifier = Modifier.size(38.dp).pressBounceScale()
-                                ) {
-                                    val themeSpinDeg by animateFloatAsState(
-                                        targetValue = if (isEffectiveDark) 180f else 0f,
-                                        animationSpec = spring(dampingRatio = 0.70f, stiffness = 260f),
-                                        label = "themeIconRotation"
-                                    )
-                                    AnimatedContent(
-                                        targetState = isEffectiveDark,
-                                        transitionSpec = {
-                                            (scaleIn(EgoMotion.bouncySpring(), initialScale = 0.55f) + fadeIn(tween(160)))
-                                                .togetherWith(scaleOut(tween(120), targetScale = 0.55f) + fadeOut(tween(110)))
-                                        },
-                                        modifier = Modifier.graphicsLayer { rotationZ = themeSpinDeg },
-                                        label = "themeIconMorph"
-                                    ) { darkNow ->
-                                        EgoIcon(
-                                            imageVector = if (darkNow) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                            contentDescription = "다크모드 전환",
-                                            tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor,
-                                            filled = darkNow,
-                                            modifier = Modifier.graphicsLayer { rotationZ = if (darkNow) -180f else 0f }
-                                        )
+                                ToolbarDarkModeButton(
+                                    isEffectiveDark = isEffectiveDark,
+                                    activeIconColor = activeIconColor,
+                                    onToggle = {
+                                        val next = !isEffectiveDark
+                                        SpaceManager.updatePreferences { it.copy(darkModeEnabled = next, themeMode = if (next) ThemeMode.DARK else ThemeMode.LIGHT) }
                                     }
-                                }
+                                )
                             }
                         }
                         "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER" -> {
@@ -3108,6 +3046,116 @@ private fun ToolbarProfileAvatarButton(
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ToolbarTranslateButton(
+    isTranslated: Boolean,
+    isTranslating: Boolean,
+    progress: Float,
+    activeIconColor: Color,
+    flipAnim: Animatable<Float, AnimationVector1D>,
+    scaleAnim: Animatable<Float, AnimationVector1D>,
+    onAnchorRect: (Rect) -> Unit,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val trOrbitColor = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .onGloballyPositioned { coords -> if (coords.isAttached) onAnchorRect(coords.boundsInRoot()) }
+            .clip(CircleShape)
+            .combinedClickable(
+                onClick = {
+                    scope.launch {
+                        flipAnim.snapTo(0f)
+                        flipAnim.animateTo(360f, animationSpec = spring(dampingRatio = 0.68f, stiffness = 320f))
+                    }
+                    scope.launch {
+                        scaleAnim.snapTo(0.80f)
+                        scaleAnim.animateTo(1.18f, animationSpec = spring(dampingRatio = 0.50f, stiffness = 560f))
+                        scaleAnim.animateTo(1f, animationSpec = EgoMotion.bouncySpring())
+                    }
+                    onClick()
+                },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        EgoIcon(
+            imageVector = Icons.Default.Translate,
+            contentDescription = "페이지 번역 (길게 눌러 번역 설정)",
+            tint = if (isTranslated || isTranslating) trOrbitColor else activeIconColor,
+            modifier = Modifier
+                .drawBehind {
+                    if (isTranslating) {
+                        val p = progress.coerceIn(0.08f, 1f)
+                        drawCircle(
+                            color = trOrbitColor.copy(alpha = 0.25f),
+                            radius = size.minDimension * 0.72f,
+                            style = Stroke(width = 1.6.dp.toPx())
+                        )
+                        drawArc(
+                            color = trOrbitColor,
+                            startAngle = -90f,
+                            sweepAngle = 360f * p,
+                            useCenter = false,
+                            style = Stroke(width = 2.0.dp.toPx())
+                        )
+                    }
+                }
+                .graphicsLayer {
+                    rotationY = flipAnim.value
+                    scaleX = scaleAnim.value
+                    scaleY = scaleAnim.value
+                    cameraDistance = 12f * density.density
+                },
+            symbolSize = 20.dp
+        )
+    }
+}
+
+@Composable
+private fun ToolbarDarkModeButton(
+    isEffectiveDark: Boolean,
+    activeIconColor: Color,
+    onToggle: () -> Unit
+) {
+    IconButton(
+        onClick = onToggle,
+        modifier = Modifier.size(38.dp).pressBounceScale()
+    ) {
+        val themeSpinDeg by animateFloatAsState(
+            targetValue = if (isEffectiveDark) 180f else 0f,
+            animationSpec = spring(dampingRatio = 0.70f, stiffness = 260f),
+            label = "themeIconRotation"
+        )
+        AnimatedContent(
+            targetState = isEffectiveDark,
+            transitionSpec = {
+                (scaleIn(EgoMotion.bouncySpring(), initialScale = 0.55f) + fadeIn(tween(160)))
+                    .togetherWith(scaleOut(tween(120), targetScale = 0.55f) + fadeOut(tween(110)))
+            },
+            modifier = Modifier.graphicsLayer { rotationZ = themeSpinDeg },
+            label = "themeIconMorph"
+        ) { darkNow ->
+            EgoIcon(
+                imageVector = if (darkNow) Icons.Default.LightMode else Icons.Default.DarkMode,
+                contentDescription = "다크모드 전환",
+                tint = if (darkNow) MaterialTheme.colorScheme.primary else activeIconColor,
+                filled = darkNow,
+                modifier = Modifier.graphicsLayer { rotationZ = if (darkNow) -180f else 0f }
+            )
         }
     }
 }
