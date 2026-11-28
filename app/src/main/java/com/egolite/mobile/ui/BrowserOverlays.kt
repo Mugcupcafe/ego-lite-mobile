@@ -1,4 +1,24 @@
 package com.egolite.mobile.ui
+import com.egolite.mobile.browser.SpaceManager
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.animation.core.Animatable
+import com.egolite.mobile.model.ProgressBarStyle
+import com.egolite.mobile.browser.ClosedTabUndoEntry
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.ExitTransition
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -502,7 +522,8 @@ fun BrowserFullscreenVideoOverlay(
             FullscreenVideoVerticalHudOverlay(
                 enabled = prefs.videoVerticalHudEnabled,
                 lightIntensity = prefs.videoHudLightIntensity,
-                particleDensity = prefs.videoHudParticleDensity
+                particleDensity = prefs.videoHudParticleDensity,
+                syncSystemBrightness = prefs.videoHudSyncSystemBrightness
             )
         }
     }
@@ -598,5 +619,199 @@ fun BrowserCrashLogDialog(
                 }
             }
         )
+    }
+}
+
+
+/**
+ * 닫은 탭 되돌리기 상단 알약 배너
+ * - 4.5초 하모니 광감/파티클 카운트다운 프로그레스 바 -> 만료 시 자동 파티클 소멸
+ * - 좌/우 스와이프 제거 시 파티클 없이 물리적으로 화면 밖으로 슬라이드 아웃
+ */
+@Composable
+fun UndoClosedTabBanner(
+    entry: ClosedTabUndoEntry?,
+    onUndo: () -> Unit,
+    onSwipeDismiss: () -> Unit,
+    onDustDismiss: (VanishSnapshot) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val prefs by SpaceManager.preferences.collectAsState()
+    var bannerRect by remember { mutableStateOf<Rect?>(null) }
+    var bannerCoords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    val captureLayer = rememberGraphicsLayer()
+    val scope = rememberCoroutineScope()
+    var dismissedViaDust by remember(entry?.seq) { mutableStateOf(false) }
+
+    AnimatedVisibility(
+        visible = entry != null,
+        enter = slideInVertically(EgoMotion.intOffsetSpring) { -it } + fadeIn(tween(180)),
+        exit = if (dismissedViaDust) ExitTransition.None else (slideOutVertically(tween(160)) { -it } + fadeOut(tween(130))),
+        modifier = modifier
+    ) {
+        val cur = entry ?: return@AnimatedVisibility
+        val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+        val cardBg = if (isDark) Color(0xFF292C33) else Color(0xFFF3F6FC)
+        val density = LocalDensity.current
+        val dismissThresholdPx = with(density) { 92.dp.toPx() }
+        val swipeX = remember(cur.seq) { Animatable(0f) }
+        val countdownProg = remember(cur.seq) { Animatable(1f) }
+        var isDragging by remember(cur.seq) { mutableStateOf(false) }
+
+        fun triggerDustClose() {
+            if (dismissedViaDust) return
+            dismissedViaDust = true
+            scope.launch {
+                val bmp = runCatching { captureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+                val liveRect = bannerCoords?.takeIf { it.isAttached }?.boundsInRoot() ?: bannerRect
+                val origin = liveRect?.let { Offset(it.right - 22f, it.center.y) }
+                onDustDismiss(VanishSnapshot(rect = liveRect, touchRoot = origin, bitmap = bmp))
+            }
+        }
+
+        // 4.5초 자동 카운트다운 (드래그 중에는 일시정지, 완료 시 파티클 소멸)
+        LaunchedEffect(cur.seq, isDragging) {
+            if (!isDragging && countdownProg.value > 0.01f) {
+                val remainingMs = (countdownProg.value * 4500f).toInt().coerceAtLeast(120)
+                countdownProg.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(durationMillis = remainingMs, easing = LinearEasing)
+                )
+                if (!isDragging && countdownProg.value <= 0.01f) {
+                    triggerDustClose()
+                }
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = cardBg,
+            shadowElevation = 8.dp,
+            modifier = Modifier
+                .widthIn(min = 320.dp, max = 460.dp)
+                .padding(horizontal = 12.dp)
+                .onGloballyPositioned { coords -> bannerCoords = coords; bannerRect = coords.boundsInRoot() }
+                .drawWithContent {
+                    captureLayer.record { this@drawWithContent.drawContent() }
+                    drawLayer(captureLayer)
+                }
+                .graphicsLayer {
+                    translationX = swipeX.value
+                    alpha = (1f - (kotlin.math.abs(swipeX.value) / (dismissThresholdPx * 2.2f))).coerceIn(0.15f, 1f)
+                }
+                .pointerInput(cur.seq) {
+                    val vt = VelocityTracker()
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            isDragging = true
+                            vt.resetTracking()
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            vt.addPosition(change.uptimeMillis, change.position)
+                            scope.launch { swipeX.snapTo(swipeX.value + dragAmount) }
+                        },
+                        onDragEnd = {
+                            val vx = vt.calculateVelocity().x
+                            scope.launch {
+                                if (kotlin.math.abs(swipeX.value) >= dismissThresholdPx || kotlin.math.abs(vx) >= 950f) {
+                                    val dir = if (kotlin.math.abs(vx) >= 950f) (if (vx >= 0f) 1f else -1f) else (if (swipeX.value >= 0f) 1f else -1f)
+                                    swipeX.animateTo(
+                                        targetValue = dir * dismissThresholdPx * 4.5f,
+                                        animationSpec = EgoMotion.responsiveSpring(),
+                                        initialVelocity = vx
+                                    )
+                                    onSwipeDismiss()
+                                } else {
+                                    isDragging = false
+                                    swipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring(), initialVelocity = vx)
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            isDragging = false
+                            scope.launch { swipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring()) }
+                        }
+                    )
+                }
+                .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 22.dp, glowColor = MaterialTheme.colorScheme.primary)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                // 하모니 광감 + 양방향 입자 카운트다운 진행바
+                HarmonyHorizontalProgressCanvas(
+                    style = ProgressBarStyle.HARMONY_OPTICAL,
+                    progress = countdownProg.value.coerceIn(0.02f, 0.99f),
+                    isActive = countdownProg.value > 0.02f,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    lightIntensity = prefs.progressLightIntensity,
+                    particleDensity = prefs.progressParticleDensity,
+                    darkUseThemeColor = prefs.progressDarkUseThemeColor,
+                    cornerRadiusDp = 22.dp,
+                    modifier = Modifier.matchParentSize()
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    EgoIcon(
+                        imageVector = Icons.Default.Restore,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                        symbolSize = 20.dp
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "탭을 닫았습니다",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = cur.title,
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { onUndo() }
+                    ) {
+                        Text(
+                            text = "되돌리기",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable { triggerDustClose() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        EgoIcon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "닫기",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                            symbolSize = 16.dp
+                        )
+                    }
+                }
+            }
+        }
     }
 }
