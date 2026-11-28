@@ -17,6 +17,23 @@ enum class AiSpaceStatus {
     DONE
 }
 
+enum class McpActionMotion {
+    IDLE,
+    CMD_RECV,
+    NAVIGATE,
+    READ_MD,
+    SNAPSHOT,
+    FILL,
+    CLICK,
+    SCROLL,
+    EXEC_JS,
+    SCREENSHOT,
+    RESEARCH,
+    DONE,
+    TAKEOVER,
+    ERROR
+}
+
 val AI_SPACE_COLOR_PRESETS: List<String> = listOf(
     "#10B981", // 에메랄드
     "#38BDF8", // 스카이블루
@@ -126,6 +143,7 @@ data class BrowserSpace(
     val tabs: List<BrowserTab>,
     val activeTabId: String,
     val aiStatus: AiSpaceStatus = AiSpaceStatus.IDLE,
+    val aiActionMotion: McpActionMotion = McpActionMotion.IDLE,
     val lastActionSummary: String = "",
     val accentColorHex: String = "#10B981"
 ) {
@@ -278,6 +296,7 @@ data class BrowserPreferences(
     val videoVerticalHudEnabled: Boolean = true,
     val videoHudLightIntensity: Float = 1.6f,
     val videoHudParticleDensity: Float = 1.4f,
+    val videoHudSyncSystemBrightness: Boolean = false,
     val tabWidthMode: TabWidthMode = TabWidthMode.DYNAMIC,
     val manualTabWidthDp: Int = 180,
     val aiSpaceRetentionDays: Int = 7,
