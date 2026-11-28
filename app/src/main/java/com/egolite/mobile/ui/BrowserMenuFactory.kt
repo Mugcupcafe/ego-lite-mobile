@@ -26,12 +26,15 @@ import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.StarBorder
@@ -82,7 +85,8 @@ fun buildBrowserChromeMenuItems(
     onShowBookmarkManager: () -> Unit,
     onShowFindBar: () -> Unit,
     onTriggerTranslation: (String, String) -> Unit,
-    onSetReaderMarkdown: (String) -> Unit
+    onSetReaderMarkdown: (String) -> Unit,
+    onTapExtension: ((InstalledExtension) -> Unit)? = null
 ): List<ChromeMenuItemSpec> = buildList {
     add(
         ChromeMenuItemSpec(
@@ -201,6 +205,29 @@ fun buildBrowserChromeMenuItems(
             it.copy(darkModeEnabled = nextDark, themeMode = if (nextDark) ThemeMode.DARK else ThemeMode.LIGHT)
         }
     })
+    add(ChromeMenuItemSpec("광고 차단", Icons.Default.Shield, key = "adblock", accentColor = if (prefs.adBlockEnabled) EgoEmerald else null) { onShowAdBlockDialog() })
+    ExtensionManager.extensions.value.filter { it.enabled }.forEach { ext ->
+        add(
+            ChromeMenuItemSpec(
+                title = ext.name,
+                icon = Icons.Default.Extension,
+                key = "ext:${ext.id}"
+            ) {
+                if (onTapExtension != null) {
+                    onTapExtension(ext)
+                } else {
+                    val wv = SpaceManager.getActiveWebView(activeSpace.id)
+                    if (wv != null) {
+                        ExtensionManager.injectMatchingExtensions(wv, activeTab.url, "end", forceExtId = ext.id)
+                        Toast.makeText(context, "${ext.name} 실행됨", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "실행할 웹페이지가 없습니다", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
+    add(ChromeMenuItemSpec("Google 계정", Icons.Default.Person, key = "profile") { onShowChromeSettings() })
     add(ChromeMenuItemSpec("설정", Icons.Default.Settings, key = "settings") { onShowChromeSettings() })
     add(ChromeMenuItemSpec("기본 브라우저", Icons.Default.Language, key = "default_app") {
         runCatching {
