@@ -216,8 +216,8 @@ fun ChromeDownloadStatusBanner(
                 }
         ) {
             val prefs by SpaceManager.preferences.collectAsState()
-            val showDlProgress = prefs.progressShowInDownload && !banner.isCompleted
-            val dlProg = banner.progress.coerceIn(0.05f, 0.99f)
+            val dlRunning = !banner.isCompleted
+            val dlProg = if (banner.isCompleted) 1f else banner.progress.coerceIn(0.05f, 0.99f)
             val dlSubText = if (banner.isCompleted) completedSub else {
                 if (banner.totalBytes > 0L) {
                     "${DownloadCenter.formatSize(banner.downloadedBytes)} / ${DownloadCenter.formatSize(banner.totalBytes)} (${(dlProg * 100).roundToInt()}%)"
@@ -225,18 +225,18 @@ fun ChromeDownloadStatusBanner(
                     "알림에서 다운로드 상태를 확인하세요."
                 }
             }
-            val invTextCol = if (isDark) Color(0xFF090D16) else Color.White
+            val invTextCol = MaterialTheme.colorScheme.onPrimary
 
             Box(modifier = Modifier.fillMaxWidth()) {
-                if (showDlProgress && prefs.progressBarStyle != ProgressBarStyle.MATERIAL) {
+                if (prefs.progressShowInDownload && prefs.progressBarStyle != ProgressBarStyle.MATERIAL) {
                     HarmonyHorizontalProgressCanvas(
                         style = prefs.progressBarStyle,
                         progress = dlProg,
-                        isActive = true,
+                        isActive = dlRunning,
                         accentColor = MaterialTheme.colorScheme.primary,
                         lightIntensity = prefs.progressLightIntensity,
                         particleDensity = prefs.progressParticleDensity,
-                darkUseThemeColor = prefs.progressDarkUseThemeColor,
+                        darkUseThemeColor = prefs.progressDarkUseThemeColor,
                         cornerRadiusDp = 22.dp,
                         modifier = Modifier.matchParentSize()
                     )
@@ -325,10 +325,9 @@ fun ChromeDownloadStatusBanner(
                 )
 
                 HarmonyModeBClippedOverlay(
-                    enabled = showDlProgress && prefs.progressBarStyle == ProgressBarStyle.HARMONY_OPTICAL,
+                    enabled = prefs.progressShowInDownload && prefs.progressBarStyle == ProgressBarStyle.HARMONY_OPTICAL,
                     progress = dlProg,
-                    isActive = true
-                ,
+                    isActive = dlRunning,
                     modifier = Modifier.matchParentSize()
                 ) {
                     BannerContentRow(
