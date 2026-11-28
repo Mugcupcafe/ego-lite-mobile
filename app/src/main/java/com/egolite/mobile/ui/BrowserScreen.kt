@@ -318,6 +318,9 @@ fun BrowserScreen() {
     var tbDraggingKey by remember { mutableStateOf<String?>(null) }
     var tbDragRootPos by remember { mutableStateOf(Offset.Zero) }
     var tbDragInQsZone by remember { mutableStateOf(false) }
+    var tbIconsRect by remember { mutableStateOf(Rect.Zero) }
+    var tbInsertPreviewSlot by remember { mutableStateOf<Int?>(null) }
+    val qsExternalDropState = remember { QsExternalDropState() }
     var showHistoryDialog by remember { mutableStateOf(false) }
     var showFindBar by remember { mutableStateOf(false) }
     var showAdBlockDialog by remember { mutableStateOf(false) }
@@ -1590,17 +1593,27 @@ fun BrowserScreen() {
                 // 사용자 커스텀 순서(prefs.toolbarButtonOrder)에 따라 주소창 우측 버튼 동적 배치
                 val defaultTbOrder = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
                 val effectiveTbOrder = remember(prefs.toolbarButtonOrder) {
-                    val known = prefs.toolbarButtonOrder.filter { it in defaultTbOrder }
+                    val known = prefs.toolbarButtonOrder.filter { it in defaultTbOrder || it.startsWith("QS:") }
                     known + defaultTbOrder.filter { it !in known }
                 }
+                val visibleTbKeysNow = remember(prefs) { getVisibleToolbarKeys(prefs) }
                 var tbIconsRootPos by remember { mutableStateOf(Offset.Zero) }
                 Box(
                     modifier = Modifier.onGloballyPositioned { coords ->
-                        if (coords.isAttached) tbIconsRootPos = coords.positionInRoot()
+                        if (coords.isAttached) {
+                            tbIconsRootPos = coords.positionInRoot()
+                            tbIconsRect = coords.boundsInRoot()
+                        }
                     }
                 ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                var visCursor = 0
                 effectiveTbOrder.forEach { tbKey ->
+                    val isVisSlot = tbKey in visibleTbKeysNow
+                    if (isVisSlot && tbInsertPreviewSlot == visCursor) {
+                        ToolbarInsertSlotIndicator()
+                    }
+                    if (isVisSlot) visCursor++
                     when (tbKey) {
                         "MCP" -> {
                             if (prefs.showMcpBadgeButton) {
@@ -1856,12 +1869,23 @@ fun BrowserScreen() {
                                 )
                             }
                         }
+                        else -> if (tbKey.startsWith("QS:")) {
+                            ToolbarDynamicQsIconButton(
+                                qsKey = tbKey.removePrefix("QS:"),
+                                chromeMenuItems = chromeMenuItems,
+                                activeIconColor = activeIconColor
+                            )
+                        }
                     }
+                }
+                if (tbInsertPreviewSlot != null && tbInsertPreviewSlot!! >= visCursor) {
+                    ToolbarInsertSlotIndicator()
                 }
                 } // end inner Row of customizable toolbar icons
                 if (isQuickMenuEditMode) {
                     ToolbarEditDragCaptureOverlay(
                         tbIconsRootPos = tbIconsRootPos,
+                        qsDropState = qsExternalDropState,
                         modifier = Modifier.matchParentSize(),
                         onDraggingChanged = { key, pos, inQs ->
                             tbDraggingKey = key
@@ -2435,20 +2459,28 @@ fun BrowserScreen() {
                 if (!it) {
                     tbDraggingKey = null
                     tbDragInQsZone = false
+                    tbInsertPreviewSlot = null
                 }
             },
+            toolbarIconsRect = tbIconsRect,
+            externalDragKey = tbDraggingKey,
+            externalDragRootPos = if (tbDraggingKey != null) tbDragRootPos else null,
+            externalDropState = qsExternalDropState,
+            onToolbarInsertSlotChanged = { tbInsertPreviewSlot = it },
             onDismiss = {
                 showChromeMenu = false
                 hoveredQuickMenuKey = null
                 tbDraggingKey = null
                 tbDragInQsZone = false
+                tbInsertPreviewSlot = null
             }
         )
         tbDraggingKey?.let { dragTbKey ->
             ToolbarToQuickMenuDragGhost(
                 tbKey = dragTbKey,
                 rootPos = tbDragRootPos,
-                inQuickMenuZone = tbDragInQsZone
+                inQuickMenuZone = tbDragInQsZone,
+                chromeMenuItems = chromeMenuItems
             )
         }
 
