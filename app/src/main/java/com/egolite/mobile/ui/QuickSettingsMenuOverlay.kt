@@ -28,6 +28,13 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import com.egolite.mobile.browser.InstalledExtension
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -471,6 +478,8 @@ fun QuickSettingsBrowserMenuOverlay(
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     var editMode by remember { mutableStateOf(false) }
+    var renamingExtId by remember { mutableStateOf<String?>(null) }
+    val installedExtsLive by ExtensionManager.extensions.collectAsState()
 
     LaunchedEffect(visible) {
         if (!visible) {
@@ -598,23 +607,28 @@ fun QuickSettingsBrowserMenuOverlay(
 
         LaunchedEffect(visible) {
             val maxRowIdx = latestTotalRows.coerceIn(1, 15) // row 0 = header, 1..maxRowIdx = content rows
-            val staggerMs = 40f
+            // 감쇠 스태거(Decaying Stagger): 초반 파동감은 유지하고 후반 행일수록 간격을 기하급수적으로 좁혀 답답함 해소
+            fun decayingCumulativeDelayMs(stepIndex: Int, initialStepMs: Float, decay: Double): Float {
+                if (stepIndex <= 0) return 0f
+                return (initialStepMs * (1.0 - Math.pow(decay, stepIndex.toDouble())) / (1.0 - decay)).toFloat()
+            }
             if (visible) {
-                // 열림: 패널 즉시 시작 + 최상단(Row 0) -> 최하단 순차 출발 (bounce=26% -> damping 0.633, stiffness 455)
+                // 열림: 38ms x 0.76^n 감쇠 (9행 기준 총 ~145ms, 상한 ~158ms)
                 launch {
                     panelAnim.animateTo(1f, spring(dampingRatio = 0.76f, stiffness = 455f))
                 }
                 for (r in 0..maxRowIdx) {
                     val anim = rowAnims[r]
                     val remain = (1f - anim.value).coerceIn(0f, 1f)
-                    val waitMs = if (remain > 0.05f) (r * staggerMs * (0.35f + 0.65f * remain)).toLong() else 0L
+                    val baseDelay = decayingCumulativeDelayMs(r, 38f, 0.76)
+                    val waitMs = if (remain > 0.05f) (baseDelay * (0.35f + 0.65f * remain)).toLong() else 0L
                     launch {
                         if (waitMs > 0L) delay(waitMs)
                         anim.animateTo(1f, spring(dampingRatio = 0.633f, stiffness = 455f))
                     }
                 }
             } else {
-                // 닫힘: 최하단 행부터 순차 접힘 -> 최상단 -> 패널 수납 (damping 0.94, stiffness 437)
+                // 닫힘: 24ms x 0.72^n 감쇠 (최하단부터 즉각 말려 올라가며 9행 기준 ~81ms 내 수납)
                 val activeMax = (0..maxRowIdx).lastOrNull { rowAnims[it].value > 0.04f } ?: 0
                 for (r in 0..maxRowIdx) {
                     val anim = rowAnims[r]
@@ -622,14 +636,14 @@ fun QuickSettingsBrowserMenuOverlay(
                         launch { anim.snapTo(0f) }
                     } else {
                         val distFromBottom = (activeMax - r).coerceAtLeast(0)
-                        val waitMs = (distFromBottom * staggerMs * 0.78f).toLong()
+                        val waitMs = decayingCumulativeDelayMs(distFromBottom, 24f, 0.72).toLong()
                         launch {
                             if (waitMs > 0L) delay(waitMs)
                             anim.animateTo(0f, spring(dampingRatio = 0.94f, stiffness = 437f))
                         }
                     }
                 }
-                val panelWaitMs = (activeMax * staggerMs * 0.62f).toLong()
+                val panelWaitMs = (decayingCumulativeDelayMs(activeMax, 24f, 0.72) * 0.68f).toLong()
                 launch {
                     if (panelWaitMs > 0L) delay(panelWaitMs)
                     panelAnim.animateTo(0f, spring(dampingRatio = 0.94f, stiffness = 437f))
@@ -1294,12 +1308,10 @@ fun QuickSettingsBrowserMenuOverlay(
                                                         val sp = placed.span.coerceIn(1, 4 - col)
                                                         val isThisLifted = editMode && draggingKey == placed.spec.key
                                                         key(placed.spec.key) {
-                                                            val animatedSpanWeight by animateFloatAsState(
-                                                                targetValue = sp.toFloat(),
-                                                                animationSpec = spring(dampingRatio = 0.78f, stiffness = 280f),
-                                                                label = "qsTileSpanWeight_${placed.spec.key}"
-                                                            )
                                                             val (flipX, flipY) = tileFlipAnims.getOrPut(placed.spec.key) { Animatable(0f) to Animatable(0f) }
+                                                            val liveFlipX = tilePendingDx[placed.spec.key] ?: flipX.value
+                                                            val liveFlipY = tilePendingDy[placed.spec.key] ?: flipY.value
+                                                            val isTileMorphing = kotlin.math.abs(liveFlipX) > 0.5f || kotlin.math.abs(liveFlipY) > 0.5f
                                                             QsMenuTile(
                                                                 spec = placed.spec,
                                                                 span = sp,
@@ -1312,9 +1324,9 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                 panelLightLocalPos = panelTouchLocal,
                                                                 panelLightAlpha = panelGlowAlpha,
                                                                 modifier = Modifier
-                                                                    .weight(animatedSpanWeight.coerceAtLeast(0.5f))
-                                                                    .animateContentSize(spring(dampingRatio = 0.78f, stiffness = 280f))
+                                                                    .weight(sp.toFloat())
                                                                     .fillMaxHeight()
+                                                                    .zIndex(if (isTileMorphing) 4f else 0f)
                                                                     .onGloballyPositioned { coords ->
                                                                         if (coords.isAttached) {
                                                                             val br = coords.boundsInRoot()
@@ -1348,8 +1360,9 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                         }
                                                                     }
                                                                     .graphicsLayer {
-                                                                        translationX = tilePendingDx[placed.spec.key] ?: flipX.value
-                                                                        translationY = tilePendingDy[placed.spec.key] ?: flipY.value
+                                                                        translationX = liveFlipX
+                                                                        translationY = liveFlipY
+                                                                        clip = false
                                                                     },
                                                                 onClick = {
                                                                     if (placed.spec.zoomPercent != null && sp == 1) {
@@ -1363,6 +1376,13 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                         placed.spec.onClick()
                                                                     }
                                                                 },
+                                                                onLongClick = placed.spec.onLongClick?.let { cb ->
+                                                                    {
+                                                                        onDismiss()
+                                                                        cb()
+                                                                    }
+                                                                },
+                                                                onRenameExtension = { extId -> renamingExtId = extId },
                                                             onSetZoomPercent = onSetZoomPercent,
                                         onResizeSpan = { nextSpan ->
                                                                 val clamped = nextSpan.coerceIn(1, 4)
@@ -1633,6 +1653,15 @@ fun QuickSettingsBrowserMenuOverlay(
             }
         }
     }
+
+    renamingExtId?.let { eid ->
+        installedExtsLive.firstOrNull { it.id == eid }?.let { ext ->
+            ExtensionRenameDialog(
+                ext = ext,
+                onDismiss = { renamingExtId = null }
+            )
+        }
+    }
     }
 }
 
@@ -1684,6 +1713,7 @@ private fun QsEmptyPlaceholderSlot(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QsMenuTile(
     spec: ChromeMenuItemSpec,
@@ -1698,6 +1728,8 @@ private fun QsMenuTile(
     panelLightAlpha: Float = 0f,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    onRenameExtension: ((String) -> Unit)? = null,
     onSetZoomPercent: (Int) -> Unit = {},
     onResizeSpan: (Int) -> Unit,
     onMoveDelta: (Int) -> Unit,
@@ -2048,10 +2080,18 @@ private fun QsMenuTile(
                 translationY = if (isTileLifted) liftOffsetY else 0f
             }
             .then(
-                if (!editMode) Modifier.clickable {
-                    triggerDynamicIconAnim()
-                    onClick()
-                } else Modifier
+                if (!editMode) Modifier.combinedClickable(
+                    onClick = {
+                        triggerDynamicIconAnim()
+                        onClick()
+                    },
+                    onLongClick = if (onLongClick != null) {
+                        {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        }
+                    } else null
+                ) else Modifier
             )
     ) {
         var tileBodyCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -2218,12 +2258,18 @@ private fun QsMenuTile(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (spec.isToggleCheckbox) {
+                        val subLabel = when {
+                            !spec.subtitle.isNullOrBlank() -> spec.subtitle
+                            spec.isToggleCheckbox -> if (spec.checked) "켜짐" else "꺼짐"
+                            else -> null
+                        }
+                        if (subLabel != null) {
                             Text(
-                                text = if (spec.checked) "켜짐" else "꺼짐",
+                                text = subLabel,
                                 fontSize = 11.sp,
                                 color = if (isActive) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -2256,6 +2302,35 @@ private fun QsMenuTile(
                     modifier = Modifier.size(14.dp),
                     symbolSize = 14.dp
                 )
+            }
+
+            if (spec.key.startsWith("ext:") && onRenameExtension != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(22.dp)
+                        .graphicsLayer {
+                            alpha = ep
+                            scaleX = 0.45f + 0.55f * ep
+                            scaleY = 0.45f + 0.55f * ep
+                            transformOrigin = TransformOrigin(0.75f, 0.25f)
+                        }
+                        .clip(CircleShape)
+                        .background(Color(0xFFFF8F00))
+                        .clickable(enabled = editMode) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onRenameExtension(spec.key.removePrefix("ext:"))
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    EgoIcon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "확장 이름 변경",
+                        tint = Color.White,
+                        modifier = Modifier.size(13.dp),
+                        symbolSize = 13.dp
+                    )
+                }
             }
 
             // 우하단 둘레 밀착 두꺼운 호흡 크기조절 핸들 (원형/사각 둘레 자동 맞춤, 1x1~1x4, 부드러운 등장·퇴장)
@@ -2983,4 +3058,65 @@ private fun QsEditSettingsChoreographyHeader(
             )
         }
     }
+}
+
+@Composable
+fun ExtensionRenameDialog(
+    ext: InstalledExtension,
+    onDismiss: () -> Unit
+) {
+    var input by remember(ext.id, ext.customName) { mutableStateOf(ext.displayName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "크롬 확장 이름 변경",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "기본 이름: ${ext.name}",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it.take(40) },
+                    singleLine = true,
+                    placeholder = { Text(ext.name) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    ExtensionManager.renameExtension(ext.id, input)
+                    onDismiss()
+                }
+            ) {
+                Text("저장")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (!ext.customName.isNullOrBlank()) {
+                    TextButton(
+                        onClick = {
+                            ExtensionManager.renameExtension(ext.id, null)
+                            onDismiss()
+                        }
+                    ) {
+                        Text("기본값")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("취소")
+                }
+            }
+        }
+    )
 }
