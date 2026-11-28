@@ -228,7 +228,17 @@ fun buildBrowserChromeMenuItems(
             }
         )
     }
-    add(ChromeMenuItemSpec("Google 계정", Icons.Default.Person, key = "profile") { onShowChromeSettings() })
+    val gAcc = GoogleAccountManager.state.value
+    val profileTitle = if (gAcc.isSignedIn && gAcc.displayName.isNotBlank()) gAcc.displayName else "Google 계정"
+    add(
+        ChromeMenuItemSpec(
+            title = profileTitle,
+            icon = Icons.Default.Person,
+            key = "profile",
+            checked = gAcc.isSignedIn,
+            bold = gAcc.isSignedIn
+        ) { onShowChromeSettings() }
+    )
     add(ChromeMenuItemSpec("설정", Icons.Default.Settings, key = "settings") { onShowChromeSettings() })
     add(ChromeMenuItemSpec("기본 브라우저", Icons.Default.Language, key = "default_app") {
         runCatching {
