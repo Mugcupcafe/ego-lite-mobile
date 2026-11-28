@@ -561,17 +561,20 @@ fun HarmonyModeBClippedOverlay(
     enabled: Boolean,
     progress: Float,
     isActive: Boolean,
+    isCountdown: Boolean = false,
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
     if (!enabled) return
     val (smoothProg, alpha) = rememberSmoothOpticalProgress(
         rawProgress = progress,
-        isActive = isActive
+        isActive = isActive,
+        isCountdown = isCountdown
     )
     if (alpha <= 0.01f) return
     Box(
         modifier = modifier
+            .graphicsLayer { this.alpha = alpha }
             .drawWithContent {
                 val rightX = size.width * smoothProg
                 clipRect(left = 0f, top = 0f, right = rightX, bottom = size.height) {
