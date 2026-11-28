@@ -352,7 +352,7 @@ object EgoWebViewFactory {
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             allowFileAccess = false
             allowContentAccess = true
-            textZoom = textZoomProvider()
+            textZoom = 100
             // UA와 Client Hints는 아래 syncUserAgentAndClientHints에서 일괄 동기화
             // Google 로그인 WebView 탐지 차단: X-Requested-With 패키지명 헤더 제거
             if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
@@ -606,7 +606,10 @@ object EgoWebViewFactory {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                view?.let { v -> ExtensionManager.injectMatchingExtensions(v, url, "end") }
+                view?.let { v ->
+                    ExtensionManager.injectMatchingExtensions(v, url, "end")
+                    applyTextZoom(v, textZoomProvider())
+                }
                 // React/SPA 오프-DOM <a download="..."> blob 다운로드 파일명 캡처 훅 (Codemagic/GitHub 등)
                 view?.evaluateJavascript(
                     "(function(){if(window.__egoDlHooked)return;window.__egoDlHooked=true;window.__egoBlobNames={};" +
@@ -812,7 +815,16 @@ object EgoWebViewFactory {
     }
 
     fun applyTextZoom(webView: WebView, zoom: Int) {
-        webView.settings.textZoom = zoom.coerceIn(75, 150)
+        val clamped = zoom.coerceIn(50, 150)
+        // 크롬식 전체 페이지 확대: settings.textZoom은 100 고정(중복 확대 방지) + Chromium CSS html.zoom으로 모든 요소·레이아웃·여백 동시 확대
+        webView.settings.textZoom = 100
+        val js = if (clamped == 100) {
+            "(function(){try{document.documentElement.style.zoom='';}catch(e){}})();"
+        } else {
+            val factor = String.format(java.util.Locale.US, "%.2f", clamped / 100.0)
+            "(function(){try{document.documentElement.style.zoom='$factor';}catch(e){}})();"
+        }
+        runCatching { webView.evaluateJavascript(js, null) }
     }
 
     const val CUSTOM_FONT_VIRTUAL_URL = "https://ego-local-font.internal/custom.ttf"
