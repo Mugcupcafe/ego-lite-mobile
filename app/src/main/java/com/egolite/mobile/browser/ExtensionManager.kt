@@ -71,8 +71,11 @@ data class InstalledExtension(
     val backgroundScript: String? = null,
     val contentScripts: List<ExtensionContentScript> = emptyList(),
     val dirPath: String,
-    val installedAtMs: Long = System.currentTimeMillis()
-)
+    val installedAtMs: Long = System.currentTimeMillis(),
+    val customName: String? = null
+) {
+    val displayName: String get() = customName?.takeIf { it.isNotBlank() } ?: name
+}
 
 object ExtensionManager {
     private const val PREF_META = "ego_extensions_meta_v1"
@@ -92,7 +95,38 @@ object ExtensionManager {
     val pendingReport: StateFlow<ExtensionCompatReport?> = _pendingReport.asStateFlow()
 
     private val bgWebViews = ConcurrentHashMap<String, WebView>()
+    private val injectedByWebView = ConcurrentHashMap<Int, MutableSet<String>>()
+    private val _runningExtensionIds = MutableStateFlow<Set<String>>(emptySet())
+    val runningExtensionIds: StateFlow<Set<String>> = _runningExtensionIds.asStateFlow()
     private val pendingCallbacks = ConcurrentHashMap<String, (String) -> Unit>()
+
+    private fun refreshRunningSet() {
+        val active = mutableSetOf<String>()
+        active.addAll(bgWebViews.keys)
+        injectedByWebView.values.forEach { active.addAll(it) }
+        val enabledIds = _extensions.value.filter { it.enabled }.map { it.id }.toSet()
+        _runningExtensionIds.value = active.intersect(enabledIds)
+    }
+
+    fun isRunningOnTab(
+        ext: InstalledExtension,
+        webView: WebView?,
+        activeUrl: String?,
+        activePopupExtId: String? = null
+    ): Boolean {
+        if (!ext.enabled) return false
+        if (activePopupExtId == ext.id) return true
+        if (bgWebViews.containsKey(ext.id)) return true
+        if (webView != null && injectedByWebView[System.identityHashCode(webView)]?.contains(ext.id) == true) {
+            return true
+        }
+        if (!activeUrl.isNullOrBlank() && (activeUrl.startsWith("http://") || activeUrl.startsWith("https://"))) {
+            if (ext.contentScripts.any { cs -> cs.matches.any { pat -> matchesUrl(pat, activeUrl) } }) {
+                return true
+            }
+        }
+        return false
+    }
 
     private val UNSUPPORTED_PERMISSIONS = setOf(
         "declarativeNetRequest",
@@ -165,7 +199,8 @@ object ExtensionManager {
                         backgroundScript = o.optString("backgroundScript").takeIf { it.isNotBlank() },
                         contentScripts = scripts,
                         dirPath = dir,
-                        installedAtMs = o.optLong("installedAtMs", System.currentTimeMillis())
+                        installedAtMs = o.optLong("installedAtMs", System.currentTimeMillis()),
+                        customName = o.optString("customName", "").ifBlank { null }
                     )
                 )
             }
@@ -203,6 +238,7 @@ object ExtensionManager {
                     .put("contentScripts", csArr)
                     .put("dirPath", ext.dirPath)
                     .put("installedAtMs", ext.installedAtMs)
+                    .put("customName", ext.customName ?: "")
             )
         }
         metaPrefs?.edit()?.putString(KEY_LIST, arr.toString())?.apply()
@@ -448,7 +484,9 @@ object ExtensionManager {
         val updated = _extensions.value.map { if (it.id == extId) it.copy(enabled = enabled) else it }
         persist(updated)
         if (!enabled) {
+            injectedByWebView.values.forEach { it.remove(extId) }
             mainHandler.post { destroyBackgroundRunner(extId) }
+            refreshRunningSet()
         } else {
             updated.firstOrNull { it.id == extId }?.let { ext ->
                 if (ext.backgroundScript != null) mainHandler.post { ensureBackgroundRunner(ext) }
@@ -458,6 +496,16 @@ object ExtensionManager {
 
     fun toggleShowInToolbar(extId: String, show: Boolean) {
         persist(_extensions.value.map { if (it.id == extId) it.copy(showInToolbar = show) else it })
+    }
+
+    fun renameExtension(extId: String, newName: String?) {
+        val trimmed = newName?.trim()?.ifBlank { null }
+        persist(_extensions.value.map { ext ->
+            if (ext.id == extId) {
+                val effective = if (trimmed == null || trimmed == ext.name) null else trimmed
+                ext.copy(customName = effective)
+            } else ext
+        })
     }
 
     fun deleteExtension(extId: String) {
@@ -508,6 +556,9 @@ object ExtensionManager {
             if (ext.backgroundScript != null) {
                 ensureBackgroundRunner(ext)
             }
+
+            injectedByWebView.getOrPut(System.identityHashCode(webView)) { ConcurrentHashMap.newKeySet() }.add(ext.id)
+            refreshRunningSet()
 
             // 1. Inject lightweight Chrome API Polyfill scoped for this extension
             webView.evaluateJavascript(buildPagePolyfillJs(ext), null)
@@ -667,6 +718,7 @@ object ExtensionManager {
             addJavascriptInterface(BackgroundBridge(ext.id), "EgoBgBridge")
         }
         bgWebViews[ext.id] = wv
+        refreshRunningSet()
 
         val manifestJson = JSONObject()
             .put("name", ext.name)
@@ -778,6 +830,7 @@ object ExtensionManager {
         bgWebViews.remove(extId)?.let { wv ->
             runCatching { wv.destroy() }
         }
+        refreshRunningSet()
     }
 
     private class BackgroundBridge(private val extId: String) {
