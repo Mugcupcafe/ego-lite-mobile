@@ -60,6 +60,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.HorizontalRule
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -70,6 +72,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -129,7 +132,11 @@ private data class QsPlacedTile(
 )
 
 private sealed class QsRenderBlock {
-    data class Section(val rows: List<List<QsPlacedTile?>>) : QsRenderBlock()
+    data class Section(
+        val sectionId: Int,
+        val rows: List<List<QsPlacedTile?>>,
+        val endLayoutIndex: Int
+    ) : QsRenderBlock()
     data class DividerRow(val id: String, val layoutIndex: Int) : QsRenderBlock()
 }
 
@@ -204,8 +211,9 @@ private fun buildSectionIsolatedBlocks(
 ): List<QsRenderBlock> {
     val blocks = mutableListOf<QsRenderBlock>()
     val currentSectionTiles = mutableListOf<QsPlacedTile>()
+    var nextSectionId = 0
 
-    fun flushSection() {
+    fun flushSection(endIdx: Int) {
         if (currentSectionTiles.isEmpty()) return
         val rows = mutableListOf<MutableList<QsPlacedTile?>>()
         val occupancy = mutableListOf<BooleanArray>()
@@ -241,14 +249,14 @@ private fun buildSectionIsolatedBlocks(
             }
             rows[foundRow][foundCol] = placed
         }
-        blocks.add(QsRenderBlock.Section(rows))
+        blocks.add(QsRenderBlock.Section(nextSectionId++, rows, endIdx))
         currentSectionTiles.clear()
     }
 
     entries.forEachIndexed { idx, entry ->
         when (entry) {
             is QsLayoutEntry.Divider -> {
-                flushSection()
+                flushSection(idx)
                 blocks.add(QsRenderBlock.DividerRow(entry.id, idx))
             }
             is QsLayoutEntry.Tile -> {
@@ -259,7 +267,7 @@ private fun buildSectionIsolatedBlocks(
             }
         }
     }
-    flushSection()
+    flushSection(entries.size)
     return blocks
 }
 
@@ -341,34 +349,49 @@ fun QuickSettingsBrowserMenuOverlay(
             .padding(top = topPadding, end = endPadding, start = 12.dp, bottom = 12.dp),
         contentAlignment = Alignment.TopEnd
     ) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(130)) + scaleIn(
-                animationSpec = EgoMotion.bouncySpring(),
-                initialScale = 0.78f,
-                transformOrigin = TransformOrigin(1f, 0f)
-            ),
-            exit = fadeOut(tween(110)) + scaleOut(
-                animationSpec = tween(140),
-                targetScale = 0.86f,
-                transformOrigin = TransformOrigin(1f, 0f)
-            )
-        ) {
+        val morphProgress by animateFloatAsState(
+            targetValue = if (visible) 1f else 0f,
+            animationSpec = if (visible) {
+                spring(dampingRatio = 0.76f, stiffness = 310f)
+            } else {
+                tween(durationMillis = 175, easing = FastOutSlowInEasing)
+            },
+            label = "qsMenuDynamicMorph"
+        )
+        if (visible || morphProgress > 0.015f) {
+            val p = morphProgress.coerceIn(0f, 1f)
+            val morphCornerDp = (30f + (1f - p) * 90f).dp
+            val morphShape = RoundedCornerShape(morphCornerDp)
+            val contentReveal = ((p - 0.16f) / 0.68f).coerceIn(0f, 1f)
             Surface(
-                shape = RoundedCornerShape(30.dp),
+                shape = morphShape,
                 color = MaterialTheme.colorScheme.surfaceContainerLowest,
-                shadowElevation = 16.dp,
+                shadowElevation = (16f * p).dp,
                 tonalElevation = 4.dp,
                 modifier = Modifier
                     .width(384.dp)
                     .heightIn(max = if (editMode) 1600.dp else 820.dp)
+                    .graphicsLayer {
+                        scaleX = 0.16f + 0.84f * p
+                        scaleY = 0.09f + 0.91f * p
+                        alpha = (p * 1.45f).coerceIn(0f, 1f)
+                        translationY = (1f - p) * (-18.dp.toPx())
+                        transformOrigin = TransformOrigin(0.94f, 0f)
+                    }
                     .animateContentSize(
                         animationSpec = spring(dampingRatio = 0.78f, stiffness = 260f)
+                    )
+                    .harmonyRimGlow(
+                        enabled = true,
+                        cornerRadius = morphCornerDp,
+                        glowColor = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 1.8.dp,
+                        shape = morphShape
                     )
                     .border(
                         1.dp,
                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                        RoundedCornerShape(30.dp)
+                        morphShape
                     )
                     .clickable(
                         indication = null,
@@ -379,8 +402,22 @@ fun QuickSettingsBrowserMenuOverlay(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(12.dp)
+                        .graphicsLayer {
+                            alpha = contentReveal
+                            translationY = (1f - contentReveal) * 14.dp.toPx()
+                        }
                 ) {
-                    // 헤더: 안드로이드 17 스타일 — 일반 모드에서는 글자 없이 [펜(편집)] + [톱니(설정)] 아이콘만, 편집 모드에서는 [+ 구분선 / 초기화 / 완료]
+                    // 헤더: 텍스트·안내문구 없이 아이콘 전용 — 편집 진입 시 펜 아이콘이 원래 위치를 유지한 채 원형으로 감싸지며 토글
+                    val editBtnBg by animateColorAsState(
+                        targetValue = if (editMode) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        animationSpec = tween(180),
+                        label = "qsEditBtnBg"
+                    )
+                    val editBtnTint by animateColorAsState(
+                        targetValue = if (editMode) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                        animationSpec = tween(180),
+                        label = "qsEditBtnTint"
+                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -388,96 +425,104 @@ fun QuickSettingsBrowserMenuOverlay(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        if (editMode) {
-                            Text(
-                                text = "메뉴 편집",
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 펜(편집) 아이콘 — 원래 위치 고정, 편집 모드일 때 원형 배경이 감싸며 다시 누르면 완료
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(editBtnBg)
+                                    .clickable { editMode = !editMode },
+                                contentAlignment = Alignment.Center
                             ) {
-                                QsHeaderPill(
-                                    label = "+ 구분선",
-                                    accent = false,
-                                    onClick = {
-                                        val next = listOf(QsLayoutEntry.Divider("d_${System.currentTimeMillis()}")) + parsedEntries
-                                        commit(next)
-                                    }
-                                )
-                                QsHeaderPill(
-                                    label = "초기화",
-                                    accent = false,
-                                    onClick = { onSaveLayout(emptyList()) }
-                                )
-                                QsHeaderPill(
-                                    label = "완료",
-                                    icon = Icons.Default.Check,
-                                    accent = true,
-                                    onClick = { editMode = false }
+                                EgoIcon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = if (editMode) "편집 완료" else "편집",
+                                    tint = editBtnTint,
+                                    modifier = Modifier.size(19.dp),
+                                    symbolSize = 19.dp
                                 )
                             }
-                        } else {
+                            // 바로 옆 설정 톱니바퀴 아이콘 버튼
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        onDismiss()
+                                        itemByKey["settings"]?.onClick?.invoke()
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                EgoIcon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "설정",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(19.dp),
+                                    symbolSize = 19.dp
+                                )
+                            }
+                        }
+
+                        // 편집 모드 전용 우측 아이콘 버튼: 구분선 추가 + 초기화 (텍스트 없음)
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = editMode,
+                            enter = fadeIn(tween(150)) + scaleIn(tween(170), initialScale = 0.8f),
+                            exit = fadeOut(tween(120)) + scaleOut(tween(140), targetScale = 0.8f)
+                        ) {
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // 글자 없는 펜(편집) 아이콘 버튼
                                 Box(
                                     modifier = Modifier
                                         .size(34.dp)
                                         .clip(CircleShape)
-                                        .clickable { editMode = true },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    EgoIcon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "편집",
-                                        tint = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.size(19.dp),
-                                        symbolSize = 19.dp
-                                    )
-                                }
-                                // 바로 옆 설정 톱니바퀴 아이콘 버튼
-                                Box(
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                                         .clickable {
-                                            onDismiss()
-                                            itemByKey["settings"]?.onClick?.invoke()
+                                            val next = listOf(QsLayoutEntry.Divider("d_${System.currentTimeMillis()}")) + parsedEntries
+                                            commit(next)
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
                                     EgoIcon(
-                                        imageVector = Icons.Default.Settings,
-                                        contentDescription = "설정",
+                                        imageVector = Icons.Default.HorizontalRule,
+                                        contentDescription = "구분선 추가",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(19.dp),
+                                        symbolSize = 19.dp
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                        .clickable { onSaveLayout(emptyList()) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    EgoIcon(
+                                        imageVector = Icons.Default.RestartAlt,
+                                        contentDescription = "초기화",
                                         tint = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.size(19.dp),
                                         symbolSize = 19.dp
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.width(1.dp))
                         }
                     }
 
-                    if (editMode) {
-                        Text(
-                            text = "길게 눌러 원하는 위치까지 드래그 이동 · 위로 끌어 주소창 툴바로 이동 · 우하단 핸들 크기 조절",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 5.dp)
-                        )
-                    } else {
-                        Spacer(modifier = Modifier.height(6.dp))
-                    }
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     // 4열 섹션 격리 영역 + 안정적 부모 레벨 영구 드래그 오버레이 (리컴포지션 시에도 드래그 절대 끊기지 않음!)
                     val colWidthPx = with(density) { 84.dp.toPx() }
                     val tileRootBounds = remember { mutableStateMapOf<String, Rect>() }
+                    val emptySlotBounds = remember { mutableStateMapOf<String, Pair<Rect, Int>>() }
+                    var hoveredEmptySlotId by remember { mutableStateOf<String?>(null) }
                     val prevTileRoots = remember { mutableMapOf<String, Offset>() }
                     val tileAnimScope = rememberCoroutineScope()
                     var gridRootPos by remember { mutableStateOf(Offset.Zero) }
@@ -499,7 +544,9 @@ fun QuickSettingsBrowserMenuOverlay(
                     LaunchedEffect(editMode) {
                         if (!editMode) {
                             draggingKey = null
+                            hoveredEmptySlotId = null
                             tileRootBounds.clear()
+                            emptySlotBounds.clear()
                         }
                     }
 
@@ -531,6 +578,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                                 val dk = draggingKey
                                                 val fy = dragFingerLocal.y
                                                 draggingKey = null
+                                                hoveredEmptySlotId = null
                                                 // 상단 주소창 툴바 쪽으로 위로 끌어올리면 실제 툴바로 즉시 이동!
                                                 if (dk != null && dk != "zoom" && fy < topEscapePx) {
                                                     val tbKey = qsToTbKey[dk]
@@ -554,15 +602,22 @@ fun QuickSettingsBrowserMenuOverlay(
                                                     }
                                                 }
                                             },
-                                            onDragCancel = { draggingKey = null },
+                                            onDragCancel = {
+                                                draggingKey = null
+                                                hoveredEmptySlotId = null
+                                            },
                                             onDrag = { change, dragAmount ->
                                                 val dk = draggingKey ?: return@detectDragGesturesAfterLongPress
                                                 change.consume()
                                                 dragFingerLocal += dragAmount
-                                                val nowMs = System.currentTimeMillis()
-                                                if (nowMs - lastSwapMs < 220L) return@detectDragGesturesAfterLongPress
                                                 val rootPt = gridRootPos + dragFingerLocal
                                                 val overKey = tileRootBounds.entries.firstOrNull { (k, r) -> k != dk && r.contains(rootPt) }?.key
+                                                val overEmpty = if (overKey == null) {
+                                                    emptySlotBounds.entries.firstOrNull { (_, pair) -> pair.first.contains(rootPt) }
+                                                } else null
+                                                hoveredEmptySlotId = overEmpty?.key
+                                                val nowMs = System.currentTimeMillis()
+                                                if (nowMs - lastSwapMs < 220L) return@detectDragGesturesAfterLongPress
                                                 if (overKey != null) {
                                                     val curList = latestEntries
                                                     val fromIdx = curList.indexOfFirst { it is QsLayoutEntry.Tile && it.key == dk }
@@ -574,6 +629,22 @@ fun QuickSettingsBrowserMenuOverlay(
                                                         val item = mut.removeAt(fromIdx)
                                                         mut.add(toIdx, item)
                                                         commit(mut)
+                                                    }
+                                                } else if (overEmpty != null) {
+                                                    val curList = latestEntries
+                                                    val fromIdx = curList.indexOfFirst { it is QsLayoutEntry.Tile && it.key == dk }
+                                                    val targetEndIdx = overEmpty.value.second
+                                                    if (fromIdx >= 0 && curList.isNotEmpty()) {
+                                                        val rawInsert = if (fromIdx < targetEndIdx) targetEndIdx - 1 else targetEndIdx
+                                                        val insertAt = rawInsert.coerceIn(0, curList.lastIndex)
+                                                        if (insertAt != fromIdx) {
+                                                            lastSwapMs = nowMs
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            val mut = curList.toMutableList()
+                                                            val item = mut.removeAt(fromIdx)
+                                                            mut.add(insertAt, item)
+                                                            commit(mut)
+                                                        }
                                                     }
                                                 }
                                             }
@@ -648,7 +719,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        block.rows.forEach { rowSlots ->
+                                        block.rows.forEachIndexed { rowIdx, rowSlots ->
                                             // 모든 행 높이 70.dp 동일 고정!
                                             Row(
                                                 modifier = Modifier
@@ -741,13 +812,65 @@ fun QuickSettingsBrowserMenuOverlay(
                                                         }
                                                         col += sp
                                                     } else {
-                                                        Spacer(modifier = Modifier.weight(1f).fillMaxHeight())
+                                                        if (editMode && rowIdx == block.rows.lastIndex) {
+                                                            val slotId = "empty_${block.sectionId}_r${rowIdx}_c${col}"
+                                                            QsEmptyPlaceholderSlot(
+                                                                slotId = slotId,
+                                                                targetEndIdx = block.endLayoutIndex,
+                                                                isHovered = hoveredEmptySlotId == slotId,
+                                                                emptySlotBounds = emptySlotBounds,
+                                                                modifier = Modifier.weight(1f).fillMaxHeight()
+                                                            )
+                                                        } else {
+                                                            Spacer(modifier = Modifier.weight(1f).fillMaxHeight())
+                                                        }
                                                         col += 1
                                                     }
                                                 }
                                             }
                                         }
+                                        // 편집 모드 전용: 마지막 행이 덜 찼든 가득 찼든 다음 행(4칸) 빈 원형 공백 슬롯 생성 (편집 종료 시 자동 소멸)
+                                        if (editMode) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(70.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                for (emptyCol in 0 until 4) {
+                                                    val slotId = "empty_${block.sectionId}_next_c${emptyCol}"
+                                                    QsEmptyPlaceholderSlot(
+                                                        slotId = slotId,
+                                                        targetEndIdx = block.endLayoutIndex,
+                                                        isHovered = hoveredEmptySlotId == slotId,
+                                                        emptySlotBounds = emptySlotBounds,
+                                                        modifier = Modifier.weight(1f).fillMaxHeight()
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
+                                }
+                            }
+                        }
+
+                        // 맨 아래가 구분선으로 끝나는 경우에도 편집 모드 하단 공백 버튼 행 생성
+                        if (editMode && (blocks.isEmpty() || blocks.lastOrNull() is QsRenderBlock.DividerRow)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(70.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                for (emptyCol in 0 until 4) {
+                                    val slotId = "empty_tail_c${emptyCol}"
+                                    QsEmptyPlaceholderSlot(
+                                        slotId = slotId,
+                                        targetEndIdx = parsedEntries.size,
+                                        isHovered = hoveredEmptySlotId == slotId,
+                                        emptySlotBounds = emptySlotBounds,
+                                        modifier = Modifier.weight(1f).fillMaxHeight()
+                                    )
                                 }
                             }
                         }
@@ -908,6 +1031,54 @@ fun QuickSettingsBrowserMenuOverlay(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun QsEmptyPlaceholderSlot(
+    slotId: String,
+    targetEndIdx: Int,
+    isHovered: Boolean,
+    emptySlotBounds: MutableMap<String, Pair<Rect, Int>>,
+    modifier: Modifier = Modifier
+) {
+    DisposableEffect(slotId) {
+        onDispose { emptySlotBounds.remove(slotId) }
+    }
+    val fillAlpha by animateFloatAsState(
+        targetValue = if (isHovered) 0.72f else 0.36f,
+        animationSpec = tween(140),
+        label = "emptySlotFillAlpha"
+    )
+    val ringAlpha by animateFloatAsState(
+        targetValue = if (isHovered) 0.75f else 0.14f,
+        animationSpec = tween(140),
+        label = "emptySlotRingAlpha"
+    )
+    Box(
+        modifier = modifier
+            .onGloballyPositioned { coords ->
+                if (coords.isAttached) {
+                    emptySlotBounds[slotId] = coords.boundsInRoot() to targetEndIdx
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = fillAlpha))
+                .border(
+                    width = if (isHovered) 1.5.dp else 1.dp,
+                    color = if (isHovered) {
+                        MaterialTheme.colorScheme.primary.copy(alpha = ringAlpha)
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = ringAlpha)
+                    },
+                    shape = CircleShape
+                )
+        )
     }
 }
 
