@@ -478,25 +478,48 @@ fun BrowserScreen() {
         }
     }
 
-    val chromeMenuItems = buildBrowserChromeMenuItems(
-        context = context,
-        scope = scope,
-        activeSpace = activeSpace,
-        activeTab = activeTab,
-        prefs = prefs,
-        isMcpDisconnected = isMcpDisconnected,
-        isWebPage = isWebPage,
-        isEffectiveDark = isEffectiveDark,
-        currentHost = currentHost,
-        recentlyClosedEmpty = recentlyClosed.isEmpty(),
-        onShowMcpDrawer = { showMcpDrawer = true },
-        onShowAdBlockDialog = { showAdBlockDialog = true },
-        onShowChromeSettings = { showChromeSettings = true },
-        onShowBookmarkManager = { showBookmarkManager = true },
-        onShowFindBar = { showFindBar = true },
-        onTriggerTranslation = { src, dst -> triggerTranslation(src, dst) },
-        onSetReaderMarkdown = { md -> readerMarkdown = md }
-    )
+    // 확장 이름 변경·활성/비활성 실행 상태 변화를 빠른 메뉴에 즉시 반영
+    val observedExtensions by ExtensionManager.extensions.collectAsState()
+    val observedRunningExts by ExtensionManager.runningExtensionIds.collectAsState()
+    val chromeMenuItems = remember(
+        activeSpace, activeTab, prefs, isMcpDisconnected, isWebPage, isEffectiveDark,
+        currentHost, recentlyClosed, activeExtPopup, observedExtensions, observedRunningExts
+    ) {
+        buildBrowserChromeMenuItems(
+            context = context,
+            scope = scope,
+            activeSpace = activeSpace,
+            activeTab = activeTab,
+            prefs = prefs,
+            isMcpDisconnected = isMcpDisconnected,
+            isWebPage = isWebPage,
+            isEffectiveDark = isEffectiveDark,
+            currentHost = currentHost,
+            recentlyClosedEmpty = recentlyClosed.isEmpty(),
+            onShowMcpDrawer = { showMcpDrawer = true },
+            onShowAdBlockDialog = { showAdBlockDialog = true },
+            onShowChromeSettings = { showChromeSettings = true },
+            onShowBookmarkManager = { showBookmarkManager = true },
+            onShowFindBar = { showFindBar = true },
+            onTriggerTranslation = { src, dst -> triggerTranslation(src, dst) },
+            onSetReaderMarkdown = { md -> readerMarkdown = md },
+            activeExtPopupId = activeExtPopup?.id,
+            onTapExtension = { ext ->
+                if (!ext.popupPath.isNullOrBlank()) {
+                    activeExtPopup = ext
+                } else {
+                    val wv = SpaceManager.getActiveWebView(activeSpace.id)
+                    if (wv != null) {
+                        ExtensionManager.injectMatchingExtensions(wv, activeTab.url, "end", forceExtId = ext.id)
+                        Toast.makeText(context, "${ext.displayName} 실행됨", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "실행할 웹페이지가 없습니다", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onLongPressExtension = { ext -> managingExt = ext }
+        )
+    }
 
     // 제미나이 등 외부 앱에서 링크를 열어 진입 시 열려 있던 오버레이를 즉시 닫아 웹화면 노출 보장
     LaunchedEffect(externalOpenSeq) {
