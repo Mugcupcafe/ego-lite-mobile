@@ -74,6 +74,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Tab
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
@@ -91,6 +106,7 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -866,7 +882,7 @@ fun ChromeSettingsScreen(
                                     }
                                     item {
                                         Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-                                            Text("동시 활성 AI Space 최대 개수: ${prefs.maxAiSpaces}개", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                                            Text("동시 활성 AI 공간 최대 개수: ${prefs.maxAiSpaces}개", fontSize = 16.sp, fontWeight = FontWeight.Normal)
                                             Slider(
                                                 value = prefs.maxAiSpaces.toFloat(),
                                                 onValueChange = { v -> SpaceManager.updatePreferences { it.copy(maxAiSpaces = v.toInt()) } },
@@ -1123,7 +1139,7 @@ fun ChromeSettingsScreen(
                                     }
 
                                     Text(
-                                        text = "주소창 툴바 버튼 커스텀",
+                                        text = "툴바 · 빠른메뉴 통합 커스텀",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2352,6 +2368,412 @@ private fun ToolbarCustomPreviewCard(
                 EgoIcon(Icons.Default.MoreVert, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant, symbolSize = 18.dp)
             }
         }
+
+        // =========================================================================
+        // ZONE ② 빠른메뉴 통합 미리보기 (4열 · 편집 전용 · 탭 ON/OFF 및 확대 조절 비활성)
+        // =========================================================================
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        val defaultQsLayout = remember {
+            listOf(
+                "zoom:4", "newtab:1", "incognito:1", "aispace:2",
+                "bmbar:2", "dark:2", "div:d1",
+                "bookmark:1", "site:1", "history:1", "download:1",
+                "recent:1", "share:1", "clear:1", "settings:1",
+                "mcp:2", "default_app:2"
+            )
+        }
+        val qsCatalog = remember {
+            listOf(
+                Triple("zoom", "페이지 확대", Icons.Default.Search),
+                Triple("newtab", "새 탭", Icons.Default.Add),
+                Triple("incognito", "시크릿 창", Icons.Default.VisibilityOff),
+                Triple("aispace", "AI 공간", Icons.Default.AutoAwesome),
+                Triple("bmbar", "북마크 바", Icons.Default.Bookmarks),
+                Triple("dark", "어두운 테마", Icons.Default.DarkMode),
+                Triple("bookmark", "북마크", Icons.Default.Star),
+                Triple("site", "사이트 제어", Icons.Default.Tune),
+                Triple("history", "방문 기록", Icons.Default.History),
+                Triple("download", "다운로드", Icons.Default.Download),
+                Triple("recent", "최근 탭", Icons.Default.Tab),
+                Triple("share", "공유", Icons.Default.Share),
+                Triple("clear", "기록 삭제", Icons.Default.DeleteOutline),
+                Triple("settings", "설정", Icons.Default.Settings),
+                Triple("mcp", "MCP 연결", Icons.Default.Hub),
+                Triple("default_app", "기본 브라우저", Icons.Default.Language)
+            )
+        }
+        val qsCatalogMap = remember(qsCatalog) { qsCatalog.associateBy { it.first } }
+        val activeQsTokens = remember(prefs.quickMenuLayout) {
+            prefs.quickMenuLayout.ifEmpty { defaultQsLayout }
+        }
+        val qsVisibleEntries = remember(activeQsTokens) {
+            activeQsTokens.filter { !it.startsWith("hide:") }
+        }
+        val qsHiddenKeys = remember(activeQsTokens, qsCatalog) {
+            val present = qsVisibleEntries.mapNotNull { t ->
+                if (t.startsWith("div:")) null else t.substringBefore(':')
+            }.toSet()
+            qsCatalog.map { it.first }.filter { it !in present && it != "zoom" }
+        }
+
+        fun updateQsTokens(transform: (MutableList<String>) -> Unit) {
+            val next = activeQsTokens.toMutableList()
+            transform(next)
+            SpaceManager.updatePreferences { it.copy(quickMenuLayout = next) }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("빠른메뉴 통합 미리보기 (4열)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "편집 전용 · 탭 ON/OFF 및 확대 조절 비활성 · 확대바 꾹 눌러 위치 이동",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    modifier = Modifier.clickable {
+                        updateQsTokens { list ->
+                            val divId = "div:d_${System.currentTimeMillis() % 10000}"
+                            list.add(divId)
+                        }
+                    }
+                ) {
+                    Text(
+                        "+ 구분선",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    modifier = Modifier.clickable {
+                        SpaceManager.updatePreferences {
+                            it.copy(
+                                quickMenuLayout = emptyList(),
+                                toolbarButtonOrder = defaultOrder
+                            )
+                        }
+                    }
+                ) {
+                    Text(
+                        "기본값",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+            }
+        }
+
+        // 4열 빠른메뉴 미리보기 컨테이너 (설정에서 바꾸면 실제 빠른메뉴에 즉시 반영)
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 4열 행 단위 패킹
+                val packedRows = remember(qsVisibleEntries) {
+                    val out = mutableListOf<List<Pair<Int, String>>>()
+                    var curRow = mutableListOf<Pair<Int, String>>()
+                    var used = 0
+                    qsVisibleEntries.forEachIndexed { idx, tok ->
+                        if (tok.startsWith("div:") || tok.startsWith("zoom:")) {
+                            if (curRow.isNotEmpty()) {
+                                out.add(curRow)
+                                curRow = mutableListOf()
+                                used = 0
+                            }
+                            out.add(listOf(idx to tok))
+                        } else {
+                            val sp = tok.substringAfter(':', "1").toIntOrNull()?.coerceIn(1, 4) ?: 1
+                            if (used + sp > 4 && curRow.isNotEmpty()) {
+                                out.add(curRow)
+                                curRow = mutableListOf()
+                                used = 0
+                            }
+                            curRow.add(idx to tok)
+                            used += sp
+                            if (used >= 4) {
+                                out.add(curRow)
+                                curRow = mutableListOf()
+                                used = 0
+                            }
+                        }
+                    }
+                    if (curRow.isNotEmpty()) out.add(curRow)
+                    out
+                }
+
+                packedRows.forEach { rowItems ->
+                    val first = rowItems.first()
+                    if (first.second.startsWith("div:")) {
+                        val divIdx = first.first
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            HorizontalDivider(
+                                modifier = Modifier.weight(1f),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f)
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = EgoDangerRed.copy(alpha = 0.16f),
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clickable {
+                                        updateQsTokens { list ->
+                                            val visIdx = list.indexOfFirst { it == first.second }
+                                            if (visIdx >= 0) list.removeAt(visIdx)
+                                        }
+                                    }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    EgoIcon(Icons.Default.Close, contentDescription = "구분선 삭제", tint = EgoDangerRed, modifier = Modifier.size(13.dp), symbolSize = 13.dp)
+                                }
+                            }
+                        }
+                    } else if (first.second.startsWith("zoom:")) {
+                        var zDragging by remember { mutableStateOf(false) }
+                        var zAccumY by remember { mutableFloatStateOf(0f) }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(70.dp)
+                                .border(
+                                    width = if (zDragging) 2.dp else 1.dp,
+                                    color = if (zDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
+                                    shape = RoundedCornerShape(35.dp)
+                                )
+                                .pointerInput("settings_zoom_drag_${first.first}") {
+                                    val stepY = 46.dp.toPx()
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            zDragging = true
+                                            zAccumY = 0f
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        },
+                                        onDragEnd = { zDragging = false; zAccumY = 0f },
+                                        onDragCancel = { zDragging = false; zAccumY = 0f },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            zAccumY += dragAmount.y
+                                            if (zAccumY <= -stepY) {
+                                                zAccumY = 0f
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                updateQsTokens { list ->
+                                                    val i = list.indexOfFirst { it.startsWith("zoom:") }
+                                                    if (i > 0) {
+                                                        val item = list.removeAt(i)
+                                                        list.add(i - 1, item)
+                                                    }
+                                                }
+                                            } else if (zAccumY >= stepY) {
+                                                zAccumY = 0f
+                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                updateQsTokens { list ->
+                                                    val i = list.indexOfFirst { it.startsWith("zoom:") }
+                                                    if (i in 0 until list.lastIndex) {
+                                                        val item = list.removeAt(i)
+                                                        list.add(i + 1, item)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                        ) {
+                            HorizontalHarmonyCapsuleSlider(
+                                valueFraction = 0.5f,
+                                icon = Icons.Default.Search,
+                                accentColor = MaterialTheme.colorScheme.primary,
+                                lightIntensity = prefs.progressLightIntensity,
+                                particleDensity = prefs.progressParticleDensity,
+                                darkUseThemeColor = prefs.progressDarkUseThemeColor,
+                                dayParticleColor = Color(prefs.lightModeParticleColorHex),
+                                interactive = false,
+                                iconCenterOffsetDp = 42.dp,
+                                onValueChange = {},
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        }
+                    } else {
+                        val rowSpans = rowItems.sumOf { it.second.substringAfter(':', "1").toIntOrNull()?.coerceIn(1, 4) ?: 1 }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            rowItems.forEach { (_, tok) ->
+                                val key = tok.substringBefore(':')
+                                val sp = tok.substringAfter(':', "1").toIntOrNull()?.coerceIn(1, 4) ?: 1
+                                val meta = qsCatalogMap[key]
+                                val label = meta?.second ?: key
+                                val iconVec = meta?.third ?: Icons.Default.Tune
+                                val isSingle = sp == 1
+                                val tileShape = RoundedCornerShape(35.dp)
+
+                                // 설정 화면에서는 탭 시 ON/OFF 토글 동작 안 함 (크기 순환/숨기기/이동만)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(sp.toFloat())
+                                        .height(70.dp)
+                                        .clip(tileShape)
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                ) {
+                                    if (isSingle) {
+                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp), symbolSize = 22.dp)
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(start = 20.dp, end = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier.size(44.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(21.dp), symbolSize = 21.dp)
+                                            }
+                                            Text(
+                                                text = label,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    // 좌상단 숨기기(보관함으로 빼기)
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .padding(4.dp)
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.9f))
+                                            .clickable {
+                                                updateQsTokens { list ->
+                                                    list.removeAll { it.startsWith("$key:") }
+                                                    if ("hide:$key" !in list) list.add("hide:$key")
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        EgoIcon(Icons.Default.Remove, contentDescription = "보관함으로 빼기", tint = EgoDangerRed, modifier = Modifier.size(12.dp), symbolSize = 12.dp)
+                                    }
+                                    // 우하단 크기 조절 (1->2->3->4->1 순환)
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(28.dp)
+                                            .clickable {
+                                                val nextSp = if (sp >= 4) 1 else sp + 1
+                                                updateQsTokens { list ->
+                                                    val idx = list.indexOfFirst { it.startsWith("$key:") }
+                                                    if (idx >= 0) list[idx] = "$key:$nextSp"
+                                                }
+                                            },
+                                        contentAlignment = Alignment.BottomEnd
+                                    ) {
+                                        Canvas(
+                                            modifier = Modifier
+                                                .size(22.dp)
+                                                .padding(end = 3.dp, bottom = 3.dp)
+                                        ) {
+                                            val arcSize = size.minDimension * 1.75f
+                                            drawArc(
+                                                color = Color.White.copy(alpha = 0.72f),
+                                                startAngle = 8f,
+                                                sweepAngle = 74f,
+                                                useCenter = false,
+                                                topLeft = Offset(size.width - arcSize, size.height - arcSize),
+                                                size = Size(arcSize, arcSize),
+                                                style = Stroke(width = 4.5.dp.toPx(), cap = StrokeCap.Round)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            if (rowSpans < 4) {
+                                Spacer(modifier = Modifier.weight((4 - rowSpans).toFloat()))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // =========================================================================
+        // ZONE ③ 보관함 (숨겨진 빠른메뉴 버튼 — 탭하면 즉시 빠른메뉴로 복원)
+        // =========================================================================
+        if (qsHiddenKeys.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "보관함 (${qsHiddenKeys.size}개 숨겨짐 — 탭하여 빠른메뉴에 복원)",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    qsHiddenKeys.forEach { hKey ->
+                        val meta = qsCatalogMap[hKey]
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier.clickable {
+                                updateQsTokens { list ->
+                                    list.removeAll { it == "hide:$hKey" }
+                                    list.add("$hKey:1")
+                                }
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                EgoIcon(meta?.third ?: Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp), symbolSize = 14.dp)
+                                Text(meta?.second ?: hKey, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
     }
 }
 
