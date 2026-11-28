@@ -87,7 +87,9 @@ fun buildBrowserChromeMenuItems(
     onShowFindBar: () -> Unit,
     onTriggerTranslation: (String, String) -> Unit,
     onSetReaderMarkdown: (String) -> Unit,
-    onTapExtension: ((InstalledExtension) -> Unit)? = null
+    activeExtPopupId: String? = null,
+    onTapExtension: ((InstalledExtension) -> Unit)? = null,
+    onLongPressExtension: ((InstalledExtension) -> Unit)? = null
 ): List<ChromeMenuItemSpec> = buildList {
     add(
         ChromeMenuItemSpec(
@@ -207,20 +209,27 @@ fun buildBrowserChromeMenuItems(
         }
     })
     add(ChromeMenuItemSpec("광고 차단", Icons.Default.Shield, key = "adblock", checked = prefs.adBlockEnabled, isToggleCheckbox = true) { onShowAdBlockDialog() })
-    ExtensionManager.extensions.value.filter { it.enabled }.forEach { ext ->
+    val activeWvForExt = SpaceManager.getActiveWebView(activeSpace.id)
+    ExtensionManager.extensions.value.forEach { ext ->
+        val isExtRunning = ExtensionManager.isRunningOnTab(ext, activeWvForExt, activeTab.url, activeExtPopupId)
         add(
             ChromeMenuItemSpec(
-                title = ext.name,
+                title = ext.displayName,
                 icon = Icons.Default.Extension,
-                key = "ext:${ext.id}"
+                key = "ext:${ext.id}",
+                checked = isExtRunning,
+                bold = isExtRunning,
+                onLongClick = onLongPressExtension?.let { cb -> { cb(ext) } }
             ) {
-                if (onTapExtension != null) {
+                if (!ext.enabled) {
+                    onLongPressExtension?.invoke(ext)
+                } else if (onTapExtension != null) {
                     onTapExtension(ext)
                 } else {
                     val wv = SpaceManager.getActiveWebView(activeSpace.id)
                     if (wv != null) {
                         ExtensionManager.injectMatchingExtensions(wv, activeTab.url, "end", forceExtId = ext.id)
-                        Toast.makeText(context, "${ext.name} 실행됨", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "${ext.displayName} 실행됨", Toast.LENGTH_SHORT).show()
                     } else {
                         Toast.makeText(context, "실행할 웹페이지가 없습니다", Toast.LENGTH_SHORT).show()
                     }
@@ -233,6 +242,7 @@ fun buildBrowserChromeMenuItems(
     add(
         ChromeMenuItemSpec(
             title = profileTitle,
+            subtitle = if (gAcc.isSignedIn) "Google 계정" else null,
             icon = Icons.Default.Person,
             key = "profile",
             checked = gAcc.isSignedIn,
