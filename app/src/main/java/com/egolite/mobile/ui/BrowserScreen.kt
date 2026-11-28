@@ -1845,167 +1845,29 @@ fun BrowserScreen() {
                         }
                         "PROFILE" -> {
                             if (prefs.showProfileAvatarButton) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(38.dp)
-                                        .pressBounceScale()
-                                        .clip(CircleShape)
-                                        .clickable {
-                                            settingsInitialCategory = SettingsCategory.ACCOUNT
-                                            showChromeSettings = true
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (googleAccount.isSignedIn && googleAvatar != null) {
-                                        Image(
-                                            bitmap = googleAvatar!!.asImageBitmap(),
-                                            contentDescription = "Google 프로필",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                                        )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.primaryContainer),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = if (googleAccount.isSignedIn) googleAccount.displayName.take(1).uppercase().ifBlank { "G" } else "G",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                                            )
-                                        }
+                                ToolbarProfileAvatarButton(
+                                    isSignedIn = googleAccount.isSignedIn,
+                                    displayName = googleAccount.displayName,
+                                    avatarBitmap = googleAvatar,
+                                    onClick = {
+                                        settingsInitialCategory = SettingsCategory.ACCOUNT
+                                        showChromeSettings = true
                                     }
-                                }
+                                )
                             }
                         }
                     }
                 }
                 } // end inner Row of customizable toolbar icons
                 if (isQuickMenuEditMode) {
-                    Box(
-                        modifier = Modifier
-                            .matchParentSize()
-                            .pointerInput("real_toolbar_edit_drag_overlay") {
-                                val downThresholdPx = 38.dp.toPx()
-                                val stepXPx = 34.dp.toPx()
-                                var activeTbKey: String? = null
-                                var accumX = 0f
-                                var accumY = 0f
-                                var fingerLocal = Offset.Zero
-                                val tbToQsMap = mapOf(
-                                    "MCP" to "mcp", "AI" to "aispace", "TRANSLATE" to "translate",
-                                    "DARKMODE" to "dark", "NEW_TAB" to "newtab", "SHARE" to "share",
-                                    "FIND" to "find", "DESKTOP" to "desktop", "READER" to "reader"
-                                )
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = { startPos ->
-                                        val p = SpaceManager.preferences.value
-                                        val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
-                                        val ord = p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }
-                                        val enabled = ord.filter { k ->
-                                            when (k) {
-                                                "MCP" -> p.showMcpBadgeButton
-                                                "ADBLOCK" -> p.showAdBlockButton
-                                                "TRANSLATE" -> p.showTranslateButton
-                                                "DARKMODE" -> p.showDarkModeButton
-                                                "NEW_TAB" -> p.showNewTabToolbarButton
-                                                "SHARE" -> p.showShareButton
-                                                "FIND" -> p.showFindInPageButton
-                                                "DESKTOP" -> p.showDesktopSiteButton
-                                                "READER" -> p.showReaderModeButton
-                                                "PROFILE" -> p.showProfileAvatarButton
-                                                else -> false
-                                            }
-                                        }
-                                        if (enabled.isNotEmpty() && size.width > 0) {
-                                            val slotW = size.width.toFloat() / enabled.size.toFloat()
-                                            val idx = (startPos.x / slotW).toInt().coerceIn(0, enabled.lastIndex)
-                                            val picked = enabled[idx]
-                                            activeTbKey = picked
-                                            accumX = 0f
-                                            accumY = 0f
-                                            fingerLocal = startPos
-                                            tbDraggingKey = picked
-                                            tbDragRootPos = tbIconsRootPos + startPos
-                                            tbDragInQsZone = false
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        val k = activeTbKey
-                                        val droppedInQs = accumY > downThresholdPx
-                                        activeTbKey = null
-                                        tbDraggingKey = null
-                                        tbDragInQsZone = false
-                                        if (k != null && droppedInQs) {
-                                            val qsKey = tbToQsMap[k]
-                                            if (qsKey != null) {
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                SpaceManager.updatePreferences { p ->
-                                                    val curQs = p.quickMenuLayout.toMutableList()
-                                                    curQs.removeAll { it == "hide:$qsKey" || it.startsWith("$qsKey:") }
-                                                    curQs.add(0, "$qsKey:1")
-                                                    val updated = p.copy(quickMenuLayout = curQs)
-                                                    when (k) {
-                                                        "MCP" -> updated.copy(showMcpBadgeButton = false)
-                                                        "TRANSLATE" -> updated.copy(showTranslateButton = false)
-                                                        "DARKMODE" -> updated.copy(showDarkModeButton = false)
-                                                        "NEW_TAB" -> updated.copy(showNewTabToolbarButton = false)
-                                                        "SHARE" -> updated.copy(showShareButton = false)
-                                                        "FIND" -> updated.copy(showFindInPageButton = false)
-                                                        "DESKTOP" -> updated.copy(showDesktopSiteButton = false)
-                                                        "READER" -> updated.copy(showReaderModeButton = false)
-                                                        else -> updated
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onDragCancel = {
-                                        activeTbKey = null
-                                        tbDraggingKey = null
-                                        tbDragInQsZone = false
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        val k = activeTbKey ?: return@detectDragGesturesAfterLongPress
-                                        change.consume()
-                                        accumX += dragAmount.x
-                                        accumY += dragAmount.y
-                                        fingerLocal += dragAmount
-                                        tbDragRootPos = tbIconsRootPos + fingerLocal
-                                        val inQs = accumY > downThresholdPx
-                                        tbDragInQsZone = inQs
-                                        if (!inQs) {
-                                            val dir = when {
-                                                accumX >= stepXPx -> 1
-                                                accumX <= -stepXPx -> -1
-                                                else -> 0
-                                            }
-                                            if (dir != 0) {
-                                                accumX = 0f
-                                                val p = SpaceManager.preferences.value
-                                                val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
-                                                val full = (p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
-                                                val fi = full.indexOf(k)
-                                                val ti = (fi + dir).coerceIn(0, full.lastIndex)
-                                                if (fi >= 0 && ti != fi) {
-                                                    full.removeAt(fi)
-                                                    full.add(ti, k)
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = full) }
-                                                }
-                                            }
-                                        }
-                                    }
-                                )
-                            }
+                    ToolbarEditDragCaptureOverlay(
+                        tbIconsRootPos = tbIconsRootPos,
+                        modifier = Modifier.matchParentSize(),
+                        onDraggingChanged = { key, pos, inQs ->
+                            tbDraggingKey = key
+                            tbDragRootPos = pos
+                            tbDragInQsZone = inQs
+                        }
                     )
                 }
                 } // end Box wrapping customizable toolbar icons
@@ -3169,6 +3031,50 @@ private fun UnifiedAiDoneSpeechBubble(
                         maxLines = 1
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolbarProfileAvatarButton(
+    isSignedIn: Boolean,
+    displayName: String,
+    avatarBitmap: android.graphics.Bitmap?,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .pressBounceScale()
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (isSignedIn && avatarBitmap != null) {
+            Image(
+                bitmap = avatarBitmap.asImageBitmap(),
+                contentDescription = "Google 프로필",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isSignedIn) displayName.take(1).uppercase().ifBlank { "G" } else "G",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
             }
         }
     }
