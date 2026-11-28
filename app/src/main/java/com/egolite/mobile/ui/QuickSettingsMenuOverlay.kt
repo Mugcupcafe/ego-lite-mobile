@@ -1,6 +1,10 @@
 package com.egolite.mobile.ui
 import androidx.compose.animation.core.animateFloat
 import com.egolite.mobile.browser.SpaceManager
+import com.egolite.mobile.account.GoogleAccountManager
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
 import com.egolite.mobile.browser.ExtensionManager
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.runtime.collectAsState
@@ -30,6 +34,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -82,12 +87,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.key
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -105,6 +112,10 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asComposeRenderEffect
@@ -494,8 +505,11 @@ fun QuickSettingsBrowserMenuOverlay(
     val blocks = remember(parsedEntries, itemByKey) {
         buildSectionIsolatedBlocks(parsedEntries, itemByKey)
     }
-    val hiddenSpecs = remember(items, hiddenKeys) {
-        items.filter { it.key in hiddenKeys }
+    val toolbarActiveQsKeys = remember(prefsLive, extsLive) {
+        getVisibleToolbarKeys(prefsLive).mapNotNull { resolveQsKeyFromTb(it) }.toSet()
+    }
+    val hiddenSpecs = remember(items, hiddenKeys, toolbarActiveQsKeys) {
+        items.filter { it.key in hiddenKeys && it.key !in toolbarActiveQsKeys }
     }
 
     var lastLayoutCommitMs by remember { mutableStateOf(0L) }
@@ -532,12 +546,42 @@ fun QuickSettingsBrowserMenuOverlay(
                 if (coords.isAttached) overlayRootPos = coords.positionInRoot()
             }
     ) {
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .padding(top = topPadding, end = endPadding, start = 12.dp, bottom = 12.dp),
         contentAlignment = Alignment.TopEnd
     ) {
+        // 가로 화면 등 화면 높이가 좁아 스크롤이 필요할 때 맨 아래 행이 반쯤 잘려 보이지 않도록
+        // 완전한 행 단위 높이로 패널 최대 높이를 정밀 스냅!
+        val snappedPanelMaxHeight = remember(maxHeight, blocks, editMode) {
+            if (editMode) {
+                maxHeight
+            } else {
+                val chromeOverhead = 68.dp // 상단 헤더(38dp) + 여백(6dp) + 패널 상하 패딩(24dp)
+                val rowHeights = mutableListOf<Dp>()
+                var acc = chromeOverhead
+                blocks.forEachIndexed { bIdx, b ->
+                    when (b) {
+                        is QsRenderBlock.DividerRow -> {
+                            acc += 13.dp
+                        }
+                        is QsRenderBlock.Section -> {
+                            b.rows.forEachIndexed { rIdx, _ ->
+                                val gap = if (bIdx == 0 && rIdx == 0) 0.dp else 8.dp
+                                acc += gap + 70.dp
+                                rowHeights.add(acc)
+                            }
+                        }
+                    }
+                }
+                if (acc <= maxHeight || rowHeights.isEmpty()) {
+                    maxHeight
+                } else {
+                    rowHeights.lastOrNull { it <= maxHeight } ?: maxHeight
+                }
+            }
+        }
         // 확정 프리셋: Liquid Drop (stagger=40ms · bounce=26% · dur=379ms · int=150%)
         // 각 행 독립 Animatable 스프링으로 열림/닫힘 중간 반전 100% 연속 보간 + 닫힘 시 최하단부터 접힘!
         val totalContentRows = remember(blocks) {
@@ -593,15 +637,16 @@ fun QuickSettingsBrowserMenuOverlay(
             }
         }
 
-        // 편집 중 행이 늘어나도 새 행의 rowAnims가 0f로 남아 패널이 세로로 찌부되지 않도록 즉시 1f 동기화!
-        LaunchedEffect(visible, totalContentRows, editMode) {
-            if (visible && (editMode || panelAnim.value > 0.5f)) {
-                for (r in 0..15) {
-                    if (rowAnims[r].value < 0.99f) {
-                        rowAnims[r].snapTo(1f)
-                    }
+        // 오직 편집 모드에서 행 수가 실제로 증가해 새 행이 생겼을 때만 새 행 인덱스만 1f 동기화!
+        // (열림<->닫힘 빠른 반복 및 닫히던 중 다시 열기 시 snapTo(1f) 오작동 원천 차단)
+        var prevTotalRows by remember { mutableIntStateOf(totalContentRows) }
+        LaunchedEffect(totalContentRows, editMode) {
+            if (editMode && totalContentRows > prevTotalRows) {
+                for (r in (prevTotalRows + 1)..totalContentRows.coerceAtMost(15)) {
+                    rowAnims[r].snapTo(1f)
                 }
             }
+            prevTotalRows = totalContentRows
         }
 
         val anyRowVisible = rowAnims.any { it.value > 0.015f }
@@ -645,7 +690,7 @@ fun QuickSettingsBrowserMenuOverlay(
                 tonalElevation = 4.dp,
                 modifier = Modifier
                     .width(384.dp)
-                    .heightIn(max = if (editMode) 1600.dp else 820.dp)
+                    .heightIn(max = if (editMode) 1600.dp else snappedPanelMaxHeight)
                     .onGloballyPositioned { coords ->
                         if (coords.isAttached) panelCoords = coords
                     }
@@ -719,17 +764,7 @@ fun QuickSettingsBrowserMenuOverlay(
                         }
                         .padding(12.dp)
                 ) {
-                    // 헤더: 텍스트·안내문구 없이 아이콘 전용 — 편집 진입 시 펜 아이콘이 원래 위치를 유지한 채 원형으로 감싸지며 토글
-                    val editBtnBg by animateColorAsState(
-                        targetValue = if (editMode) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        animationSpec = tween(180),
-                        label = "qsEditBtnBg"
-                    )
-                    val editBtnTint by animateColorAsState(
-                        targetValue = if (editMode) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                        animationSpec = tween(180),
-                        label = "qsEditBtnTint"
-                    )
+                    // 헤더: 편집(펜) ↔ 설정(기어) 실선 흡수 · 한 붓 재탄생 연동 코레오그래피 (100% 인터럽트 연속 물리)
                     val headerV = rowAnims[0].value
                     val headerInv = 1f - headerV
                     Row(
@@ -757,47 +792,14 @@ fun QuickSettingsBrowserMenuOverlay(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 펜(편집) 아이콘 — 원래 위치 고정, 편집 모드일 때 원형 배경이 감싸며 다시 누르면 완료
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .background(editBtnBg)
-                                    .clickable { editMode = !editMode },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                EgoIcon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = if (editMode) "편집 완료" else "편집",
-                                    tint = editBtnTint,
-                                    modifier = Modifier.size(19.dp),
-                                    symbolSize = 19.dp
-                                )
+                        QsEditSettingsChoreographyHeader(
+                            editMode = editMode,
+                            onToggleEdit = { editMode = !editMode },
+                            onOpenSettings = {
+                                onDismiss()
+                                itemByKey["settings"]?.onClick?.invoke()
                             }
-                            // 바로 옆 설정 톱니바퀴 아이콘 버튼
-                            Box(
-                                modifier = Modifier
-                                    .size(34.dp)
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        onDismiss()
-                                        itemByKey["settings"]?.onClick?.invoke()
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                EgoIcon(
-                                    imageVector = Icons.Default.Settings,
-                                    contentDescription = "설정",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(19.dp),
-                                    symbolSize = 19.dp
-                                )
-                            }
-                        }
+                        )
 
                         // 편집 모드 전용 우측 아이콘 버튼: 구분선 추가 + 초기화 (텍스트 없음)
                         androidx.compose.animation.AnimatedVisibility(
@@ -861,6 +863,11 @@ fun QuickSettingsBrowserMenuOverlay(
                     val deletingDividerIds = remember { mutableStateListOf<String>() }
                     val prevTileGridPos = remember { mutableMapOf<String, Offset>() }
                     val prevDividerGridY = remember { mutableMapOf<String, Float>() }
+                    val tileFlipAnims = remember { mutableMapOf<String, Pair<Animatable<Float, AnimationVector1D>, Animatable<Float, AnimationVector1D>>>() }
+                    val tilePendingDx = remember { mutableStateMapOf<String, Float>() }
+                    val tilePendingDy = remember { mutableStateMapOf<String, Float>() }
+                    val divFlipAnims = remember { mutableMapOf<String, Animatable<Float, AnimationVector1D>>() }
+                    val divPendingDy = remember { mutableStateMapOf<String, Float>() }
                     val tileAnimScope = rememberCoroutineScope()
                     val gridScrollState = rememberScrollState()
                     var gridRootPos by remember { mutableStateOf(Offset.Zero) }
@@ -904,6 +911,11 @@ fun QuickSettingsBrowserMenuOverlay(
                             emptySlotBounds.clear()
                             prevTileGridPos.clear()
                             prevDividerGridY.clear()
+                            tileFlipAnims.clear()
+                            tilePendingDx.clear()
+                            tilePendingDy.clear()
+                            divFlipAnims.clear()
+                            divPendingDy.clear()
                         }
                     }
 
@@ -1120,7 +1132,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                     key("div_${block.id}") {
                                         val isThisDivDragging = editMode && draggingDividerId == block.id
                                         val isDeleting = block.id in deletingDividerIds
-                                        val divFlipY = remember { Animatable(0f) }
+                                        val divFlipAnim = divFlipAnims.getOrPut(block.id) { Animatable(0f) }
                                         val divAppear = remember { Animatable(if (editMode && (System.currentTimeMillis() - lastLayoutCommitMs) < 420L) 0f else 1f) }
                                         LaunchedEffect(Unit) {
                                             if (divAppear.value < 1f) {
@@ -1154,9 +1166,12 @@ fun QuickSettingsBrowserMenuOverlay(
                                                         if (editMode && justCommitted && oldY != null) {
                                                             val dy = oldY - curY
                                                             if (kotlin.math.abs(dy) > 2f) {
+                                                                divPendingDy[block.id] = dy
+                                                                val animY = divFlipAnims.getOrPut(block.id) { Animatable(0f) }
                                                                 tileAnimScope.launch {
-                                                                    divFlipY.snapTo(dy)
-                                                                    divFlipY.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 260f))
+                                                                    animY.snapTo(dy)
+                                                                    divPendingDy.remove(block.id)
+                                                                    animY.animateTo(0f, spring(dampingRatio = 0.80f, stiffness = 240f))
                                                                 }
                                                             }
                                                         }
@@ -1166,7 +1181,8 @@ fun QuickSettingsBrowserMenuOverlay(
                                                 .graphicsLayer {
                                                     val life = divAppear.value * deleteFactor
                                                     val openY = ((-34f - divRowIdx * 8f) * divInv * 1.50f).dp.toPx()
-                                                    translationY = openY + divFlipY.value + (if (isThisDivDragging) divDragLiveOffsetY else 0f)
+                                                    val liveDivFlipY = divPendingDy[block.id] ?: divFlipAnim.value
+                                                    translationY = openY + liveDivFlipY + (if (isThisDivDragging) divDragLiveOffsetY else 0f)
                                                     scaleX = ((0.55f + 0.45f * divV) * (0.70f + 0.30f * life) * dragLiftScale).coerceAtLeast(0.2f)
                                                     scaleY = ((0.18f + 0.82f * life) * dragLiftScale).coerceAtLeast(0.05f)
                                                     alpha = ((divV.coerceIn(0f, 1f) * 1.75f).coerceIn(0f, 1f) * life).coerceIn(0f, 1f)
@@ -1283,8 +1299,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                 animationSpec = spring(dampingRatio = 0.78f, stiffness = 280f),
                                                                 label = "qsTileSpanWeight_${placed.spec.key}"
                                                             )
-                                                            val flipX = remember { Animatable(0f) }
-                                                            val flipY = remember { Animatable(0f) }
+                                                            val (flipX, flipY) = tileFlipAnims.getOrPut(placed.spec.key) { Animatable(0f) to Animatable(0f) }
                                                             QsMenuTile(
                                                                 spec = placed.spec,
                                                                 span = sp,
@@ -1316,13 +1331,16 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                                 val dx = oldGridPos.x - curGridPos.x
                                                                                 val dy = oldGridPos.y - curGridPos.y
                                                                                 if (kotlin.math.abs(dx) > 2f || kotlin.math.abs(dy) > 2f) {
+                                                                                    tilePendingDx[placed.spec.key] = dx
+                                                                                    tilePendingDy[placed.spec.key] = dy
+                                                                                    val (ax, ay) = tileFlipAnims.getOrPut(placed.spec.key) { Animatable(0f) to Animatable(0f) }
                                                                                     tileAnimScope.launch {
-                                                                                        flipX.snapTo(dx)
-                                                                                        flipX.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 260f))
-                                                                                    }
-                                                                                    tileAnimScope.launch {
-                                                                                        flipY.snapTo(dy)
-                                                                                        flipY.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 260f))
+                                                                                        ax.snapTo(dx)
+                                                                                        ay.snapTo(dy)
+                                                                                        tilePendingDx.remove(placed.spec.key)
+                                                                                        tilePendingDy.remove(placed.spec.key)
+                                                                                        launch { ax.animateTo(0f, spring(dampingRatio = 0.80f, stiffness = 240f)) }
+                                                                                        launch { ay.animateTo(0f, spring(dampingRatio = 0.80f, stiffness = 240f)) }
                                                                                     }
                                                                                 }
                                                                             }
@@ -1330,8 +1348,8 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                         }
                                                                     }
                                                                     .graphicsLayer {
-                                                                        translationX = flipX.value
-                                                                        translationY = flipY.value
+                                                                        translationX = tilePendingDx[placed.spec.key] ?: flipX.value
+                                                                        translationY = tilePendingDy[placed.spec.key] ?: flipY.value
                                                                     },
                                                                 onClick = {
                                                                     if (placed.spec.zoomPercent != null && sp == 1) {
@@ -1686,6 +1704,8 @@ private fun QsMenuTile(
     onHide: () -> Unit
 ) {
     val prefs by SpaceManager.preferences.collectAsState()
+    val googleAccount by GoogleAccountManager.state.collectAsState()
+    val googleAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
     val haptic = LocalHapticFeedback.current
     val isZoomTile = spec.zoomPercent != null
     val isZoomBar = isZoomTile && span >= 2
@@ -2089,6 +2109,16 @@ private fun QsMenuTile(
                                 symbolSize = 22.dp
                             )
                         }
+                    } else if (spec.key == "profile" && googleAccount.isSignedIn && googleAvatar != null) {
+                        Image(
+                            bitmap = googleAvatar!!.asImageBitmap(),
+                            contentDescription = spec.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = iconMotionMod
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .border(1.2.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.45f), CircleShape)
+                        )
                     } else if (spec.key.startsWith("ext:")) {
                         val extPath = ExtensionManager.extensions.value.firstOrNull { it.id == spec.key.removePrefix("ext:") }?.iconPath
                         ExtensionIconBadge(
@@ -2151,6 +2181,16 @@ private fun QsMenuTile(
                                     symbolSize = 21.dp
                                 )
                             }
+                        } else if (spec.key == "profile" && googleAccount.isSignedIn && googleAvatar != null) {
+                            Image(
+                                bitmap = googleAvatar!!.asImageBitmap(),
+                                contentDescription = spec.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = wideIconMotionMod
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .border(1.2.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.45f), CircleShape)
+                            )
                         } else if (spec.key.startsWith("ext:")) {
                             val extPath = ExtensionManager.extensions.value.firstOrNull { it.id == spec.key.removePrefix("ext:") }?.iconPath
                             ExtensionIconBadge(
@@ -2422,7 +2462,18 @@ fun ToolbarToQuickMenuDragGhost(
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (tbKey.startsWith("EXT:")) {
+        val ghostGAcc by GoogleAccountManager.state.collectAsState()
+        val ghostGAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
+        if (tbKey == "PROFILE" && ghostGAcc.isSignedIn && ghostGAvatar != null) {
+            Image(
+                bitmap = ghostGAvatar!!.asImageBitmap(),
+                contentDescription = "Google 프로필",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(if (inQuickMenuZone) 28.dp else 24.dp)
+                    .clip(CircleShape)
+            )
+        } else if (tbKey.startsWith("EXT:")) {
             val extPath = ExtensionManager.extensions.value.firstOrNull { it.id == tbKey.removePrefix("EXT:") }?.iconPath
             ExtensionIconBadge(
                 iconPath = extPath,
@@ -2630,6 +2681,303 @@ fun ToolbarInsertSlotIndicator(active: Boolean = true) {
                     .height(22.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary)
+            )
+        }
+    }
+}
+
+@Composable
+private fun QsEditSettingsChoreographyHeader(
+    editMode: Boolean,
+    onToggleEdit: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val primaryCol = MaterialTheme.colorScheme.primary
+    val onPrimaryCol = MaterialTheme.colorScheme.onPrimary
+    val onSurfaceCol = MaterialTheme.colorScheme.onSurface
+
+    // 100% 인터럽트 연속 물리 채널 (연타해도 튐·끊김 없이 현재 속도에서 즉시 방향 전환)
+    val penCircle = remember { Animatable(if (editMode) 1f else 0f) }
+    val gearDraw = remember { Animatable(if (editMode) 0f else 1f) }
+    val gearCore = remember { Animatable(if (editMode) 0f else 1f) }
+    val gearX = remember { Animatable(if (editMode) 0.62f else 1f) }
+    val gearRot = remember { Animatable(0f) }
+    val inHead = remember { Animatable(0f) }
+    val inTail = remember { Animatable(0f) }
+    val outHead = remember { Animatable(0f) }
+    val outTail = remember { Animatable(0f) }
+    val penX = remember { Animatable(0f) }
+    val penY = remember { Animatable(0f) }
+    val penRot = remember { Animatable(0f) }
+    val penScale = remember { Animatable(1f) }
+
+    var initialized by remember { mutableStateOf(false) }
+    LaunchedEffect(editMode) {
+        if (!initialized) {
+            initialized = true
+            return@LaunchedEffect
+        }
+        if (editMode) {
+            // ON: 설정 기어 실선 풀림 -> S-곡선 실선 볼펜 흡수 -> 단순 원형 배지 피어오름 + 펜 절제된 리프트
+            launch { outTail.animateTo(outHead.value, spring(dampingRatio = 0.90f, stiffness = 260f)) }
+            launch { gearDraw.animateTo(0f, spring(dampingRatio = 0.88f, stiffness = 230f)) }
+            launch {
+                delay(40L)
+                gearCore.animateTo(0f, spring(dampingRatio = 0.85f, stiffness = 280f))
+            }
+            launch { gearX.animateTo(0.62f, spring(dampingRatio = 0.88f, stiffness = 180f)) }
+            launch { gearRot.animateTo(gearRot.value + 95f, spring(dampingRatio = 0.82f, stiffness = 150f)) }
+
+            if (inHead.value >= 0.94f && inTail.value >= 0.94f) {
+                inHead.snapTo(0f)
+                inTail.snapTo(0f)
+            }
+            launch {
+                delay(20L)
+                inHead.animateTo(1f, spring(dampingRatio = 0.88f, stiffness = 300f))
+            }
+            launch {
+                delay(140L)
+                inTail.animateTo(1f, spring(dampingRatio = 0.90f, stiffness = 230f))
+            }
+            launch {
+                if (penCircle.value < 0.2f) delay(135L)
+                penCircle.animateTo(1f, spring(dampingRatio = 0.74f, stiffness = 300f))
+            }
+            launch {
+                penY.animateTo(-2.6f, tween(110))
+                penY.animateTo(0f, spring(dampingRatio = 0.72f, stiffness = 320f))
+            }
+            launch {
+                penRot.animateTo(-11f, tween(110))
+                penRot.animateTo(0f, spring(dampingRatio = 0.70f, stiffness = 260f))
+            }
+            launch {
+                penScale.animateTo(1.10f, tween(110))
+                penScale.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 340f))
+            }
+        } else {
+            // OFF (비대칭): 원형 배지 수축 + 볼펜이 우측으로 안내 실선을 뻗음 -> 중심 원 먼저 개화 -> 외곽 기어 한 붓 완성!
+            launch { inTail.animateTo(inHead.value, spring(dampingRatio = 0.90f, stiffness = 260f)) }
+            launch { penCircle.animateTo(0f, spring(dampingRatio = 0.86f, stiffness = 270f)) }
+            launch {
+                penX.animateTo(2.4f, tween(100))
+                penX.animateTo(0f, spring(dampingRatio = 0.74f, stiffness = 320f))
+            }
+            launch {
+                penRot.animateTo(12f, tween(100))
+                penRot.animateTo(0f, spring(dampingRatio = 0.70f, stiffness = 260f))
+            }
+            launch {
+                penScale.animateTo(0.92f, tween(90))
+                penScale.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 340f))
+            }
+
+            if (outHead.value >= 0.94f && outTail.value >= 0.94f) {
+                outHead.snapTo(0f)
+                outTail.snapTo(0f)
+            }
+            launch {
+                delay(28L)
+                outHead.animateTo(1f, spring(dampingRatio = 0.86f, stiffness = 320f))
+            }
+            launch {
+                delay(145L)
+                outTail.animateTo(1f, spring(dampingRatio = 0.90f, stiffness = 240f))
+            }
+            launch { gearX.animateTo(1f, spring(dampingRatio = 0.80f, stiffness = 240f)) }
+            launch {
+                if (gearCore.value < 0.3f) delay(135L)
+                gearCore.animateTo(1f, spring(dampingRatio = 0.68f, stiffness = 310f))
+            }
+            launch {
+                if (gearDraw.value < 0.3f) delay(175L)
+                gearDraw.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = 210f))
+            }
+            launch { gearRot.animateTo(gearRot.value - 55f, spring(dampingRatio = 0.82f, stiffness = 150f)) }
+        }
+    }
+
+    val pathMeasure = remember { PathMeasure() }
+    val segmentPath = remember { Path() }
+
+    Box(modifier = Modifier.width(74.dp).height(34.dp)) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val cy = size.height * 0.5f
+            val penCx = 17.dp.toPx()
+            val gearHomeX = 57.dp.toPx()
+            val spanX = gearHomeX - penCx
+            val unit = 0.45.dp.toPx() // 1 SVG unit -> 0.45dp (19dp icon scale)
+
+            // 1) 단순 원형 활성 배지 (primary)
+            val cP = penCircle.value.coerceAtLeast(0f)
+            if (cP > 0.01f) {
+                drawCircle(
+                    color = primaryCol,
+                    radius = 17.dp.toPx() * cP,
+                    center = Offset(penCx, cy)
+                )
+            }
+
+            // 2) ON S-곡선 실선 (설정 -> 볼펜 흡수)
+            val iH = inHead.value.coerceIn(0f, 1f)
+            val iT = inTail.value.coerceIn(0f, iH)
+            if (iH - iT > 0.015f) {
+                val pIn = Path().apply {
+                    moveTo(gearHomeX, cy)
+                    cubicTo(
+                        penCx + spanX * 0.72f, cy - 8.dp.toPx(),
+                        penCx + spanX * 0.44f, cy + 8.dp.toPx(),
+                        penCx + 3.dp.toPx(), cy
+                    )
+                }
+                pathMeasure.setPath(pIn, false)
+                val total = pathMeasure.length
+                segmentPath.reset()
+                if (pathMeasure.getSegment(iT * total, iH * total, segmentPath, true)) {
+                    val alpha = ((iH - iT) / 0.18f).coerceIn(0f, 0.92f)
+                    drawPath(
+                        path = segmentPath,
+                        color = onSurfaceCol.copy(alpha = alpha),
+                        style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+            }
+
+            // 3) OFF 안내 실선 (볼펜 -> 설정 재탄생)
+            val oH = outHead.value.coerceIn(0f, 1f)
+            val oT = outTail.value.coerceIn(0f, oH)
+            if (oH - oT > 0.015f) {
+                val pOut = Path().apply {
+                    moveTo(penCx + 5.dp.toPx(), cy)
+                    lineTo(gearHomeX, cy)
+                }
+                pathMeasure.setPath(pOut, false)
+                val total = pathMeasure.length
+                segmentPath.reset()
+                if (pathMeasure.getSegment(oT * total, oH * total, segmentPath, true)) {
+                    val alpha = ((oH - oT) / 0.18f).coerceIn(0f, 0.92f)
+                    drawPath(
+                        path = segmentPath,
+                        color = primaryCol.copy(alpha = alpha),
+                        style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+            }
+
+            // 4) 기존 설정 기어 아이콘 (한 붓 풀림/그리기 + 중심 원 개화)
+            val gDraw = gearDraw.value.coerceIn(0f, 1f)
+            val gCore = gearCore.value.coerceAtLeast(0f)
+            val gCx = penCx + gearX.value * spanX
+            if (gDraw > 0.01f || gCore > 0.01f) {
+                withTransform({
+                    translate(left = gCx, top = cy)
+                    rotate(degrees = gearRot.value, pivot = Offset.Zero)
+                }) {
+                    if (gDraw > 0.01f) {
+                        val gearPath = Path().apply {
+                            moveTo(-4.8f * unit, -19.5f * unit)
+                            lineTo(4.8f * unit, -19.5f * unit)
+                            lineTo(6.3f * unit, -14.0f * unit)
+                            cubicTo(8.1f * unit, -13.4f * unit, 9.8f * unit, -12.5f * unit, 11.2f * unit, -11.3f * unit)
+                            lineTo(16.3f * unit, -13.5f * unit)
+                            lineTo(21.1f * unit, -5.2f * unit)
+                            lineTo(16.6f * unit, -1.7f * unit)
+                            cubicTo(16.9f * unit, -0.5f * unit, 16.9f * unit, 0.8f * unit, 16.6f * unit, 2.0f * unit)
+                            lineTo(21.1f * unit, 5.5f * unit)
+                            lineTo(16.3f * unit, 13.8f * unit)
+                            lineTo(11.2f * unit, 11.6f * unit)
+                            cubicTo(9.8f * unit, 12.8f * unit, 8.1f * unit, 13.7f * unit, 6.3f * unit, 14.3f * unit)
+                            lineTo(4.8f * unit, 19.8f * unit)
+                            lineTo(-4.8f * unit, 19.8f * unit)
+                            lineTo(-6.3f * unit, 14.3f * unit)
+                            cubicTo(-8.1f * unit, 13.7f * unit, -9.8f * unit, 12.8f * unit, -11.2f * unit, 11.6f * unit)
+                            lineTo(-16.3f * unit, 13.8f * unit)
+                            lineTo(-21.1f * unit, 5.5f * unit)
+                            lineTo(-16.6f * unit, 2.0f * unit)
+                            cubicTo(-16.9f * unit, 0.8f * unit, -16.9f * unit, -0.5f * unit, -16.6f * unit, -1.7f * unit)
+                            lineTo(-21.1f * unit, -5.2f * unit)
+                            lineTo(-16.3f * unit, -13.5f * unit)
+                            lineTo(-11.2f * unit, -11.3f * unit)
+                            cubicTo(-9.8f * unit, -12.5f * unit, -8.1f * unit, -13.4f * unit, -6.3f * unit, -14.0f * unit)
+                            close()
+                        }
+                        pathMeasure.setPath(gearPath, false)
+                        val gLen = pathMeasure.length
+                        segmentPath.reset()
+                        if (pathMeasure.getSegment(0f, gDraw * gLen, segmentPath, true)) {
+                            drawPath(
+                                path = segmentPath,
+                                color = onSurfaceCol.copy(alpha = (gDraw * 2.2f).coerceIn(0f, 1f)),
+                                style = Stroke(width = 1.55.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                        }
+                    }
+                    if (gCore > 0.01f) {
+                        drawCircle(
+                            color = onSurfaceCol.copy(alpha = (gCore * 1.6f).coerceIn(0f, 1f)),
+                            radius = 6.4f * unit * gCore,
+                            center = Offset(0f, 0.15f * unit),
+                            style = Stroke(width = 1.55.dp.toPx())
+                        )
+                    }
+                }
+            }
+
+            // 5) 편집 펜 아이콘 (원래 위치 고정, 색·기울기·리프트 연속 보간)
+            val colorMix = ((cP - 0.28f) / 0.45f).coerceIn(0f, 1f)
+            val penTint = lerp(onSurfaceCol, onPrimaryCol, colorMix)
+            val pUnit = 0.48.dp.toPx()
+            withTransform({
+                translate(left = penCx + penX.value.dp.toPx(), top = cy + penY.value.dp.toPx())
+                rotate(degrees = penRot.value, pivot = Offset.Zero)
+                val sc = penScale.value.coerceAtLeast(0.7f)
+                scale(scaleX = sc, scaleY = sc, pivot = Offset.Zero)
+            }) {
+                val penPath = Path().apply {
+                    moveTo(-13.5f * pUnit, 13.5f * pUnit)
+                    lineTo(-10.5f * pUnit, 4.0f * pUnit)
+                    lineTo(7.0f * pUnit, -13.5f * pUnit)
+                    cubicTo(8.9f * pUnit, -15.4f * pUnit, 12.0f * pUnit, -15.4f * pUnit, 13.9f * pUnit, -13.5f * pUnit)
+                    cubicTo(15.8f * pUnit, -11.6f * pUnit, 15.8f * pUnit, -8.5f * pUnit, 13.9f * pUnit, -6.6f * pUnit)
+                    lineTo(-3.6f * pUnit, 10.9f * pUnit)
+                    close()
+                }
+                drawPath(
+                    path = penPath,
+                    color = penTint,
+                    style = Stroke(width = 1.65.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+                drawLine(
+                    color = penTint,
+                    start = Offset(3.0f * pUnit, -9.5f * pUnit),
+                    end = Offset(9.8f * pUnit, -2.7f * pUnit),
+                    strokeWidth = 1.4.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+
+        // 좌측 편집(펜) 터치 영역 (34dp)
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .size(34.dp)
+                .clip(CircleShape)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onToggleEdit
+                )
+        )
+        // 우측 설정(기어) 터치 영역 (34dp, 일반 모드에서만 활성)
+        if (!editMode) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onOpenSettings)
             )
         }
     }
