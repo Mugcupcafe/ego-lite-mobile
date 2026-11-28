@@ -338,7 +338,7 @@ fun ChromeDownloadStatusBanner(
                     )
                 }
 
-                if (showDlProgress && prefs.progressBarStyle == ProgressBarStyle.MATERIAL) {
+                if ((prefs.progressShowInDownload && dlRunning) && prefs.progressBarStyle == ProgressBarStyle.MATERIAL) {
                     LinearProgressIndicator(
                         progress = { dlProg },
                         modifier = Modifier
