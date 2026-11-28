@@ -57,6 +57,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -1155,94 +1156,6 @@ fun ChromeSettingsScreen(
                                                 onReorder = { newOrder ->
                                                     SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = newOrder) }
                                                 }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "MCP 상태 배지",
-                                                subtitle = "주소창에 MCP 노드 허브 연결 상태 아이콘 표시",
-                                                checked = prefs.showMcpBadgeButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showMcpBadgeButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "AI 명령 버튼",
-                                                subtitle = "MCP 연결 시 AI 명령 팝업 아이콘 표시",
-                                                checked = prefs.showAiCommandButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showAiCommandButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "광고 차단 방패",
-                                                subtitle = "현재 사이트 광고 차단 ON/OFF 및 카운터",
-                                                checked = prefs.showAdBlockButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showAdBlockButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "자동 번역",
-                                                subtitle = "원탭 페이지 번역 및 길게 눌러 번역 설정",
-                                                checked = prefs.showTranslateButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showTranslateButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "다크모드 빠른 전환",
-                                                subtitle = "주간 / 야간 테마 원탭 전환",
-                                                checked = prefs.showDarkModeButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showDarkModeButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "Google 프로필 아바타",
-                                                subtitle = "주소창 우측에 구글 프로필 사진 표시 (탭하여 계정 설정)",
-                                                checked = prefs.showProfileAvatarButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showProfileAvatarButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "새 탭 바로 열기 (+)",
-                                                subtitle = "주소창 옆에서 즉시 새 탭 생성",
-                                                checked = prefs.showNewTabToolbarButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showNewTabToolbarButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "현재 페이지 공유",
-                                                subtitle = "현재 웹페이지 링크를 다른 앱으로 바로 공유",
-                                                checked = prefs.showShareButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showShareButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "페이지 내 찾기",
-                                                subtitle = "현재 페이지 본문 텍스트 검색 바 열기",
-                                                checked = prefs.showFindInPageButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showFindInPageButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "데스크톱 / 모바일 사이트 전환",
-                                                subtitle = "PC 화면과 모바일 화면 즉시 전환",
-                                                checked = prefs.showDesktopSiteButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showDesktopSiteButton = c) } }
-                                            )
-                                        }
-                                        item {
-                                            ChromeSwitchItem(
-                                                title = "리더(간단히 보기) 모드",
-                                                subtitle = "기사 본문만 깔끔하게 추출해 읽기",
-                                                checked = prefs.showReaderModeButton,
-                                                onCheckedChange = { c -> SpaceManager.updatePreferences { it.copy(showReaderModeButton = c) } }
                                             )
                                         }
                                         item {
@@ -2582,13 +2495,76 @@ private fun ToolbarCustomPreviewCard(
             }
         }
 
-        // 4열 빠른메뉴 미리보기 컨테이너 (설정에서 바꾸면 실제 빠른메뉴에 즉시 반영)
+        // 실제 사용환경과 동일한 비율·위치 배치: 우측 384.dp 빠른메뉴 + 좌측 빈 공간에 제거한 버튼 보관함
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val sideBySide = maxWidth >= 520.dp
+            val removedTrayContent: @Composable (Modifier) -> Unit = { trayMod ->
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = trayMod.border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(22.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "제거한 버튼 (${qsHiddenKeys.size})",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (qsHiddenKeys.isEmpty()) {
+                            Text(
+                                text = "제거한 버튼이 여기에 표시됩니다.\n탭하면 빠른메뉴로 복원됩니다.",
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        } else {
+                            qsHiddenKeys.forEach { hKey ->
+                                val meta = qsCatalogMap[hKey]
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            updateQsTokens { list ->
+                                                list.removeAll { it == "hide:$hKey" }
+                                                list.add("$hKey:1")
+                                            }
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        EgoIcon(meta?.third ?: Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp), symbolSize = 16.dp)
+                                        Text(meta?.second ?: hKey, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            val qsPreviewWidth = if (sideBySide) 384.dp else maxWidth.coerceAtMost(384.dp)
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                verticalAlignment = Alignment.Top
+            ) {
+                if (sideBySide) {
+                    removedTrayContent(Modifier.weight(1f))
+                }
         Surface(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
             modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+                .width(qsPreviewWidth)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(28.dp))
         ) {
             Column(
                 modifier = Modifier
@@ -2924,48 +2900,12 @@ private fun ToolbarCustomPreviewCard(
             }
         }
 
-        // =========================================================================
-        // ZONE ③ 보관함 (숨겨진 빠른메뉴 버튼 — 탭하면 즉시 빠른메뉴로 복원)
-        // =========================================================================
-        if (qsHiddenKeys.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "보관함 (${qsHiddenKeys.size}개 숨겨짐 — 탭하여 빠른메뉴에 복원)",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    qsHiddenKeys.forEach { hKey ->
-                        val meta = qsCatalogMap[hKey]
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.clickable {
-                                updateQsTokens { list ->
-                                    list.removeAll { it == "hide:$hKey" }
-                                    list.add("$hKey:1")
-                                }
-                            }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                EgoIcon(meta?.third ?: Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp), symbolSize = 14.dp)
-                                Text(meta?.second ?: hKey, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
-                    }
-                }
+            } // end Row (side-by-side removed tray + real-size 384dp Quick Menu)
+            if (!sideBySide) {
+                removedTrayContent(Modifier.fillMaxWidth())
             }
-        }
+            }
+        } // end BoxWithConstraints
     }
 }
 
