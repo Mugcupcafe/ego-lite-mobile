@@ -1532,26 +1532,42 @@ fun HorizontalHarmonyCapsuleSlider(
             }
         }
 
-        // 좌측 확대경 아이콘 (1열 중심 수직축 0dp 정밀 정렬, 숫자/화살표 없음)
+        // 좌측 확대경 아이콘 (1열 중심 수직축 0dp 정밀 정렬) + 우측 퍼센티지 표시
         val iconStartPad = (iconCenterOffsetDp - 11.dp).coerceAtLeast(12.dp)
         val iconTint = when {
             leftIconCovered && isLightTheme -> Color.White
             leftIconCovered && !isLightTheme -> Color(0xFF090D16)
             else -> MaterialTheme.colorScheme.onSurface
         }
+        val rightLabelCovered = activeEnergy > 0.32f && clamped > 0.82f
+        val rightLabelTint = when {
+            rightLabelCovered && isLightTheme -> Color.White
+            rightLabelCovered && !isLightTheme -> Color(0xFF090D16)
+            else -> MaterialTheme.colorScheme.onSurface
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = iconStartPad),
-            contentAlignment = Alignment.CenterStart
+                .padding(start = iconStartPad, end = 18.dp)
         ) {
             EgoIcon(
                 imageVector = icon,
                 contentDescription = "페이지 확대",
                 tint = iconTint,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .size(22.dp),
                 symbolSize = 22.dp
             )
+            if (valueLabel.isNotBlank()) {
+                Text(
+                    text = valueLabel,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = rightLabelTint,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
         }
     }
 }
