@@ -1816,25 +1816,6 @@ fun BrowserScreen() {
                         }
                     }
                 }
-                if (tbInsertPreviewSlot != null && tbInsertPreviewSlot!! >= visCursor) {
-                    ToolbarInsertSlotIndicator()
-                }
-                } // end inner Row of customizable toolbar icons
-                if (isQuickMenuEditMode) {
-                    ToolbarEditDragCaptureOverlay(
-                        tbIconsRootPos = tbIconsRootPos,
-                        qsDropState = qsExternalDropState,
-                        modifier = Modifier.matchParentSize(),
-                        onDraggingChanged = { key, pos, inQs ->
-                            tbDraggingKey = key
-                            tbDragRootPos = pos
-                            tbDragInQsZone = inQs
-                        }
-                    )
-                }
-                } // end Box wrapping customizable toolbar icons
-
-                // 다크모드 우측: 크롬형 모든 탭 보기 버튼 ([N] 사각 카운터)
                 ExtensionToolbarButtons(
                     extensions = installedExtensions,
                     activeIconColor = activeIconColor,
@@ -1851,8 +1832,25 @@ fun BrowserScreen() {
                             }
                         }
                     },
-                    onLongPressExtension = { ext -> managingExt = ext }
+                    onLongPressExtension = { ext -> if (!isQuickMenuEditMode) managingExt = ext }
                 )
+                if (tbInsertPreviewSlot != null && tbInsertPreviewSlot!! >= visCursor) {
+                    ToolbarInsertSlotIndicator()
+                }
+                } // end inner Row of customizable toolbar icons + extensions
+                if (isQuickMenuEditMode) {
+                    ToolbarEditDragCaptureOverlay(
+                        tbIconsRootPos = tbIconsRootPos,
+                        qsDropState = qsExternalDropState,
+                        modifier = Modifier.matchParentSize(),
+                        onDraggingChanged = { key, pos, inQs ->
+                            tbDraggingKey = key
+                            tbDragRootPos = pos
+                            tbDragInQsZone = inQs
+                        }
+                    )
+                }
+                } // end Box wrapping customizable toolbar icons + extensions
                 Box(
                     modifier = Modifier
                         .size(38.dp)
@@ -2418,7 +2416,8 @@ fun BrowserScreen() {
                 tbKey = dragTbKey,
                 rootPos = tbDragRootPos,
                 inQuickMenuZone = tbDragInQsZone,
-                chromeMenuItems = chromeMenuItems
+                chromeMenuItems = chromeMenuItems,
+                rootBoxOffset = Offset(rootBoxLeftPx, rootBoxTopPx)
             )
         }
 
