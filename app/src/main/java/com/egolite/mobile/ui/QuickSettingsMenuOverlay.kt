@@ -10,6 +10,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.FastOutSlowInEasing
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -74,6 +75,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -203,7 +211,7 @@ private fun buildSectionIsolatedBlocks(
         val occupancy = mutableListOf<BooleanArray>()
 
         for (placed in currentSectionTiles) {
-            val sp = if (placed.spec.zoomPercent != null) 4 else placed.span.coerceIn(1, 4)
+            val sp = placed.span.coerceIn(1, 4)
             var foundRow = -1
             var foundCol = -1
             outer@ for (r in occupancy.indices) {
@@ -319,6 +327,7 @@ fun QuickSettingsBrowserMenuOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(top = if (editMode) topPadding else 0.dp)
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() }
@@ -329,7 +338,7 @@ fun QuickSettingsBrowserMenuOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(top = if (editMode) 4.dp else topPadding, end = endPadding, start = 12.dp, bottom = 12.dp),
+            .padding(top = topPadding, end = endPadding, start = 12.dp, bottom = 12.dp),
         contentAlignment = Alignment.TopEnd
     ) {
         AnimatedVisibility(
@@ -352,7 +361,10 @@ fun QuickSettingsBrowserMenuOverlay(
                 tonalElevation = 4.dp,
                 modifier = Modifier
                     .width(384.dp)
-                    .heightIn(max = 760.dp)
+                    .heightIn(max = if (editMode) 1600.dp else 820.dp)
+                    .animateContentSize(
+                        animationSpec = spring(dampingRatio = 0.78f, stiffness = 260f)
+                    )
                     .border(
                         1.dp,
                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
@@ -466,10 +478,15 @@ fun QuickSettingsBrowserMenuOverlay(
                     // 4열 섹션 격리 영역 + 안정적 부모 레벨 영구 드래그 오버레이 (리컴포지션 시에도 드래그 절대 끊기지 않음!)
                     val colWidthPx = with(density) { 84.dp.toPx() }
                     val tileRootBounds = remember { mutableStateMapOf<String, Rect>() }
+                    val prevTileRoots = remember { mutableMapOf<String, Offset>() }
+                    val tileAnimScope = rememberCoroutineScope()
                     var gridRootPos by remember { mutableStateOf(Offset.Zero) }
                     var draggingKey by remember { mutableStateOf<String?>(null) }
+                    var dragGrabOffset by remember { mutableStateOf(Offset.Zero) }
+                    var dragTileSizePx by remember { mutableStateOf(Size.Zero) }
                     var dragFingerLocal by remember { mutableStateOf(Offset.Zero) }
                     var lastSwapMs by remember { mutableStateOf(0L) }
+                    var showCompactZoomSlider by remember { mutableStateOf(false) }
                     val latestEntries by rememberUpdatedState(parsedEntries)
                     val latestHidden by rememberUpdatedState(hiddenKeys)
                     val qsToTbKey = remember {
@@ -499,9 +516,12 @@ fun QuickSettingsBrowserMenuOverlay(
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = { startLocal ->
                                                 val rootPt = gridRootPos + startLocal
-                                                val hitKey = tileRootBounds.entries.firstOrNull { (_, r) -> r.contains(rootPt) }?.key
-                                                if (hitKey != null) {
-                                                    draggingKey = hitKey
+                                                val hit = tileRootBounds.entries.firstOrNull { (_, r) -> r.contains(rootPt) }
+                                                if (hit != null) {
+                                                    draggingKey = hit.key
+                                                    dragTileSizePx = Size(hit.value.width, hit.value.height)
+                                                    val tileTopLeftLocal = Offset(hit.value.left - gridRootPos.x, hit.value.top - gridRootPos.y)
+                                                    dragGrabOffset = startLocal - tileTopLeftLocal
                                                     dragFingerLocal = startLocal
                                                     lastSwapMs = 0L
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -641,28 +661,57 @@ fun QuickSettingsBrowserMenuOverlay(
                                                     val placed = rowSlots[col]
                                                     if (placed != null) {
                                                         val sp = placed.span.coerceIn(1, 4 - col)
-                                                        QsMenuTile(
-                                                            spec = placed.spec,
-                                                            span = sp,
-                                                            editMode = editMode,
-                                                            isHovered = (!editMode && hoveredKey == placed.spec.key) || (editMode && draggingKey == placed.spec.key),
-                                                            colWidthPx = colWidthPx,
-                                                            modifier = Modifier
-                                                                .weight(sp.toFloat())
-                                                                .fillMaxHeight()
-                                                                .onGloballyPositioned { coords ->
-                                                                    if (coords.isAttached) {
-                                                                        val br = coords.boundsInRoot()
-                                                                        onTileBoundsUpdated(placed.spec.key, br)
-                                                                        tileRootBounds[placed.spec.key] = br
+                                                        val isThisLifted = editMode && draggingKey == placed.spec.key
+                                                        key(placed.spec.key) {
+                                                            val flipX = remember { Animatable(0f) }
+                                                            val flipY = remember { Animatable(0f) }
+                                                            QsMenuTile(
+                                                                spec = placed.spec,
+                                                                span = sp,
+                                                                editMode = editMode,
+                                                                isHovered = !editMode && hoveredKey == placed.spec.key,
+                                                                isPlaceholder = isThisLifted,
+                                                                isCompactZoomOpen = showCompactZoomSlider,
+                                                                colWidthPx = colWidthPx,
+                                                                modifier = Modifier
+                                                                    .weight(sp.toFloat())
+                                                                    .fillMaxHeight()
+                                                                    .onGloballyPositioned { coords ->
+                                                                        if (coords.isAttached) {
+                                                                            val br = coords.boundsInRoot()
+                                                                            onTileBoundsUpdated(placed.spec.key, br)
+                                                                            tileRootBounds[placed.spec.key] = br
+                                                                            val curPos = Offset(br.left, br.top)
+                                                                            val oldPos = prevTileRoots[placed.spec.key]
+                                                                            if (oldPos != null && !isThisLifted) {
+                                                                                val dx = oldPos.x - curPos.x
+                                                                                val dy = oldPos.y - curPos.y
+                                                                                if (kotlin.math.abs(dx) > 1.5f || kotlin.math.abs(dy) > 1.5f) {
+                                                                                    tileAnimScope.launch {
+                                                                                        flipX.snapTo(dx)
+                                                                                        flipX.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 230f))
+                                                                                    }
+                                                                                    tileAnimScope.launch {
+                                                                                        flipY.snapTo(dy)
+                                                                                        flipY.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 230f))
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            prevTileRoots[placed.spec.key] = curPos
+                                                                        }
+                                                                    }
+                                                                    .graphicsLayer {
+                                                                        translationX = flipX.value
+                                                                        translationY = flipY.value
+                                                                    },
+                                                                onClick = {
+                                                                    if (placed.spec.zoomPercent != null && sp == 1) {
+                                                                        showCompactZoomSlider = !showCompactZoomSlider
+                                                                    } else if (placed.spec.zoomPercent == null) {
+                                                                        onDismiss()
+                                                                        placed.spec.onClick()
                                                                     }
                                                                 },
-                                                            onClick = {
-                                                                if (placed.spec.zoomPercent == null) {
-                                                                    onDismiss()
-                                                                    placed.spec.onClick()
-                                                                }
-                                                            },
                                                             onSetZoomPercent = onSetZoomPercent,
                                         onResizeSpan = { nextSpan ->
                                                                 val clamped = nextSpan.coerceIn(1, 4)
@@ -683,12 +732,13 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                     commit(mut)
                                                                 }
                                                             },
-                                                            onHide = {
-                                                                val mut = parsedEntries.toMutableList()
-                                                                mut.removeAt(placed.layoutIndex)
-                                                                commit(mut, hiddenKeys + placed.spec.key)
-                                                            }
-                                                        )
+                                                                onHide = {
+                                                                    val mut = parsedEntries.toMutableList()
+                                                                    mut.removeAt(placed.layoutIndex)
+                                                                    commit(mut, hiddenKeys + placed.spec.key)
+                                                                }
+                                                            )
+                                                        }
                                                         col += sp
                                                     } else {
                                                         Spacer(modifier = Modifier.weight(1f).fillMaxHeight())
@@ -741,42 +791,114 @@ fun QuickSettingsBrowserMenuOverlay(
                         }
                     }
 
-                    // 손가락을 따라다니는 플로팅 드래그 고스트 (손을 떼기 전까지 절대 내려가지 않음!)
+                    // 1x1 확대 버튼 탭 시 하단에 부드럽게 펼쳐지는 전용 하모니 확대 조절바!
+                    val zoomSpec = itemByKey["zoom"]
+                    val zoomEntrySpan = (parsedEntries.firstOrNull { it is QsLayoutEntry.Tile && it.key == "zoom" } as? QsLayoutEntry.Tile)?.span ?: 4
+                    if (zoomSpec != null && zoomEntrySpan == 1 && !editMode) {
+                        AnimatedVisibility(
+                            visible = showCompactZoomSlider,
+                            enter = expandVertically(spring(dampingRatio = 0.78f, stiffness = 320f)) + fadeIn(tween(180)),
+                            exit = shrinkVertically(tween(200)) + fadeOut(tween(150)),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(top = 8.dp)
+                                .zIndex(18f)
+                        ) {
+                            val prefsNow by SpaceManager.preferences.collectAsState()
+                            val curZ = (zoomSpec.zoomPercent ?: 100).coerceIn(50, 150)
+                            Surface(
+                                shape = RoundedCornerShape(35.dp),
+                                shadowElevation = 12.dp,
+                                color = MaterialTheme.colorScheme.surfaceContainerLowest
+                            ) {
+                                HorizontalHarmonyCapsuleSlider(
+                                    valueFraction = ((curZ - 50) / 100f).coerceIn(0f, 1f),
+                                    valueLabel = "${curZ}%",
+                                    icon = zoomSpec.icon,
+                                    accentColor = MaterialTheme.colorScheme.primary,
+                                    lightIntensity = prefsNow.progressLightIntensity,
+                                    particleDensity = prefsNow.progressParticleDensity,
+                                    darkUseThemeColor = prefsNow.progressDarkUseThemeColor,
+                                    dayParticleColor = Color(prefsNow.lightModeParticleColorHex),
+                                    interactive = true,
+                                    iconCenterOffsetDp = 42.dp,
+                                    onValueChange = { f ->
+                                        val snapped = ((50f + f.coerceIn(0f, 1f) * 100f) / 5f).roundToInt() * 5
+                                        onSetZoomPercent(snapped.coerceIn(50, 150))
+                                    },
+                                    onDoubleTapReset = { onSetZoomPercent(100) }
+                                )
+                            }
+                        }
+                    }
+
+                    // 원본 버튼 그대로 손가락 아래에 띄우는 진짜 플로팅 타일 (1x1->원형 그대로, 1x2~1x4->긴 형태 그대로, 위로 끌어 툴바 진입 시 38dp 아이콘으로 모프!)
                     val activeDragKey = draggingKey
                     if (editMode && activeDragKey != null) {
                         val dragSpec = itemByKey[activeDragKey]
+                        val dragSpan = (parsedEntries.firstOrNull { it is QsLayoutEntry.Tile && it.key == activeDragKey } as? QsLayoutEntry.Tile)?.span ?: 1
                         val goingToToolbar = activeDragKey != "zoom" && dragFingerLocal.y < with(density) { (-22).dp.toPx() } && activeDragKey in qsToTbKey
                         if (dragSpec != null) {
-                            Surface(
-                                shape = RoundedCornerShape(22.dp),
-                                color = if (goingToToolbar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
-                                shadowElevation = 14.dp,
+                            val origW = with(density) { dragTileSizePx.width.toDp() }.coerceAtLeast(70.dp)
+                            val origH = with(density) { dragTileSizePx.height.toDp() }.coerceAtLeast(70.dp)
+                            val ghostW by animateDpAsState(
+                                targetValue = if (goingToToolbar) 40.dp else origW,
+                                animationSpec = spring(dampingRatio = 0.76f, stiffness = 320f),
+                                label = "dragGhostW"
+                            )
+                            val ghostH by animateDpAsState(
+                                targetValue = if (goingToToolbar) 40.dp else origH,
+                                animationSpec = spring(dampingRatio = 0.76f, stiffness = 320f),
+                                label = "dragGhostH"
+                            )
+                            Box(
                                 modifier = Modifier
                                     .offset {
-                                        IntOffset(
-                                            (dragFingerLocal.x - 42.dp.toPx()).roundToInt(),
-                                            (dragFingerLocal.y - 26.dp.toPx()).roundToInt()
+                                        val ox = if (goingToToolbar) (dragFingerLocal.x - 20.dp.toPx()) else (dragFingerLocal.x - dragGrabOffset.x)
+                                        val oy = if (goingToToolbar) (dragFingerLocal.y - 20.dp.toPx()) else (dragFingerLocal.y - dragGrabOffset.y)
+                                        IntOffset(ox.roundToInt(), oy.roundToInt())
+                                    }
+                                    .width(ghostW)
+                                    .height(ghostH)
+                                    .zIndex(45f)
+                                    .graphicsLayer {
+                                        scaleX = 1.05f
+                                        scaleY = 1.05f
+                                        shadowElevation = 18.dp.toPx()
+                                    }
+                            ) {
+                                if (goingToToolbar) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        EgoIcon(
+                                            imageVector = dragSpec.icon,
+                                            contentDescription = dragSpec.title,
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                            modifier = Modifier.size(20.dp),
+                                            symbolSize = 20.dp
                                         )
                                     }
-                                    .zIndex(40f)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    EgoIcon(
-                                        imageVector = dragSpec.icon,
-                                        contentDescription = null,
-                                        tint = if (goingToToolbar) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.size(20.dp),
-                                        symbolSize = 20.dp
-                                    )
-                                    Text(
-                                        text = if (goingToToolbar) "주소창 툴바로 이동" else dragSpec.title,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (goingToToolbar) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    QsMenuTile(
+                                        spec = dragSpec,
+                                        span = dragSpan,
+                                        editMode = false,
+                                        isHovered = true,
+                                        isPlaceholder = false,
+                                        isCompactZoomOpen = false,
+                                        colWidthPx = colWidthPx,
+                                        modifier = Modifier.fillMaxSize(),
+                                        onClick = {},
+                                        onSetZoomPercent = {},
+                                        onResizeSpan = {},
+                                        onMoveDelta = {},
+                                        onHide = {}
                                     )
                                 }
                             }
@@ -795,6 +917,8 @@ private fun QsMenuTile(
     span: Int,
     editMode: Boolean,
     isHovered: Boolean,
+    isPlaceholder: Boolean = false,
+    isCompactZoomOpen: Boolean = false,
     colWidthPx: Float,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -805,9 +929,10 @@ private fun QsMenuTile(
 ) {
     val prefs by SpaceManager.preferences.collectAsState()
     val haptic = LocalHapticFeedback.current
-    val isZoomBar = spec.zoomPercent != null
-    val isActive = (spec.isToggleCheckbox && spec.checked) || spec.bold
-    val isSingle = span == 1 && !isZoomBar
+    val isZoomTile = spec.zoomPercent != null
+    val isZoomBar = isZoomTile && span >= 2
+    val isActive = (spec.isToggleCheckbox && spec.checked) || spec.bold || (isZoomTile && span == 1 && isCompactZoomOpen)
+    val isSingle = span == 1
     val accent = spec.accentColor ?: MaterialTheme.colorScheme.primary
 
     val latestOnMoveDelta by rememberUpdatedState(onMoveDelta)
@@ -874,6 +999,28 @@ private fun QsMenuTile(
         ).value
     } else 0f
 
+    if (isPlaceholder) {
+        val dashColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+        Box(
+            modifier = modifier
+                .height(70.dp)
+                .clip(tileShape)
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.14f))
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRoundRect(
+                    color = dashColor,
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(35.dp.toPx(), 35.dp.toPx()),
+                    style = Stroke(
+                        width = 1.6.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f)
+                    )
+                )
+            }
+        }
+        return
+    }
+
     if (isZoomBar) {
         // 전폭 70.dp M3 하모니 가로 광감 확대바 (상대 드래그 + 퍼센티지 표시 + 편집모드 롱프레스 무제한 상하 이동)
         val curZoom = (spec.zoomPercent ?: 100).coerceIn(50, 150)
@@ -925,6 +1072,67 @@ private fun QsMenuTile(
                 onDoubleTapReset = { onSetZoomPercent(100) },
                 modifier = Modifier.align(Alignment.Center)
             )
+            if (editMode) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(EgoDangerRed)
+                        .clickable(onClick = onHide),
+                    contentAlignment = Alignment.Center
+                ) {
+                    EgoIcon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "숨기기",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp),
+                        symbolSize = 14.dp
+                    )
+                }
+                var zResizeAccumX by remember { mutableFloatStateOf(0f) }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(30.dp)
+                        .pointerInput("resize_zoom_${spec.key}") {
+                            detectHorizontalDragGestures(
+                                onDragStart = { zResizeAccumX = 0f },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    zResizeAccumX += dragAmount
+                                    val threshold = (colWidthPx * 0.58f).coerceAtLeast(36f)
+                                    val deltaCols = (zResizeAccumX / threshold).roundToInt()
+                                    if (deltaCols != 0) {
+                                        val next = (latestSpan + deltaCols).coerceIn(1, 4)
+                                        if (next != latestSpan) {
+                                            zResizeAccumX = 0f
+                                            latestOnResizeSpan(next)
+                                        }
+                                    }
+                                }
+                            )
+                        },
+                    contentAlignment = Alignment.BottomEnd
+                ) {
+                    Canvas(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .padding(end = 2.dp, bottom = 2.dp)
+                    ) {
+                        val arcSize = size.minDimension * 1.85f
+                        drawArc(
+                            color = Color.White.copy(alpha = 0.78f),
+                            startAngle = 8f,
+                            sweepAngle = 74f,
+                            useCenter = false,
+                            topLeft = Offset(size.width - arcSize, size.height - arcSize),
+                            size = Size(arcSize, arcSize),
+                            style = Stroke(width = 5.5.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                }
+            }
         }
         return
     }
