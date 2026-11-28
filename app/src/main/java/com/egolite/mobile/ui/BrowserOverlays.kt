@@ -768,66 +768,105 @@ fun UndoClosedTabBanner(
                     modifier = Modifier.matchParentSize()
                 )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                @Composable
+                fun UndoBannerContentRow(
+                    iconCol: Color,
+                    titleCol: Color,
+                    subCol: Color,
+                    btnBgCol: Color,
+                    btnFgCol: Color,
+                    closeCol: Color
                 ) {
-                    EgoIcon(
-                        imageVector = Icons.Default.Restore,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
-                        symbolSize = 20.dp
-                    )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "탭을 닫았습니다",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = cur.title,
-                            fontSize = 11.5.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
+                    Row(
                         modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onUndo() }
-                    ) {
-                        Text(
-                            text = "되돌리기",
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .clickable { triggerDustClose() },
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         EgoIcon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "닫기",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp),
-                            symbolSize = 16.dp
+                            imageVector = Icons.Default.Restore,
+                            contentDescription = null,
+                            tint = iconCol,
+                            modifier = Modifier.size(20.dp),
+                            symbolSize = 20.dp
                         )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "탭을 닫았습니다",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = titleCol,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = cur.title,
+                                fontSize = 11.5.sp,
+                                color = subCol,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = btnBgCol,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onUndo() }
+                        ) {
+                            Text(
+                                text = "되돌리기",
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = btnFgCol,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable { triggerDustClose() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            EgoIcon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "닫기",
+                                tint = closeCol,
+                                modifier = Modifier.size(16.dp),
+                                symbolSize = 16.dp
+                            )
+                        }
                     }
+                }
+
+                // 미채움 영역(어두운 배경) 기본 레이어
+                UndoBannerContentRow(
+                    iconCol = MaterialTheme.colorScheme.primary,
+                    titleCol = MaterialTheme.colorScheme.onSurface,
+                    subCol = MaterialTheme.colorScheme.onSurfaceVariant,
+                    btnBgCol = MaterialTheme.colorScheme.primaryContainer,
+                    btnFgCol = MaterialTheme.colorScheme.onPrimaryContainer,
+                    closeCol = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // 하모니 파동이 채워진 영역 전용 테마 조화 고대비(onPrimary) 반전 레이어
+                val invUndoCol = MaterialTheme.colorScheme.onPrimary
+                HarmonyModeBClippedOverlay(
+                    enabled = true,
+                    progress = countdownProg.value.coerceIn(0f, 1f),
+                    isActive = countdownProg.value > 0.005f,
+                    isCountdown = true,
+                    modifier = Modifier.matchParentSize()
+                ) {
+                    UndoBannerContentRow(
+                        iconCol = invUndoCol,
+                        titleCol = invUndoCol,
+                        subCol = invUndoCol.copy(alpha = 0.84f),
+                        btnBgCol = MaterialTheme.colorScheme.primaryContainer,
+                        btnFgCol = MaterialTheme.colorScheme.onPrimaryContainer,
+                        closeCol = invUndoCol.copy(alpha = 0.88f)
+                    )
                 }
             }
         }
