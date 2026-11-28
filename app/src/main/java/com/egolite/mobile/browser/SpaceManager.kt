@@ -9,6 +9,7 @@ import android.os.Message
 import android.webkit.WebView
 import com.egolite.mobile.model.AI_SPACE_COLOR_PRESETS
 import com.egolite.mobile.model.AiSpaceStatus
+import com.egolite.mobile.model.McpActionMotion
 import com.egolite.mobile.model.BookmarkItem
 import com.egolite.mobile.model.BrowserPreferences
 import com.egolite.mobile.model.ThemeMode
@@ -33,6 +34,16 @@ import kotlinx.serialization.json.Json
 import org.json.JSONTokener
 import java.util.concurrent.ConcurrentHashMap
 
+
+data class ClosedTabUndoEntry(
+    val seq: Long,
+    val spaceId: String,
+    val title: String,
+    val url: String,
+    val originalIndex: Int,
+    val isIncognito: Boolean
+)
+
 object SpaceManager {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val jsonCodec = Json { ignoreUnknownKeys = true }
@@ -48,6 +59,13 @@ object SpaceManager {
     private val _recentSearches = MutableStateFlow<List<String>>(emptyList())
     private val _recentlyClosedTabs = MutableStateFlow<List<PersistedTab>>(emptyList())
     val recentlyClosedTabs: StateFlow<List<PersistedTab>> = _recentlyClosedTabs.asStateFlow()
+
+    private val _closedTabUndoBanner = MutableStateFlow<ClosedTabUndoEntry?>(null)
+    val closedTabUndoBanner: StateFlow<ClosedTabUndoEntry?> = _closedTabUndoBanner.asStateFlow()
+
+    private val _completedDoneSpaceIds = MutableStateFlow<List<String>>(emptyList())
+    val completedDoneSpaceIds: StateFlow<List<String>> = _completedDoneSpaceIds.asStateFlow()
+    private var closedTabUndoSeq = 0L
     val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
 
     private val _bookmarks = MutableStateFlow(
@@ -70,7 +88,7 @@ object SpaceManager {
         listOf(
             BrowserSpace(
                 id = "personal",
-                name = "Personal",
+                name = "내 공간",
                 type = SpaceType.PERSONAL,
                 tabs = listOf(initialPersonalTab),
                 activeTabId = initialPersonalTab.id
@@ -296,7 +314,7 @@ object SpaceManager {
     private fun nextGenericAiSpaceNumber(): Int {
         val existingNames = _spaces.value.map { it.name }.toSet()
         var n = 1
-        while ("AI Space $n" in existingNames) n++
+        while ("AI 공간 $n" in existingNames || "AI Space $n" in existingNames) n++
         return n
     }
 
@@ -316,11 +334,11 @@ object SpaceManager {
         val currentAiCount = _spaces.value.count { it.type == SpaceType.AI }
         if (currentAiCount >= _preferences.value.maxAiSpaces) return null
         val nextIndex = nextGenericAiSpaceNumber()
-        val newTab = BrowserTab(title = "AI Space $nextIndex", url = "https://www.google.com")
+        val newTab = BrowserTab(title = "AI 공간 $nextIndex", url = "https://www.google.com")
         val colorHex = AI_SPACE_COLOR_PRESETS[(nextIndex - 1) % AI_SPACE_COLOR_PRESETS.size]
         val newSpace = BrowserSpace(
             id = "ai-$nextIndex-${System.currentTimeMillis() % 1000}",
-            name = "AI Space $nextIndex",
+            name = "AI 공간 $nextIndex",
             type = SpaceType.AI,
             tabs = listOf(newTab),
             activeTabId = newTab.id,
@@ -374,7 +392,7 @@ object SpaceManager {
         val colorHex = AI_SPACE_COLOR_PRESETS[(nextIndex - 1) % AI_SPACE_COLOR_PRESETS.size]
         val newSpace = BrowserSpace(
             id = "ai-$nextIndex-${System.currentTimeMillis() % 1000}",
-            name = "AI Space $nextIndex",
+            name = "AI 공간 $nextIndex",
             type = SpaceType.AI,
             tabs = listOf(firstTab),
             activeTabId = firstTab.id,
@@ -436,6 +454,37 @@ object SpaceManager {
         if (spaceId == "personal") savePersonalTabs()
     }
 
+    fun dismissClosedTabUndoBanner() {
+        _closedTabUndoBanner.value = null
+    }
+
+    fun dismissCompletedDoneBanner() {
+        _completedDoneSpaceIds.value = emptyList()
+    }
+
+    fun reopenUndoClosedTab() {
+        val entry = _closedTabUndoBanner.value ?: return
+        _closedTabUndoBanner.value = null
+        val newId = "tab_${System.currentTimeMillis()}_${(100..999).random()}"
+        val restored = BrowserTab(
+            id = newId,
+            title = entry.title,
+            url = entry.url,
+            isIncognito = entry.isIncognito
+        )
+        _spaces.update { list ->
+            list.map { space ->
+                if (space.id == entry.spaceId) {
+                    val mutable = space.tabs.toMutableList()
+                    val insertAt = entry.originalIndex.coerceIn(0, mutable.size)
+                    mutable.add(insertAt, restored)
+                    space.copy(tabs = mutable, activeTabId = newId)
+                } else space
+            }
+        }
+        if (entry.spaceId == "personal") savePersonalTabs()
+    }
+
     fun switchTabByOffset(spaceId: String, delta: Int) {
         val space = _spaces.value.firstOrNull { it.id == spaceId } ?: return
         if (space.tabs.size <= 1) return
@@ -482,9 +531,21 @@ object SpaceManager {
             navigate(spaceId, "https://www.google.com")
             return
         }
-        val closing = targetSpace.tabs.firstOrNull { it.id == tabId }
-        if (closing != null && !closing.isIncognito && closing.url.startsWith("http")) {
-            _recentlyClosedTabs.update { (listOf(PersistedTab(closing.title, closing.url)) + it).take(15) }
+        val closingIdx = targetSpace.tabs.indexOfFirst { it.id == tabId }
+        val closing = targetSpace.tabs.getOrNull(closingIdx)
+        if (closing != null) {
+            if (!closing.isIncognito && closing.url.startsWith("http")) {
+                _recentlyClosedTabs.update { (listOf(PersistedTab(closing.title, closing.url)) + it).take(15) }
+            }
+            closedTabUndoSeq += 1L
+            _closedTabUndoBanner.value = ClosedTabUndoEntry(
+                seq = closedTabUndoSeq,
+                spaceId = spaceId,
+                title = closing.title.ifBlank { closing.url }.take(36),
+                url = closing.url,
+                originalIndex = closingIdx.coerceAtLeast(0),
+                isIncognito = closing.isIncognito
+            )
         }
         destroyWebView(tabId)
         _spaces.update { list ->
@@ -831,11 +892,29 @@ object SpaceManager {
         saveSearches()
     }
 
-    fun setAiStatus(spaceId: String, status: AiSpaceStatus, summary: String = "") {
+    fun setAiStatus(
+        spaceId: String,
+        status: AiSpaceStatus,
+        summary: String = "",
+        actionMotion: McpActionMotion? = null
+    ) {
         if (status == AiSpaceStatus.WORKING || status == AiSpaceStatus.TAKEOVER_PAUSED || status == AiSpaceStatus.IDLE) {
             aiIdleJobs.remove(spaceId)?.cancel()
         }
-        val genericPattern = Regex("^AI Space \\d+$")
+        val inferredMotion = actionMotion ?: when {
+            summary.startsWith("오류") -> McpActionMotion.ERROR
+            status == AiSpaceStatus.DONE -> McpActionMotion.DONE
+            status == AiSpaceStatus.TAKEOVER_PAUSED -> McpActionMotion.TAKEOVER
+            status == AiSpaceStatus.THINKING -> McpActionMotion.SNAPSHOT
+            status == AiSpaceStatus.WORKING -> McpActionMotion.EXEC_JS
+            else -> McpActionMotion.IDLE
+        }
+        if (status == AiSpaceStatus.DONE) {
+            _completedDoneSpaceIds.update { prev -> (prev.filterNot { it == spaceId } + spaceId).takeLast(5) }
+        } else if (status == AiSpaceStatus.WORKING) {
+            _completedDoneSpaceIds.update { prev -> prev.filterNot { it == spaceId } }
+        }
+        val genericPattern = Regex("^AI (Space|공간) \\d+$")
         _spaces.update { list ->
             list.map { sp ->
                 if (sp.id == spaceId) {
@@ -845,7 +924,12 @@ object SpaceManager {
                     val resolvedName = if (shouldAutoRename) {
                         resolveUniqueAiClientName(_connectedAiClientName.value, sp.id)
                     } else sp.name
-                    sp.copy(name = resolvedName, aiStatus = status, lastActionSummary = summary)
+                    sp.copy(
+                        name = resolvedName,
+                        aiStatus = status,
+                        aiActionMotion = inferredMotion,
+                        lastActionSummary = summary
+                    )
                 } else sp
             }
         }
