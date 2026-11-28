@@ -96,7 +96,7 @@ fun buildBrowserChromeMenuItems(
         )
     )
     add(ChromeMenuItemSpec("새 탭", Icons.Default.AddBox, key = "newtab") { SpaceManager.createTab(activeSpace.id) })
-    add(ChromeMenuItemSpec("AI Space", Icons.Default.SmartToy, key = "aispace", accentColor = EgoEmerald) {
+    add(ChromeMenuItemSpec("AI 공간", Icons.Default.SmartToy, key = "aispace", accentColor = EgoEmerald) {
         SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
     })
     add(ChromeMenuItemSpec("시크릿 창", Icons.Default.VisibilityOff, key = "incognito", dividerAfter = true) {
