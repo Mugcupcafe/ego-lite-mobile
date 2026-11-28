@@ -314,6 +314,7 @@ fun BrowserScreen() {
     val googleAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
     var showAllTabsDialog by remember { mutableStateOf(false) }
     var showChromeMenu by remember { mutableStateOf(false) }
+    var isQuickMenuEditMode by remember { mutableStateOf(false) }
     var showHistoryDialog by remember { mutableStateOf(false) }
     var showFindBar by remember { mutableStateOf(false) }
     var showAdBlockDialog by remember { mutableStateOf(false) }
@@ -1579,7 +1580,105 @@ fun BrowserScreen() {
                                 }
                             )
                         }
-                        .padding(horizontal = 3.dp),
+                        .padding(horizontal = 3.dp)
+                        .then(
+                            if (isQuickMenuEditMode) {
+                                Modifier.pointerInput("real_toolbar_edit_drag") {
+                                    val downThresholdPx = 44.dp.toPx()
+                                    val stepXPx = 36.dp.toPx()
+                                    var activeTbKey: String? = null
+                                    var accumX = 0f
+                                    var accumY = 0f
+                                    val tbToQsMap = mapOf(
+                                        "MCP" to "mcp", "AI" to "aispace", "DARKMODE" to "dark",
+                                        "NEW_TAB" to "newtab", "SHARE" to "share", "FIND" to "find",
+                                        "DESKTOP" to "desktop", "READER" to "reader"
+                                    )
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { startPos ->
+                                            val p = SpaceManager.preferences.value
+                                            val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+                                            val ord = p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }
+                                            val enabled = ord.filter { k ->
+                                                when (k) {
+                                                    "MCP" -> p.showMcpBadgeButton
+                                                    "ADBLOCK" -> p.showAdBlockButton
+                                                    "TRANSLATE" -> p.showTranslateButton
+                                                    "DARKMODE" -> p.showDarkModeButton
+                                                    "NEW_TAB" -> p.showNewTabToolbarButton
+                                                    "SHARE" -> p.showShareButton
+                                                    "FIND" -> p.showFindInPageButton
+                                                    "DESKTOP" -> p.showDesktopSiteButton
+                                                    "READER" -> p.showReaderModeButton
+                                                    "PROFILE" -> p.showProfileAvatarButton
+                                                    else -> false
+                                                }
+                                            }
+                                            if (enabled.isNotEmpty() && size.width > 0) {
+                                                val slotW = size.width.toFloat() / enabled.size.toFloat()
+                                                val idx = (startPos.x / slotW).toInt().coerceIn(0, enabled.lastIndex)
+                                                activeTbKey = enabled[idx]
+                                                accumX = 0f
+                                                accumY = 0f
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            val k = activeTbKey
+                                            activeTbKey = null
+                                            // 아래쪽 빠른메뉴 방향으로 드래그하면 실제 툴바에서 빼고 빠른메뉴로 이동!
+                                            if (k != null && accumY > downThresholdPx) {
+                                                val qsKey = tbToQsMap[k]
+                                                if (qsKey != null) {
+                                                    SpaceManager.updatePreferences { p ->
+                                                        val curQs = p.quickMenuLayout.toMutableList()
+                                                        curQs.removeAll { it == "hide:$qsKey" || it.startsWith("$qsKey:") }
+                                                        curQs.add(1.coerceAtMost(curQs.size), "$qsKey:1")
+                                                        val updated = p.copy(quickMenuLayout = curQs)
+                                                        when (k) {
+                                                            "MCP" -> updated.copy(showMcpBadgeButton = false)
+                                                            "DARKMODE" -> updated.copy(showDarkModeButton = false)
+                                                            "NEW_TAB" -> updated.copy(showNewTabToolbarButton = false)
+                                                            "SHARE" -> updated.copy(showShareButton = false)
+                                                            "FIND" -> updated.copy(showFindInPageButton = false)
+                                                            "DESKTOP" -> updated.copy(showDesktopSiteButton = false)
+                                                            "READER" -> updated.copy(showReaderModeButton = false)
+                                                            else -> updated
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onDragCancel = { activeTbKey = null },
+                                        onDrag = { change, dragAmount ->
+                                            val k = activeTbKey ?: return@detectDragGesturesAfterLongPress
+                                            change.consume()
+                                            accumX += dragAmount.x
+                                            accumY += dragAmount.y
+                                            val dir = when {
+                                                accumX >= stepXPx -> 1
+                                                accumX <= -stepXPx -> -1
+                                                else -> 0
+                                            }
+                                            if (dir != 0) {
+                                                accumX = 0f
+                                                val p = SpaceManager.preferences.value
+                                                val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+                                                val full = (p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
+                                                val fi = full.indexOf(k)
+                                                val ti = (fi + dir).coerceIn(0, full.lastIndex)
+                                                if (fi >= 0 && ti != fi) {
+                                                    full.removeAt(fi)
+                                                    full.add(ti, k)
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = full) }
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
+                            } else Modifier
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
@@ -2435,6 +2534,7 @@ fun BrowserScreen() {
             onSetZoomPercent = { pct ->
                 SpaceManager.updatePreferences { it.copy(textZoom = pct.coerceIn(50, 150)) }
             },
+            onEditModeChanged = { isQuickMenuEditMode = it },
             onDismiss = {
                 showChromeMenu = false
                 hoveredQuickMenuKey = null
