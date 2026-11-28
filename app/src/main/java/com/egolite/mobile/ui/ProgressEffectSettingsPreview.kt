@@ -35,6 +35,14 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -600,6 +608,166 @@ fun ProgressEffectSettingsSection(
                     range = 0.2f..2.2f,
                     onValueChange = { v -> SpaceManager.updatePreferences { it.copy(videoHudParticleDensity = v) } }
                 )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                )
+
+                val ctx = LocalContext.current
+                val lifecycleOwner = LocalLifecycleOwner.current
+                var canWriteSystemSettings by remember {
+                    mutableStateOf(runCatching { Settings.System.canWrite(ctx) }.getOrDefault(false))
+                }
+                androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                    val obs = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            canWriteSystemSettings = runCatching { Settings.System.canWrite(ctx) }.getOrDefault(false)
+                        }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(obs)
+                    onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "영상 밝기 연동 방식",
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    // 1) 시스템 밝기 직접 동기화
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (prefs.videoHudSyncSystemBrightness) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                SpaceManager.updatePreferences { it.copy(videoHudSyncSystemBrightness = true) }
+                            }
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                RadioButton(
+                                    selected = prefs.videoHudSyncSystemBrightness,
+                                    onClick = {
+                                        SpaceManager.updatePreferences { it.copy(videoHudSyncSystemBrightness = true) }
+                                    }
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "시스템 밝기 직접 동기화",
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "영상에서 조절한 밝기가 기기 시스템 밝기 및 상태창 퀵패널에 실시간 반영됩니다. 홈이나 다른 앱으로 이동해도 조절한 밝기가 유지됩니다. (최초 1회 시스템 설정 수정 권한 필요)",
+                                        fontSize = 11.5.sp,
+                                        lineHeight = 16.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (prefs.videoHudSyncSystemBrightness) {
+                                Row(
+                                    modifier = Modifier.padding(start = 40.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (canWriteSystemSettings) {
+                                        Text(
+                                            text = "시스템 설정 수정 권한 허용됨",
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        Surface(
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.clickable {
+                                                runCatching {
+                                                    val intent = Intent(
+                                                        Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                                        Uri.parse("package:${ctx.packageName}")
+                                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                    ctx.startActivity(intent)
+                                                }
+                                            }
+                                        ) {
+                                            Text(
+                                                text = "시스템 설정 수정 권한 허용하기",
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2) 영상 전용 밝기 (종료·퀵패널 시 자동 복원)
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (!prefs.videoHudSyncSystemBrightness) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                SpaceManager.updatePreferences { it.copy(videoHudSyncSystemBrightness = false) }
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            RadioButton(
+                                selected = !prefs.videoHudSyncSystemBrightness,
+                                onClick = {
+                                    SpaceManager.updatePreferences { it.copy(videoHudSyncSystemBrightness = false) }
+                                }
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "영상 전용 밝기 (종료 · 퀵패널 시 자동 복원)",
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "별도 권한 없이 전체화면 영상 안에서만 밝기를 조절합니다. 영상을 닫거나 상태창 퀵패널에서 밝기를 바꾸면 즉시 기기 원래 밝기로 자동 복원됩니다.",
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
