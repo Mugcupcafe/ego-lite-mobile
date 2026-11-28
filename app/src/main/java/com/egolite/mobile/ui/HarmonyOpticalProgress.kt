@@ -1517,18 +1517,19 @@ fun HorizontalHarmonyCapsuleSlider(
                     )
                 }
 
-                // 5) 1.5dp M3 외곽 글래스 림
-                val rimColor = if (isLightTheme) {
-                    accentColor.copy(alpha = (0.34f + 0.36f * e).coerceIn(0f, 0.78f))
-                } else {
-                    if (e > 0.2f) Color.White.copy(alpha = (0.36f + 0.44f * e).coerceIn(0f, 0.82f))
-                    else accentColor.copy(alpha = 0.38f)
+                // 5) 평상시(미터치 e <= 0.02f)에는 일반 버튼처럼 정적 테두리선 제거; 터치/광감 시에만 발광!
+                if (e > 0.02f) {
+                    val rimColor = if (isLightTheme) {
+                        accentColor.copy(alpha = (0.48f * e).coerceIn(0f, 0.78f))
+                    } else {
+                        Color.White.copy(alpha = (0.68f * e).coerceIn(0f, 0.82f))
+                    }
+                    drawRoundRect(
+                        color = rimColor,
+                        cornerRadius = CornerRadius(rPx, rPx),
+                        style = Stroke(width = 1.35.dp.toPx())
+                    )
                 }
-                drawRoundRect(
-                    color = rimColor,
-                    cornerRadius = CornerRadius(rPx, rPx),
-                    style = Stroke(width = 1.5.dp.toPx())
-                )
             }
         }
 
