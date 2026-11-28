@@ -336,6 +336,8 @@ fun BrowserScreen() {
     var globalDustBursts by remember { mutableStateOf<List<DustVanishRequest>>(emptyList()) }
     var vanishingTopTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var collapsingTopTabIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var pendingCloseStack by remember { mutableStateOf<List<PendingClosedTab>>(emptyList()) }
+    val pendingCloseIds = remember(pendingCloseStack) { pendingCloseStack.map { it.tabId }.toSet() }
     var nextDustBurstId by remember { mutableStateOf(1000L) }
     var showOmniboxOverlay by remember { mutableStateOf(false) }
     var showBookmarkManager by remember { mutableStateOf(false) }
@@ -986,7 +988,7 @@ fun BrowserScreen() {
                                             scaleX = tabScale * bulletScaleX.value
                                             scaleY = tabScale * bulletScaleY.value
                                             translationX = neighborNudge.toPx() + animatedDragShiftPx + (bulletOffsetX.value + dominoKickX.value).dp.toPx()
-                                            alpha = when { tab.id in vanishingTopTabIds -> 0f; isBeingDragged -> 0.36f; else -> 1f }
+                                            alpha = when { tab.id in vanishingTopTabIds -> 0f; tab.id in pendingCloseIds -> 0.42f; isBeingDragged -> 0.36f; else -> 1f }
                                         }
                                         .height(34.dp)
                                         .then(
@@ -1247,7 +1249,16 @@ fun BrowserScreen() {
                                                 }
                                             )
                                         }
-                                        .clickable { SpaceManager.selectTab(activeSpace.id, tab.id) }
+                                        .clickable {
+                                            if (tab.id in pendingCloseIds) {
+                                                val rest = pendingCloseStack.filter { it.tabId != tab.id }
+                                                pendingCloseStack = rest
+                                                val top = rest.lastOrNull()
+                                                if (top != null) SpaceManager.showPendingTabUndoBanner(top.spaceId, top.tabId)
+                                                else SpaceManager.dismissClosedTabUndoBanner()
+                                            }
+                                            SpaceManager.selectTab(activeSpace.id, tab.id)
+                                        }
                                         .padding(horizontal = if (isSelected) 14.dp else 11.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1360,34 +1371,29 @@ fun BrowserScreen() {
                                         modifier = Modifier
                                             .size(16.dp)
                                             .clickable {
-                                                if (prefs.cardVanishStyle == CardVanishStyle.OFF || tab.id in vanishingTopTabIds) {
+                                                val liveTabs = activeSpace.tabs.filter { it.id !in pendingCloseIds }
+                                                if (liveTabs.size <= 1 && tab.id !in pendingCloseIds) {
                                                     SpaceManager.closeTab(activeSpace.id, tab.id)
-                                                } else {
-                                                    val tbRect = tabBoundsMap[tab.id]
-                                                    val waitMs = when (prefs.cardVanishStyle) {
-                                                        CardVanishStyle.HARMONY_DUST, CardVanishStyle.HARMONY_GPU_SHADER, CardVanishStyle.HARMONY_7_SAND_WAVE -> (prefs.vanishDurationMs * 0.45f).toLong().coerceIn(260L, 620L)
-                                                        CardVanishStyle.LIGHT_PARTICLES -> 300L
-                                                        CardVanishStyle.SCALE_FADE -> 180L
-                                                        CardVanishStyle.OFF -> 0L
+                                                } else if (tab.id !in pendingCloseIds) {
+                                                    // 1) 살아있는 이전 페이지 탭으로 즉시 이동
+                                                    val curIdx = activeSpace.tabs.indexOfFirst { it.id == tab.id }
+                                                    val prevLive = ((curIdx - 1) downTo 0)
+                                                        .mapNotNull { activeSpace.tabs.getOrNull(it) }
+                                                        .firstOrNull { it.id !in pendingCloseIds && it.id != tab.id }
+                                                        ?: liveTabs.firstOrNull { it.id != tab.id }
+                                                    if (prevLive != null) {
+                                                        SpaceManager.selectTab(activeSpace.id, prevLive.id)
                                                     }
+                                                    // 2) LIFO 스택에 추가 + 최상단 탭 기준 4.5초 되돌리기 카운트다운 재시작!
+                                                    val entry = PendingClosedTab(tab.id, activeSpace.id, tabBg, null)
+                                                    pendingCloseStack = pendingCloseStack + entry
                                                     scope.launch {
-                                                        val capturedBmp = runCatching { tabCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
-                                                        vanishingTopTabIds = vanishingTopTabIds + tab.id
-                                                        emitDustBurst(
-                                                            rootRect = tbRect,
-                                                            accent = tabBg,
-                                                            densityFactor = 0.42f,
-                                                            touchRoot = tbRect?.let { Offset(it.right - 20f, it.center.y) },
-                                                            capturedBitmap = capturedBmp
-                                                        )
-                                                        // 1단계: 40% 침식 구간 동안 자리 유지 -> 2단계: 과감쇠 스프링으로 가로 폭 0dp 수축 후 제거
-                                                        kotlinx.coroutines.delay(waitMs)
-                                                        collapsingTopTabIds = collapsingTopTabIds + tab.id
-                                                        kotlinx.coroutines.delay(240L)
-                                                        SpaceManager.closeTab(activeSpace.id, tab.id)
-                                                        collapsingTopTabIds = collapsingTopTabIds - tab.id
-                                                        vanishingTopTabIds = vanishingTopTabIds - tab.id
+                                                        val bmp = runCatching { tabCaptureLayer.toImageBitmap().asAndroidBitmap() }.getOrNull()
+                                                        if (bmp != null) {
+                                                            pendingCloseStack = pendingCloseStack.map { if (it.tabId == tab.id) it.copy(bmp = bmp) else it }
+                                                        }
                                                     }
+                                                    SpaceManager.showPendingTabUndoBanner(activeSpace.id, tab.id)
                                                 }
                                             },
                                         tint = if (isSelected) tabFg.copy(alpha = 0.78f) else mutedIconColor,
@@ -2508,13 +2514,56 @@ fun BrowserScreen() {
                     translateState = translateState.copy(visible = false)
                 }
             )
+            fun finalizePendingClosedTab() {
+                val batch = pendingCloseStack
+                pendingCloseStack = emptyList()
+                SpaceManager.dismissClosedTabUndoBanner()
+                if (batch.isNotEmpty()) {
+                    if (prefs.cardVanishStyle == CardVanishStyle.OFF) {
+                        batch.forEach { SpaceManager.closeTabSilent(it.spaceId, it.tabId) }
+                    } else {
+                        val ids = batch.map { it.tabId }.toSet()
+                        val waitMs = (prefs.vanishDurationMs * 0.45f).toLong().coerceIn(200L, 520L)
+                        scope.launch {
+                            vanishingTopTabIds = vanishingTopTabIds + ids
+                            batch.forEach { item ->
+                                val tbRect = tabBoundsMap[item.tabId]
+                                emitDustBurst(tbRect, item.accent, 0.42f, tbRect?.let { Offset(it.right - 20f, it.center.y) }, item.bmp)
+                            }
+                            kotlinx.coroutines.delay(waitMs)
+                            collapsingTopTabIds = collapsingTopTabIds + ids
+                            kotlinx.coroutines.delay(240L)
+                            batch.forEach { SpaceManager.closeTabSilent(it.spaceId, it.tabId) }
+                            collapsingTopTabIds = collapsingTopTabIds - ids
+                            vanishingTopTabIds = vanishingTopTabIds - ids
+                        }
+                    }
+                }
+            }
             UndoClosedTabBanner(
                 entry = closedTabUndo,
-                onUndo = { SpaceManager.reopenUndoClosedTab() },
-                onSwipeDismiss = { SpaceManager.dismissClosedTabUndoBanner() },
+                onUndo = {
+                    val top = pendingCloseStack.lastOrNull()
+                    if (top != null) {
+                        val remaining = pendingCloseStack.dropLast(1)
+                        pendingCloseStack = remaining
+                        SpaceManager.selectTab(top.spaceId, top.tabId)
+                        val nextTop = remaining.lastOrNull()
+                        if (nextTop != null) {
+                            SpaceManager.showPendingTabUndoBanner(nextTop.spaceId, nextTop.tabId)
+                        } else {
+                            SpaceManager.dismissClosedTabUndoBanner()
+                        }
+                    } else {
+                        SpaceManager.reopenUndoClosedTab()
+                    }
+                },
+                onSwipeDismiss = {
+                    finalizePendingClosedTab()
+                },
                 onDustDismiss = { snap ->
                     emitDustSnapshot(snap, popupDustColor, 0.68f)
-                    SpaceManager.dismissClosedTabUndoBanner()
+                    finalizePendingClosedTab()
                 }
             )
         }
@@ -3157,3 +3206,10 @@ private fun ToolbarDarkModeButton(
         }
     }
 }
+
+private data class PendingClosedTab(
+    val tabId: String,
+    val spaceId: String,
+    val accent: Color,
+    val bmp: android.graphics.Bitmap?
+)
