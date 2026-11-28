@@ -62,9 +62,6 @@ object SpaceManager {
 
     private val _closedTabUndoBanner = MutableStateFlow<ClosedTabUndoEntry?>(null)
     val closedTabUndoBanner: StateFlow<ClosedTabUndoEntry?> = _closedTabUndoBanner.asStateFlow()
-
-    private val _completedDoneSpaceIds = MutableStateFlow<List<String>>(emptyList())
-    val completedDoneSpaceIds: StateFlow<List<String>> = _completedDoneSpaceIds.asStateFlow()
     private var closedTabUndoSeq = 0L
     val recentSearches: StateFlow<List<String>> = _recentSearches.asStateFlow()
 
@@ -454,12 +451,15 @@ object SpaceManager {
         if (spaceId == "personal") savePersonalTabs()
     }
 
-    fun dismissClosedTabUndoBanner() {
-        _closedTabUndoBanner.value = null
-    }
+    private val _completedDoneSpaceIds = MutableStateFlow<List<String>>(emptyList())
+    val completedDoneSpaceIds: StateFlow<List<String>> = _completedDoneSpaceIds.asStateFlow()
 
     fun dismissCompletedDoneBanner() {
         _completedDoneSpaceIds.value = emptyList()
+    }
+
+        fun dismissClosedTabUndoBanner() {
+        _closedTabUndoBanner.value = null
     }
 
     fun reopenUndoClosedTab() {
