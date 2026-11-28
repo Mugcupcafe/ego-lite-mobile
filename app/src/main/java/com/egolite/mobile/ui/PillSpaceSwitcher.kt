@@ -45,11 +45,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.egolite.mobile.model.AI_SPACE_COLOR_PRESETS
 import com.egolite.mobile.model.AiSpaceStatus
+import com.egolite.mobile.model.McpActionMotion
 import com.egolite.mobile.model.BrowserSpace
 import com.egolite.mobile.model.SpaceType
 import kotlinx.coroutines.delay
@@ -175,8 +178,7 @@ private fun buildMorphedBuddyPath(
  * Adjacent Row 1 page tabs use this fixed width so they never shift left when buddies huddle.
  */
 fun buddySlotWidthDp(spaces: List<BrowserSpace>): Dp {
-    val aiCount = spaces.count { it.type == SpaceType.AI }
-    val visibleCount = if (aiCount == 0) 1 else aiCount.coerceAtMost(5)
+    val visibleCount = spaces.size.coerceIn(1, 5)
     return (visibleCount * 34 + (visibleCount - 1) * 3 + 8).dp
 }
 
@@ -192,6 +194,7 @@ fun M3ExpressiveBuddyAvatar(
     morphProgress: Float = 0f,
     isSquinting: Boolean = false,
     aiStatus: AiSpaceStatus = AiSpaceStatus.IDLE,
+    actionMotion: McpActionMotion = McpActionMotion.IDLE,
     size: Dp = 34.dp,
     blinkSeed: Int = 0,
     modifier: Modifier = Modifier
@@ -203,7 +206,26 @@ fun M3ExpressiveBuddyAvatar(
     // Natural random blink when idle/done and not squinting
     var blinkScaleY by remember { mutableFloatStateOf(1f) }
     LaunchedEffect(blinkSeed, isSquinting, isWorking) {
-        if (isSquinting) {
+        if (smoothErrorEyes > 0.45f) {
+            val exSep = r * 0.28f
+            val sz = r * 0.16f
+            val sw = (r * 0.11f).coerceAtLeast(1.8f)
+            listOf(-1f, 1f).forEach { s ->
+                val ex = cx + s * exSep + eyeGlanceX
+                val ey = cy + smoothEyeY
+                drawLine(eyeInk, Offset(ex - sz, ey - sz), Offset(ex + sz, ey + sz), strokeWidth = sw, cap = StrokeCap.Round)
+                drawLine(eyeInk, Offset(ex + sz, ey - sz), Offset(ex - sz, ey + sz), strokeWidth = sw, cap = StrokeCap.Round)
+            }
+        } else if (smoothHappyEyes > 0.45f) {
+            val exSep = r * 0.28f
+            val sz = r * 0.17f
+            val sw = (r * 0.11f).coerceAtLeast(1.8f)
+            listOf(-1f, 1f).forEach { s ->
+                val ex = cx + s * exSep + eyeGlanceX
+                val ey = cy + smoothEyeY
+                drawArc(eyeInk, startAngle = 205f, sweepAngle = 130f, useCenter = false, topLeft = Offset(ex - sz, ey - sz * 0.5f), size = Size(sz * 2f, sz * 2f), style = Stroke(width = sw, cap = StrokeCap.Round))
+            }
+        } else if (effectiveSquinting) {
             blinkScaleY = 1f
             return@LaunchedEffect
         }
@@ -236,15 +258,139 @@ fun M3ExpressiveBuddyAvatar(
         0.5f
     }
 
-    val tiltDeg = if (isThinking && !isSquinting) (statusPhase - 0.5f) * 14f else 0f
-    val eyeGlanceX = if (isThinking && !isSquinting) (statusPhase - 0.5f) * 3.4f else 0f
-    val workHopDp = if (isWorking && !isSquinting) -(sin(statusPhase * PI).toFloat() * 2.6f) else 0f
-    val glowPulse = if (isWorking) 0.24f + 0.20f * statusPhase else 0f
+    val resolvedMotion = when {
+        actionMotion != McpActionMotion.IDLE -> actionMotion
+        aiStatus == AiSpaceStatus.DONE -> McpActionMotion.DONE
+        aiStatus == AiSpaceStatus.TAKEOVER_PAUSED -> McpActionMotion.TAKEOVER
+        aiStatus == AiSpaceStatus.THINKING -> McpActionMotion.SNAPSHOT
+        aiStatus == AiSpaceStatus.WORKING -> McpActionMotion.EXEC_JS
+        else -> McpActionMotion.IDLE
+    }
+    val motionActive = resolvedMotion != McpActionMotion.IDLE
+
+    // 저전력 연속 스프링 모핑: IDLE 시 프레임 루프 0fps 정지, 활성 명령 시에만 64-정점 셰이프·눈빛 연속 보간
+    var motionClock by remember { mutableFloatStateOf(0f) }
+    var smoothRot by remember { mutableFloatStateOf(0f) }
+    var smoothHop by remember { mutableFloatStateOf(0f) }
+    var smoothEyeX by remember { mutableFloatStateOf(0f) }
+    var smoothEyeY by remember { mutableFloatStateOf(0f) }
+    var smoothSx by remember { mutableFloatStateOf(1f) }
+    var smoothSy by remember { mutableFloatStateOf(1f) }
+    var smoothErrorEyes by remember { mutableFloatStateOf(0f) }
+    var smoothHappyEyes by remember { mutableFloatStateOf(0f) }
+    var smoothShutter by remember { mutableFloatStateOf(0f) }
+    val latestMotion by rememberUpdatedState(resolvedMotion)
+
+    LaunchedEffect(motionActive) {
+        var lastNs = 0L
+        while (latestMotion != McpActionMotion.IDLE ||
+            abs(smoothRot) > 0.15f || abs(smoothHop) > 0.08f ||
+            abs(smoothSx - 1f) > 0.005f || abs(smoothSy - 1f) > 0.005f ||
+            smoothErrorEyes > 0.02f || smoothHappyEyes > 0.02f || smoothShutter > 0.02f
+        ) {
+            withFrameNanos { ns ->
+                val dt = if (lastNs == 0L) 0.016f else ((ns - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.033f)
+                lastNs = ns
+                motionClock += dt
+                val now = motionClock
+                var tRot = 0f; var tHop = 0f; var tEx = 0f; var tEy = 0f
+                var tSx = 1f; var tSy = 1f; var tErr = 0f; var tHap = 0f; var tShut = 0f
+                when (latestMotion) {
+                    McpActionMotion.CMD_RECV -> {
+                        val h = abs(sin(now * 6.0f))
+                        tHop = -h * 3.2f; tSx = 0.94f + (1f - h) * 0.12f; tSy = 1.06f + h * 0.08f; tEy = -1.2f
+                    }
+                    McpActionMotion.NAVIGATE -> {
+                        tRot = 10f + sin(now * 5.2f) * 3f; tSx = 1.08f; tSy = 0.93f; tEx = 2.6f
+                    }
+                    McpActionMotion.READ_MD -> {
+                        val cyc = (now * 1.15f) % 1f
+                        val scan = if (cyc < 0.82f) (cyc / 0.82f) * 2f - 1f else 1f - ((cyc - 0.82f) / 0.18f) * 2f
+                        tEx = scan * 3.0f; tEy = 0.8f; tRot = scan * 3.5f
+                    }
+                    McpActionMotion.SNAPSHOT -> {
+                        tRot = sin(now * 3.2f) * 11f; tEx = sin(now * 3.2f + 0.4f) * 2.8f
+                    }
+                    McpActionMotion.FILL -> {
+                        val tap = abs(sin(now * 8.5f)).pow(2.2f)
+                        tHop = tap * 1.8f; tSx = 1f + tap * 0.10f; tSy = 1f - tap * 0.09f; tEx = 1.2f; tEy = 1.1f
+                    }
+                    McpActionMotion.CLICK -> {
+                        val c = (now * 1.45f) % 1f
+                        val press = if (c < 0.22f) sin((c / 0.22f) * PI.toFloat()) else 0f
+                        val pop = if (c in 0.22f..0.55f) sin(((c - 0.22f) / 0.33f) * PI.toFloat()) else 0f
+                        tHop = press * 2.2f - pop * 2.6f; tSx = 1f + press * 0.18f - pop * 0.08f; tSy = 1f - press * 0.16f + pop * 0.12f
+                    }
+                    McpActionMotion.SCROLL -> {
+                        val s = sin(now * 3.1f)
+                        tHop = s * 2.2f; tEy = s * 2.2f; tRot = s * 3f
+                    }
+                    McpActionMotion.EXEC_JS, McpActionMotion.RESEARCH -> {
+                        tRot = sin(now * 3.2f) * 8f; tSx = 1f + sin(now * 5.2f) * 0.06f; tSy = 1f - sin(now * 5.2f) * 0.06f
+                        tHop = -abs(sin(now * 5.2f)) * 1.8f
+                        if (latestMotion == McpActionMotion.RESEARCH) { tEx = cos(now * 3.4f) * 2.6f; tEy = sin(now * 3.4f) * 1.2f }
+                    }
+                    McpActionMotion.SCREENSHOT -> {
+                        val cyc = (now * 0.85f) % 1f
+                        val snap = if (cyc in 0.42f..0.62f) sin(((cyc - 0.42f) / 0.20f) * PI.toFloat()) else 0f
+                        tSx = 1f + snap * 0.12f; tSy = 1f - snap * 0.10f; tShut = snap
+                    }
+                    McpActionMotion.DONE -> {
+                        val h = abs(sin(now * 4.6f))
+                        tHop = -h * 2.8f; tHap = 1f
+                    }
+                    McpActionMotion.TAKEOVER -> {
+                        tSx = 0.91f; tSy = 0.91f; tEx = 0.9f
+                    }
+                    McpActionMotion.ERROR -> {
+                        // 색상 변경 없이 도리도리 + X X 눈으로만 오류 표현!
+                        tRot = sin(now * 11.5f) * 7.5f; tErr = 1f
+                    }
+                    McpActionMotion.IDLE -> Unit
+                }
+                val k = (dt * 10f).coerceAtMost(1f)
+                smoothRot += (tRot - smoothRot) * k
+                smoothHop += (tHop - smoothHop) * k
+                smoothEyeX += (tEx - smoothEyeX) * k
+                smoothEyeY += (tEy - smoothEyeY) * k
+                smoothSx += (tSx - smoothSx) * k
+                smoothSy += (tSy - smoothSy) * k
+                smoothErrorEyes += (tErr - smoothErrorEyes) * k
+                smoothHappyEyes += (tHap - smoothHappyEyes) * k
+                smoothShutter += (tShut - smoothShutter) * (dt * 14f).coerceAtMost(1f)
+            }
+        }
+    }
+
+    val motionTargetShape = when (resolvedMotion) {
+        McpActionMotion.NAVIGATE, McpActionMotion.SCROLL -> M3BuddyShape.PEBBLE
+        McpActionMotion.READ_MD, McpActionMotion.SCREENSHOT -> M3BuddyShape.SQUIRCLE
+        McpActionMotion.FILL, McpActionMotion.CMD_RECV -> M3BuddyShape.PILLOW
+        McpActionMotion.CLICK, McpActionMotion.TAKEOVER -> M3BuddyShape.CIRCLE
+        McpActionMotion.EXEC_JS, McpActionMotion.RESEARCH -> M3BuddyShape.SCALLOP
+        McpActionMotion.ERROR -> M3BuddyShape.DIAMOND
+        else -> targetShape
+    }
+    val motionShapeBlend by animateFloatAsState(
+        targetValue = if (motionActive) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.74f, stiffness = 260f),
+        label = "mcpShapeBlend"
+    )
+    val effectiveTargetShape = if (motionShapeBlend > 0.01f) motionTargetShape else targetShape
+    val effectiveMorphProgress = maxOf(morphProgress, motionShapeBlend)
+    val effectiveSquinting = isSquinting || smoothShutter > 0.45f
+
+    val tiltDeg = if (!isSquinting) smoothRot else 0f
+    val eyeGlanceX = if (!isSquinting) smoothEyeX else 0f
+    val workHopDp = if (!isSquinting) smoothHop else 0f
+    val glowPulse = if (isWorking || motionActive) 0.24f + 0.18f * statusPhase else 0f
 
     Canvas(
         modifier = modifier
             .size(size)
             .graphicsLayer {
+                scaleX = smoothSx
+                scaleY = smoothSy
                 rotationZ = tiltDeg
                 translationY = workHopDp.dp.toPx()
             }
@@ -330,6 +476,7 @@ fun PillSpaceCapsule(
     spaceCount: Int,
     canAddAiSpace: Boolean,
     isExpanded: Boolean,
+    isMonitorExpanded: Boolean = false,
     onSetExpanded: (Boolean) -> Unit,
     onToggleAiMonitor: () -> Unit,
     onHoverIndexChanged: (Int) -> Unit,
@@ -339,10 +486,12 @@ fun PillSpaceCapsule(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
-    val aiSpaces = remember(spaces) { spaces.filter { it.type == SpaceType.AI }.take(5) }
-    val personalSpace = remember(spaces) { spaces.firstOrNull { it.type == SpaceType.PERSONAL } ?: activeSpace }
-    val displaySpaces = remember(aiSpaces, personalSpace) {
-        if (aiSpaces.isEmpty()) listOf(personalSpace) else aiSpaces
+    val orderedCollapsed = remember(spaces, activeSpace) {
+        val rest = spaces.filter { it.id != activeSpace.id }
+        (listOf(activeSpace) + rest).take(5)
+    }
+    val displaySpaces = remember(orderedCollapsed, activeSpace, isMonitorExpanded) {
+        if (isMonitorExpanded) listOf(activeSpace) else orderedCollapsed
     }
     val buddyCount = displaySpaces.size
     val slotWidthDp = remember(buddyCount) { (buddyCount * 34 + (buddyCount - 1) * 3 + 8).dp }
@@ -386,6 +535,7 @@ fun PillSpaceCapsule(
     val latestSlotWidthPx by rememberUpdatedState(slotWidthPx)
     val latestBuddyCount by rememberUpdatedState(buddyCount)
     val latestSetExpanded by rememberUpdatedState(onSetExpanded)
+    val latestMonitorExpanded by rememberUpdatedState(isMonitorExpanded)
     val latestToggleMonitor by rememberUpdatedState(onToggleAiMonitor)
     val latestHoverChanged by rememberUpdatedState(onHoverIndexChanged)
     val latestCommit by rememberUpdatedState(onCommitIndex)
@@ -403,6 +553,8 @@ fun PillSpaceCapsule(
 
                     val longPressJob = scope.launch {
                         delay(260L)
+                        // 펼침 상태에서는 좌측 상단 캐릭터 롱프레스 공간 전환 잠금
+                        if (latestMonitorExpanded) return@launch
                         longPressed = true
                         isHuddled = true
                         latestSetExpanded(true)
@@ -637,7 +789,7 @@ fun ExpandedSpaceSlideBar(
                         ) {
                             EgoIcon(
                                 imageVector = Icons.Default.Add,
-                                contentDescription = "AI Space 추가",
+                                contentDescription = "AI 공간 추가",
                                 modifier = Modifier.size(18.dp),
                                 tint = MaterialTheme.colorScheme.onSurface,
                                 symbolSize = 18.dp
