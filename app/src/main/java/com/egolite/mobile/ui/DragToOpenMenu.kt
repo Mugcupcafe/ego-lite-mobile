@@ -65,6 +65,8 @@ data class ChromeMenuItemSpec(
     val onZoomOut: (() -> Unit)? = null,
     val onZoomReset: (() -> Unit)? = null,
     val onZoomIn: (() -> Unit)? = null,
+    val subtitle: String? = null,
+    val onLongClick: (() -> Unit)? = null,
     val onClick: () -> Unit = {}
 )
 
