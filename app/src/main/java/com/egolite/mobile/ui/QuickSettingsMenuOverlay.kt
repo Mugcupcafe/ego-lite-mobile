@@ -78,6 +78,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.runtime.rememberCoroutineScope
@@ -96,6 +97,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawBehind
@@ -125,6 +127,40 @@ import kotlin.math.roundToInt
 
 private const val QS_DIV_PREFIX = "div:"
 private const val QS_HIDE_PREFIX = "hide:"
+private val QS_KEEP_OPEN_KEYS = setOf("dark", "bmbar", "translate", "clear", "copy_link", "desktop")
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawUnifiedOpticalRim(
+    shape: androidx.compose.ui.graphics.Shape,
+    lightCenter: Offset,
+    glowColor: Color,
+    lightAlpha: Float,
+    intensity: Float
+) {
+    if (lightAlpha <= 0.01f) return
+    val strokePx = (1.35.dp.toPx() * (0.85f + 0.25f * intensity)).coerceAtMost(2.2.dp.toPx())
+    val half = strokePx * 0.5f
+    val radiusPx = 210.dp.toPx()
+    val rimPeak = (0.90f * intensity * lightAlpha).coerceAtMost(0.96f)
+    val rimMid = (0.55f * intensity * lightAlpha).coerceAtMost(0.86f)
+    val rimTail = (0.14f * intensity * lightAlpha).coerceAtMost(0.35f)
+    inset(half, half, half, half) {
+        val outline = shape.createOutline(size, layoutDirection, this)
+        drawOutline(
+            outline = outline,
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = rimPeak),
+                    glowColor.copy(alpha = rimMid),
+                    glowColor.copy(alpha = rimTail),
+                    Color.Transparent
+                ),
+                center = Offset(lightCenter.x - half, lightCenter.y - half),
+                radius = radiusPx
+            ),
+            style = Stroke(width = strokePx)
+        )
+    }
+}
 
 private sealed class QsLayoutEntry {
     data class Tile(val key: String, val span: Int) : QsLayoutEntry()
@@ -284,6 +320,52 @@ private fun buildSectionIsolatedBlocks(
  * - 편집 모드: 우측 하단 모서리 핸들 드래그로 1×1 / 1×2 / 1×3 리사이즈, + 구분선 삽입/이동/삭제, 숨기기/복원
  * - Drag-to-Open / Drag-to-Select: 각 타일의 live root bounds를 보고해 손가락 위치 타일 즉시 실행
  */
+
+class QsExternalDropState {
+    var targetInsertIndex: Int? by mutableStateOf(null)
+}
+
+private val BUILTIN_QS_TO_TB = mapOf(
+    "newtab" to "NEW_TAB",
+    "dark" to "DARKMODE",
+    "share" to "SHARE",
+    "find" to "FIND",
+    "desktop" to "DESKTOP",
+    "reader" to "READER",
+    "mcp" to "MCP",
+    "translate" to "TRANSLATE"
+)
+
+private val BUILTIN_TB_TO_QS = BUILTIN_QS_TO_TB.entries.associate { (k, v) -> v to k }
+
+fun resolveTbKeyFromQs(qsKey: String): String = BUILTIN_QS_TO_TB[qsKey] ?: "QS:$qsKey"
+
+fun resolveQsKeyFromTb(tbKey: String): String? = when {
+    tbKey.startsWith("QS:") -> tbKey.removePrefix("QS:")
+    else -> BUILTIN_TB_TO_QS[tbKey]
+}
+
+fun getVisibleToolbarKeys(p: com.egolite.mobile.model.BrowserPreferences): List<String> {
+    val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+    val ord = p.toolbarButtonOrder.filter { it in base || it.startsWith("QS:") } + base.filter { it !in p.toolbarButtonOrder }
+    return ord.filter { k ->
+        when {
+            k.startsWith("QS:") -> true
+            k == "MCP" -> p.showMcpBadgeButton
+            k == "ADBLOCK" -> p.showAdBlockButton
+            k == "TRANSLATE" -> p.showTranslateButton
+            k == "DARKMODE" -> p.showDarkModeButton
+            k == "NEW_TAB" -> p.showNewTabToolbarButton
+            k == "SHARE" -> p.showShareButton
+            k == "FIND" -> p.showFindInPageButton
+            k == "DESKTOP" -> p.showDesktopSiteButton
+            k == "READER" -> p.showReaderModeButton
+            k == "PROFILE" -> p.showProfileAvatarButton
+            else -> false
+        }
+    }
+}
+
 @Composable
 fun QuickSettingsBrowserMenuOverlay(
     visible: Boolean,
@@ -297,6 +379,11 @@ fun QuickSettingsBrowserMenuOverlay(
     onSaveLayout: (List<String>) -> Unit,
     onSetZoomPercent: (Int) -> Unit = {},
     onEditModeChanged: (Boolean) -> Unit = {},
+    toolbarIconsRect: Rect = Rect.Zero,
+    externalDragKey: String? = null,
+    externalDragRootPos: Offset? = null,
+    externalDropState: QsExternalDropState? = null,
+    onToolbarInsertSlotChanged: (Int?) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -349,24 +436,101 @@ fun QuickSettingsBrowserMenuOverlay(
         )
     }
 
+    // 루트 레벨 드래그 고스트 상태 (Surface 클리핑 바깥에서 렌더링해 상단 툴바 위로 자연스럽게 올라감!)
+    var overlayRootPos by remember { mutableStateOf(Offset.Zero) }
+    var draggingKey by remember { mutableStateOf<String?>(null) }
+    var dragGrabOffset by remember { mutableStateOf(Offset.Zero) }
+    var dragTileSizePx by remember { mutableStateOf(Size.Zero) }
+    var dragFingerRoot by remember { mutableStateOf(Offset.Zero) }
+    val latestToolbarRect by rememberUpdatedState(toolbarIconsRect)
+    val latestOnTbSlotChanged by rememberUpdatedState(onToolbarInsertSlotChanged)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { coords ->
+                if (coords.isAttached) overlayRootPos = coords.positionInRoot()
+            }
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .padding(top = topPadding, end = endPadding, start = 12.dp, bottom = 12.dp),
         contentAlignment = Alignment.TopEnd
     ) {
-        val morphProgress by animateFloatAsState(
-            targetValue = if (visible) 1f else 0f,
-            animationSpec = if (visible) {
-                spring(dampingRatio = 0.78f, stiffness = 285f)
+        // 확정 프리셋: Liquid Drop (stagger=40ms · bounce=26% · dur=379ms · int=150%)
+        // 각 행 독립 Animatable 스프링으로 열림/닫힘 중간 반전 100% 연속 보간 + 닫힘 시 최하단부터 접힘!
+        val totalContentRows = remember(blocks) {
+            blocks.sumOf { b ->
+                when (b) {
+                    is QsRenderBlock.Section -> b.rows.size
+                    is QsRenderBlock.DividerRow -> 1
+                }
+            }.coerceIn(1, 14)
+        }
+        val panelAnim = remember { Animatable(0f) }
+        val rowAnims = remember { List(16) { Animatable(0f) } }
+        val latestTotalRows by rememberUpdatedState(totalContentRows)
+
+        LaunchedEffect(visible) {
+            val maxRowIdx = latestTotalRows.coerceIn(1, 15) // row 0 = header, 1..maxRowIdx = content rows
+            val staggerMs = 40f
+            if (visible) {
+                // 열림: 패널 즉시 시작 + 최상단(Row 0) -> 최하단 순차 출발 (bounce=26% -> damping 0.633, stiffness 455)
+                launch {
+                    panelAnim.animateTo(1f, spring(dampingRatio = 0.76f, stiffness = 455f))
+                }
+                for (r in 0..maxRowIdx) {
+                    val anim = rowAnims[r]
+                    val remain = (1f - anim.value).coerceIn(0f, 1f)
+                    val waitMs = if (remain > 0.05f) (r * staggerMs * (0.35f + 0.65f * remain)).toLong() else 0L
+                    launch {
+                        if (waitMs > 0L) delay(waitMs)
+                        anim.animateTo(1f, spring(dampingRatio = 0.633f, stiffness = 455f))
+                    }
+                }
             } else {
-                tween(durationMillis = 210, easing = FastOutSlowInEasing)
-            },
-            label = "qsMenuDynamicMorph"
-        )
-        if (visible || morphProgress > 0.015f) {
-            val p = morphProgress.coerceIn(0f, 1f)
-            val morphCornerDp = (30f + (1f - p) * 72f).dp
+                // 닫힘: 최하단 행부터 순차 접힘 -> 최상단 -> 패널 수납 (damping 0.94, stiffness 437)
+                val activeMax = (0..maxRowIdx).lastOrNull { rowAnims[it].value > 0.04f } ?: 0
+                for (r in 0..maxRowIdx) {
+                    val anim = rowAnims[r]
+                    if (anim.value <= 0.02f) {
+                        launch { anim.snapTo(0f) }
+                    } else {
+                        val distFromBottom = (activeMax - r).coerceAtLeast(0)
+                        val waitMs = (distFromBottom * staggerMs * 0.78f).toLong()
+                        launch {
+                            if (waitMs > 0L) delay(waitMs)
+                            anim.animateTo(0f, spring(dampingRatio = 0.94f, stiffness = 437f))
+                        }
+                    }
+                }
+                val panelWaitMs = (activeMax * staggerMs * 0.62f).toLong()
+                launch {
+                    if (panelWaitMs > 0L) delay(panelWaitMs)
+                    panelAnim.animateTo(0f, spring(dampingRatio = 0.94f, stiffness = 437f))
+                }
+            }
+        }
+
+        val anyRowVisible = rowAnims.any { it.value > 0.015f }
+        if (visible || panelAnim.value > 0.015f || anyRowVisible) {
+            val pv = panelAnim.value.coerceIn(0f, 1.06f)
+            val p = pv.coerceIn(0f, 1f)
+            val maxRowIdxNow = totalContentRows.coerceIn(1, 15)
+            // 최하단 행이 접히면 패널 하단도 함께 위로 따라 올라가도록 동적 높이 비율 계산
+            var lowestVisibleRatio = 0f
+            for (r in 0..maxRowIdxNow) {
+                val rv = rowAnims[r].value.coerceIn(0f, 1f)
+                if (rv > 0.01f) {
+                    val rb = (r + 1f) / (maxRowIdxNow + 1f)
+                    val prevRb = r.toFloat() / (maxRowIdxNow + 1f)
+                    val reached = prevRb + (rb - prevRb) * rv
+                    if (reached > lowestVisibleRatio) lowestVisibleRatio = reached
+                }
+            }
+            val dynamicScaleY = (0.24f + 0.76f * maxOf(pv * 0.35f, lowestVisibleRatio)).coerceIn(0.24f, 1.04f)
+            val morphCornerDp = (30f + (1f - p) * 44f).dp
             val morphShape = RoundedCornerShape(morphCornerDp)
             val panelGlowColor = MaterialTheme.colorScheme.primary
             val rimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
@@ -391,10 +555,10 @@ fun QuickSettingsBrowserMenuOverlay(
                         if (coords.isAttached) panelRootPos = coords.positionInRoot()
                     }
                     .graphicsLayer {
-                        scaleX = 0.22f + 0.78f * p
-                        scaleY = 0.14f + 0.86f * p
-                        alpha = (p * 1.55f).coerceIn(0f, 1f)
-                        translationY = (1f - p) * (-16.dp.toPx())
+                        scaleX = 0.28f + 0.72f * pv
+                        scaleY = dynamicScaleY
+                        alpha = (p * 2.2f).coerceIn(0f, 1f)
+                        translationY = (1f - p) * (-14.dp.toPx())
                         transformOrigin = TransformOrigin(0.94f, 0f)
                     }
                     .animateContentSize(
@@ -449,22 +613,12 @@ fun QuickSettingsBrowserMenuOverlay(
                                     ),
                                     style = Fill
                                 )
-                                val rimPeak = (0.94f * rimIntensity * panelGlowAlpha).coerceAtMost(1.0f)
-                                val rimMid = (0.58f * rimIntensity * panelGlowAlpha).coerceAtMost(0.95f)
-                                val strokePx = (1.8.dp.toPx() * (0.85f + 0.30f * rimIntensity)).coerceAtMost(3.2.dp.toPx())
-                                drawOutline(
-                                    outline = outline,
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = rimPeak),
-                                            panelGlowColor.copy(alpha = rimMid),
-                                            panelGlowColor.copy(alpha = (0.18f * rimIntensity * panelGlowAlpha).coerceAtMost(0.5f)),
-                                            Color.Transparent
-                                        ),
-                                        center = panelTouchLocal,
-                                        radius = radiusPx * 0.92f
-                                    ),
-                                    style = Stroke(width = strokePx)
+                                drawUnifiedOpticalRim(
+                                    shape = morphShape,
+                                    lightCenter = panelTouchLocal,
+                                    glowColor = panelGlowColor,
+                                    lightAlpha = panelGlowAlpha,
+                                    intensity = rimIntensity
                                 )
                             }
                         }
@@ -481,9 +635,20 @@ fun QuickSettingsBrowserMenuOverlay(
                         animationSpec = tween(180),
                         label = "qsEditBtnTint"
                     )
+                    val headerV = rowAnims[0].value
+                    val headerInv = 1f - headerV
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .zIndex(30f)
+                            .graphicsLayer {
+                                translationX = (14f * headerInv * 1.50f).dp.toPx()
+                                translationY = (-24f * headerInv * 1.50f).dp.toPx()
+                                scaleX = (0.48f + 0.52f * headerV).coerceAtLeast(0.20f)
+                                scaleY = (0.20f + 0.80f * headerV).coerceAtLeast(0.14f)
+                                alpha = (headerV.coerceIn(0f, 1f) * 1.75f).coerceIn(0f, 1f)
+                                transformOrigin = TransformOrigin(0.5f, 0f)
+                            }
                             .padding(horizontal = 4.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -589,25 +754,38 @@ fun QuickSettingsBrowserMenuOverlay(
                     val prevTileRoots = remember { mutableMapOf<String, Offset>() }
                     val tileAnimScope = rememberCoroutineScope()
                     var gridRootPos by remember { mutableStateOf(Offset.Zero) }
-                    var draggingKey by remember { mutableStateOf<String?>(null) }
-                    var dragGrabOffset by remember { mutableStateOf(Offset.Zero) }
-                    var dragTileSizePx by remember { mutableStateOf(Size.Zero) }
                     var dragFingerLocal by remember { mutableStateOf(Offset.Zero) }
                     var lastSwapMs by remember { mutableStateOf(0L) }
                     var showCompactZoomSlider by remember { mutableStateOf(false) }
                     val latestEntries by rememberUpdatedState(parsedEntries)
                     val latestHidden by rememberUpdatedState(hiddenKeys)
-                    val qsToTbKey = remember {
-                        mapOf(
-                            "newtab" to "NEW_TAB", "aispace" to "AI", "dark" to "DARKMODE",
-                            "share" to "SHARE", "find" to "FIND", "desktop" to "DESKTOP",
-                            "reader" to "READER", "mcp" to "MCP", "translate" to "TRANSLATE"
-                        )
+
+                    // 상단 툴바에서 끌어내리는 중인 아이콘의 실시간 드롭 타겟 계산 (타일 위 / 공백 슬롯 위)
+                    val extHoverTileKey = remember(editMode, externalDragKey, externalDragRootPos, tileRootBounds.size) {
+                        if (!editMode || externalDragKey == null || externalDragRootPos == null) null
+                        else tileRootBounds.entries.firstOrNull { (_, r) -> r.contains(externalDragRootPos) }?.key
                     }
+                    val extHoverEmptyEntry = remember(editMode, externalDragKey, externalDragRootPos, extHoverTileKey, emptySlotBounds.size) {
+                        if (!editMode || externalDragKey == null || externalDragRootPos == null || extHoverTileKey != null) null
+                        else emptySlotBounds.entries.firstOrNull { (_, pair) -> pair.first.contains(externalDragRootPos) }
+                    }
+                    LaunchedEffect(extHoverTileKey, extHoverEmptyEntry?.key, parsedEntries) {
+                        externalDropState?.targetInsertIndex = when {
+                            extHoverTileKey != null -> {
+                                val idx = parsedEntries.indexOfFirst { it is QsLayoutEntry.Tile && it.key == extHoverTileKey }
+                                if (idx >= 0) idx else null
+                            }
+                            extHoverEmptyEntry != null -> extHoverEmptyEntry.value.second
+                            else -> null
+                        }
+                    }
+
                     LaunchedEffect(editMode, visible) {
                         if (!editMode || !visible) {
                             draggingKey = null
                             hoveredEmptySlotId = null
+                            latestOnTbSlotChanged(null)
+                            externalDropState?.targetInsertIndex = null
                             tileRootBounds.clear()
                             emptySlotBounds.clear()
                             prevTileRoots.clear()
@@ -624,6 +802,14 @@ fun QuickSettingsBrowserMenuOverlay(
                                 if (editMode) {
                                     Modifier.pointerInput("qs_persistent_grid_drag") {
                                         val topEscapePx = (-22).dp.toPx()
+                                        val tbHitPadPx = 18.dp.toPx()
+                                        fun calcTbSlot(rootPt: Offset): Int {
+                                            val tbRect = latestToolbarRect
+                                            val vis = getVisibleToolbarKeys(SpaceManager.preferences.value)
+                                            if (vis.isEmpty() || tbRect.width <= 1f) return 0
+                                            val slotW = tbRect.width / vis.size.toFloat()
+                                            return ((rootPt.x - tbRect.left) / slotW).roundToInt().coerceIn(0, vis.size)
+                                        }
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = { startLocal ->
                                                 val rootPt = gridRootPos + startLocal
@@ -634,48 +820,83 @@ fun QuickSettingsBrowserMenuOverlay(
                                                     val tileTopLeftLocal = Offset(hit.value.left - gridRootPos.x, hit.value.top - gridRootPos.y)
                                                     dragGrabOffset = startLocal - tileTopLeftLocal
                                                     dragFingerLocal = startLocal
+                                                    dragFingerRoot = rootPt
                                                     lastSwapMs = 0L
+                                                    latestOnTbSlotChanged(null)
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                 }
                                             },
                                             onDragEnd = {
                                                 val dk = draggingKey
                                                 val fy = dragFingerLocal.y
+                                                val endRoot = dragFingerRoot
+                                                val tbRect = latestToolbarRect
+                                                val inToolbarZone = dk != null && dk != "zoom" && (
+                                                    (tbRect.width > 1f && endRoot.y <= tbRect.bottom + tbHitPadPx) ||
+                                                        fy < topEscapePx
+                                                    )
                                                 draggingKey = null
                                                 hoveredEmptySlotId = null
-                                                // 상단 주소창 툴바 쪽으로 위로 끌어올리면 실제 툴바로 즉시 이동!
-                                                if (dk != null && dk != "zoom" && fy < topEscapePx) {
-                                                    val tbKey = qsToTbKey[dk]
-                                                    if (tbKey != null) {
-                                                        SpaceManager.updatePreferences { p ->
-                                                            when (tbKey) {
-                                                                "MCP" -> p.copy(showMcpBadgeButton = true)
-                                                                "AI" -> p.copy(showAiCommandButton = true)
-                                                                "DARKMODE" -> p.copy(showDarkModeButton = true)
-                                                                "NEW_TAB" -> p.copy(showNewTabToolbarButton = true)
-                                                                "SHARE" -> p.copy(showShareButton = true)
-                                                                "FIND" -> p.copy(showFindInPageButton = true)
-                                                                "DESKTOP" -> p.copy(showDesktopSiteButton = true)
-                                                                "READER" -> p.copy(showReaderModeButton = true)
-                                                                "TRANSLATE" -> p.copy(showTranslateButton = true)
-                                                                else -> p
-                                                            }
+                                                latestOnTbSlotChanged(null)
+                                                // 상단 주소창 툴바 위로 끌어올리면 확대바 제외 모든 버튼을 원하는 X 슬롯 위치에 정확히 삽입!
+                                                if (inToolbarZone && dk != null) {
+                                                    val tbKey = resolveTbKeyFromQs(dk)
+                                                    val desiredVisSlot = calcTbSlot(endRoot)
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    SpaceManager.updatePreferences { p ->
+                                                        val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+                                                        val visBefore = getVisibleToolbarKeys(p)
+                                                        val full = (p.toolbarButtonOrder.filter { it in base || it.startsWith("QS:") } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
+                                                        full.remove(tbKey)
+                                                        val anchorKey = visBefore.getOrNull(desiredVisSlot)
+                                                        val insertPos = if (anchorKey != null) {
+                                                            full.indexOf(anchorKey).takeIf { it >= 0 } ?: full.size
+                                                        } else {
+                                                            full.size
                                                         }
-                                                        val mut = latestEntries.toMutableList()
-                                                        mut.removeAll { it is QsLayoutEntry.Tile && it.key == dk }
-                                                        commit(mut, latestHidden + dk)
+                                                        full.add(insertPos.coerceIn(0, full.size), tbKey)
+                                                        val updated = p.copy(toolbarButtonOrder = full)
+                                                        when (tbKey) {
+                                                            "MCP" -> updated.copy(showMcpBadgeButton = true)
+                                                            "AI" -> updated.copy(showAiCommandButton = true)
+                                                            "DARKMODE" -> updated.copy(showDarkModeButton = true)
+                                                            "NEW_TAB" -> updated.copy(showNewTabToolbarButton = true)
+                                                            "SHARE" -> updated.copy(showShareButton = true)
+                                                            "FIND" -> updated.copy(showFindInPageButton = true)
+                                                            "DESKTOP" -> updated.copy(showDesktopSiteButton = true)
+                                                            "READER" -> updated.copy(showReaderModeButton = true)
+                                                            "TRANSLATE" -> updated.copy(showTranslateButton = true)
+                                                            else -> updated
+                                                        }
                                                     }
+                                                    val mut = latestEntries.toMutableList()
+                                                    mut.removeAll { it is QsLayoutEntry.Tile && it.key == dk }
+                                                    commit(mut, latestHidden + dk)
                                                 }
                                             },
                                             onDragCancel = {
                                                 draggingKey = null
                                                 hoveredEmptySlotId = null
+                                                latestOnTbSlotChanged(null)
                                             },
                                             onDrag = { change, dragAmount ->
                                                 val dk = draggingKey ?: return@detectDragGesturesAfterLongPress
                                                 change.consume()
                                                 dragFingerLocal += dragAmount
                                                 val rootPt = gridRootPos + dragFingerLocal
+                                                dragFingerRoot = rootPt
+                                                val tbRect = latestToolbarRect
+                                                val inTbZone = dk != "zoom" && (
+                                                    (tbRect.width > 1f && rootPt.y <= tbRect.bottom + tbHitPadPx) ||
+                                                        dragFingerLocal.y < topEscapePx
+                                                    )
+                                                if (inTbZone) {
+                                                    hoveredEmptySlotId = null
+                                                    latestOnTbSlotChanged(calcTbSlot(rootPt))
+                                                    return@detectDragGesturesAfterLongPress
+                                                } else {
+                                                    latestOnTbSlotChanged(null)
+                                                }
                                                 val overKey = tileRootBounds.entries.firstOrNull { (k, r) -> k != dk && r.contains(rootPt) }?.key
                                                 val overEmpty = if (overKey == null) {
                                                     emptySlotBounds.entries.firstOrNull { (_, pair) -> pair.first.contains(rootPt) }
@@ -724,14 +945,23 @@ fun QuickSettingsBrowserMenuOverlay(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        val gridInnerWidthPx = with(density) { 360.dp.toPx() }
-                        val rowPitchPx = with(density) { 78.dp.toPx() }
-                        val menuAnchorLocalX = gridInnerWidthPx - with(density) { 18.dp.toPx() }
-                        val menuAnchorLocalY = with(density) { (-42).dp.toPx() }
-                        var visualRowCursor = 0
+                        var visualRowCursor = 1
                         blocks.forEach { block ->
                             when (block) {
                                 is QsRenderBlock.DividerRow -> {
+                                    val divRowIdx = (visualRowCursor++).coerceIn(1, 15)
+                                    val divV = rowAnims[divRowIdx].value
+                                    val divInv = 1f - divV
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .zIndex((28 - divRowIdx).coerceAtLeast(1).toFloat())
+                                            .graphicsLayer {
+                                                translationY = ((-34f - divRowIdx * 8f) * divInv * 1.50f).dp.toPx()
+                                                scaleX = (0.55f + 0.45f * divV).coerceAtLeast(0.2f)
+                                                alpha = (divV.coerceIn(0f, 1f) * 1.75f).coerceIn(0f, 1f)
+                                            }
+                                    ) {
                                     if (editMode) {
                                         Row(
                                             modifier = Modifier
@@ -782,6 +1012,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
                                         )
                                     }
+                                    }
                                 }
 
                                 is QsRenderBlock.Section -> {
@@ -790,12 +1021,23 @@ fun QuickSettingsBrowserMenuOverlay(
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         block.rows.forEachIndexed { rowIdx, rowSlots ->
-                                            val curVisualRow = visualRowCursor++
-                                            // 모든 행 높이 70.dp 동일 고정!
+                                            val curVisualRow = (visualRowCursor++).coerceIn(1, 15)
+                                            val rowV = rowAnims[curVisualRow].value
+                                            val rowInv = 1f - rowV
+                                            // 확정 리퀴드 드롭 행별 모핑 (int=150%) + 내림차순 zIndex로 윗행이 항상 앞 레이어!
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .height(70.dp),
+                                                    .height(70.dp)
+                                                    .zIndex((28 - curVisualRow).coerceAtLeast(1).toFloat())
+                                                    .graphicsLayer {
+                                                        translationX = ((14f + curVisualRow * 2.5f) * rowInv * 1.50f).dp.toPx()
+                                                        translationY = ((-48f - curVisualRow * 10f) * rowInv * 1.50f).dp.toPx()
+                                                        scaleX = (0.48f + 0.52f * rowV).coerceAtLeast(0.20f)
+                                                        scaleY = (0.20f + 0.80f * rowV).coerceAtLeast(0.14f)
+                                                        alpha = (rowV.coerceIn(0f, 1f) * 1.75f).coerceIn(0f, 1f)
+                                                        transformOrigin = TransformOrigin(0.5f, 0f)
+                                                    },
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                                             ) {
                                                 var col = 0
@@ -804,19 +1046,6 @@ fun QuickSettingsBrowserMenuOverlay(
                                                     if (placed != null) {
                                                         val sp = placed.span.coerceIn(1, 4 - col)
                                                         val isThisLifted = editMode && draggingKey == placed.spec.key
-                                                        // 우상단 ⋮ 메뉴 버튼 기준 방사형 날아오기(열림) · 빨려들어가기(닫힘) 모프 벡터 계산
-                                                        val tileCenterX = (col + sp * 0.5f) * (gridInnerWidthPx / 4f)
-                                                        val tileCenterY = curVisualRow * rowPitchPx + with(density) { 35.dp.toPx() }
-                                                        val toAnchorX = menuAnchorLocalX - tileCenterX
-                                                        val toAnchorY = menuAnchorLocalY - tileCenterY
-                                                        val rawStagger = (curVisualRow * 0.042f + (3 - (col + sp - 1)).coerceAtLeast(0) * 0.024f).coerceIn(0f, 0.28f)
-                                                        val tileMorphP = if (visible) {
-                                                            ((p - rawStagger) / (1f - rawStagger)).coerceIn(0f, 1f)
-                                                        } else {
-                                                            val revStagger = (0.28f - rawStagger) * 0.55f
-                                                            ((p - revStagger) / (1f - revStagger)).coerceIn(0f, 1f)
-                                                        }
-                                                        val flyFactor = 1f - tileMorphP
                                                         key(placed.spec.key) {
                                                             val flipX = remember { Animatable(0f) }
                                                             val flipY = remember { Animatable(0f) }
@@ -824,7 +1053,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                 spec = placed.spec,
                                                                 span = sp,
                                                                 editMode = editMode,
-                                                                isHovered = !editMode && hoveredKey == placed.spec.key,
+                                                                isHovered = (!editMode && hoveredKey == placed.spec.key) || (editMode && extHoverTileKey == placed.spec.key),
                                                                 isPlaceholder = isThisLifted,
                                                                 isCompactZoomOpen = showCompactZoomSlider,
                                                                 colWidthPx = colWidthPx,
@@ -861,17 +1090,16 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                         }
                                                                     }
                                                                     .graphicsLayer {
-                                                                        translationX = flipX.value + toAnchorX * flyFactor * 0.72f
-                                                                        translationY = flipY.value + toAnchorY * flyFactor * 0.72f
-                                                                        scaleX = 0.42f + 0.58f * tileMorphP
-                                                                        scaleY = 0.42f + 0.58f * tileMorphP
-                                                                        alpha = (tileMorphP * 1.45f).coerceIn(0f, 1f)
+                                                                        translationX = flipX.value
+                                                                        translationY = flipY.value
                                                                     },
                                                                 onClick = {
                                                                     if (placed.spec.zoomPercent != null && sp == 1) {
                                                                         showCompactZoomSlider = !showCompactZoomSlider
                                                                     } else if (placed.spec.zoomPercent == null) {
-                                                                        onDismiss()
+                                                                        if (placed.spec.key !in QS_KEEP_OPEN_KEYS && !placed.spec.isToggleCheckbox) {
+                                                                            onDismiss()
+                                                                        }
                                                                         placed.spec.onClick()
                                                                     }
                                                                 },
@@ -909,7 +1137,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                                             QsEmptyPlaceholderSlot(
                                                                 slotId = slotId,
                                                                 targetEndIdx = block.endLayoutIndex,
-                                                                isHovered = hoveredEmptySlotId == slotId,
+                                                                isHovered = hoveredEmptySlotId == slotId || extHoverEmptyEntry?.key == slotId,
                                                                 emptySlotBounds = emptySlotBounds,
                                                                 modifier = Modifier.weight(1f).fillMaxHeight()
                                                             )
@@ -934,7 +1162,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                                     QsEmptyPlaceholderSlot(
                                                         slotId = slotId,
                                                         targetEndIdx = block.endLayoutIndex,
-                                                        isHovered = hoveredEmptySlotId == slotId,
+                                                        isHovered = hoveredEmptySlotId == slotId || extHoverEmptyEntry?.key == slotId,
                                                         emptySlotBounds = emptySlotBounds,
                                                         modifier = Modifier.weight(1f).fillMaxHeight()
                                                     )
@@ -959,7 +1187,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                     QsEmptyPlaceholderSlot(
                                         slotId = slotId,
                                         targetEndIdx = parsedEntries.size,
-                                        isHovered = hoveredEmptySlotId == slotId,
+                                        isHovered = hoveredEmptySlotId == slotId || extHoverEmptyEntry?.key == slotId,
                                         emptySlotBounds = emptySlotBounds,
                                         modifier = Modifier.weight(1f).fillMaxHeight()
                                     )
@@ -1048,81 +1276,89 @@ fun QuickSettingsBrowserMenuOverlay(
                         }
                     }
 
-                    // 원본 버튼 그대로 손가락 아래에 띄우는 진짜 플로팅 타일 (1x1->원형 그대로, 1x2~1x4->긴 형태 그대로, 위로 끌어 툴바 진입 시 38dp 아이콘으로 모프!)
-                    val activeDragKey = draggingKey
-                    if (editMode && activeDragKey != null) {
-                        val dragSpec = itemByKey[activeDragKey]
-                        val dragSpan = (parsedEntries.firstOrNull { it is QsLayoutEntry.Tile && it.key == activeDragKey } as? QsLayoutEntry.Tile)?.span ?: 1
-                        val goingToToolbar = activeDragKey != "zoom" && dragFingerLocal.y < with(density) { (-22).dp.toPx() } && activeDragKey in qsToTbKey
-                        if (dragSpec != null) {
-                            val origW = with(density) { dragTileSizePx.width.toDp() }.coerceAtLeast(70.dp)
-                            val origH = with(density) { dragTileSizePx.height.toDp() }.coerceAtLeast(70.dp)
-                            val ghostW by animateDpAsState(
-                                targetValue = if (goingToToolbar) 40.dp else origW,
-                                animationSpec = spring(dampingRatio = 0.76f, stiffness = 320f),
-                                label = "dragGhostW"
-                            )
-                            val ghostH by animateDpAsState(
-                                targetValue = if (goingToToolbar) 40.dp else origH,
-                                animationSpec = spring(dampingRatio = 0.76f, stiffness = 320f),
-                                label = "dragGhostH"
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .offset {
-                                        val ox = if (goingToToolbar) (dragFingerLocal.x - 20.dp.toPx()) else (dragFingerLocal.x - dragGrabOffset.x)
-                                        val oy = if (goingToToolbar) (dragFingerLocal.y - 20.dp.toPx()) else (dragFingerLocal.y - dragGrabOffset.y)
-                                        IntOffset(ox.roundToInt(), oy.roundToInt())
-                                    }
-                                    .width(ghostW)
-                                    .height(ghostH)
-                                    .zIndex(45f)
-                                    .graphicsLayer {
-                                        scaleX = 1.05f
-                                        scaleY = 1.05f
-                                        shadowElevation = 18.dp.toPx()
-                                    }
-                            ) {
-                                if (goingToToolbar) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primary),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        EgoIcon(
-                                            imageVector = dragSpec.icon,
-                                            contentDescription = dragSpec.title,
-                                            tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier.size(20.dp),
-                                            symbolSize = 20.dp
-                                        )
-                                    }
-                                } else {
-                                    QsMenuTile(
-                                        spec = dragSpec,
-                                        span = dragSpan,
-                                        editMode = false,
-                                        isHovered = true,
-                                        isPlaceholder = false,
-                                        isCompactZoomOpen = false,
-                                        colWidthPx = colWidthPx,
-                                        modifier = Modifier.fillMaxSize(),
-                                        onClick = {},
-                                        onSetZoomPercent = {},
-                                        onResizeSpan = {},
-                                        onMoveDelta = {},
-                                        onHide = {}
-                                    )
-                                }
-                            }
-                        }
-                    }
                     }
                 }
             }
         }
+    }
+
+    // 루트 오버레이 최상단 플로팅 고스트 (Surface 바깥이므로 빠른메뉴 상단을 넘어 주소창 툴바 위까지 절대 잘리지 않음!)
+    val activeDragKey = draggingKey
+    if (editMode && activeDragKey != null) {
+        val dragSpec = itemByKey[activeDragKey]
+        val dragSpan = (parsedEntries.firstOrNull { it is QsLayoutEntry.Tile && it.key == activeDragKey } as? QsLayoutEntry.Tile)?.span ?: 1
+        val tbRectNow = toolbarIconsRect
+        val goingToToolbar = activeDragKey != "zoom" && (
+            (tbRectNow.width > 1f && dragFingerRoot.y <= tbRectNow.bottom + with(density) { 18.dp.toPx() }) ||
+                dragFingerRoot.y < overlayRootPos.y + with(density) { topPadding.toPx() }
+            )
+        if (dragSpec != null) {
+            val origW = with(density) { dragTileSizePx.width.toDp() }.coerceAtLeast(70.dp)
+            val origH = with(density) { dragTileSizePx.height.toDp() }.coerceAtLeast(70.dp)
+            val ghostW by animateDpAsState(
+                targetValue = if (goingToToolbar) 40.dp else origW,
+                animationSpec = spring(dampingRatio = 0.76f, stiffness = 320f),
+                label = "dragGhostW"
+            )
+            val ghostH by animateDpAsState(
+                targetValue = if (goingToToolbar) 40.dp else origH,
+                animationSpec = spring(dampingRatio = 0.76f, stiffness = 320f),
+                label = "dragGhostH"
+            )
+            val colWidthPxRoot = with(density) { 84.dp.toPx() }
+            val fingerInOverlay = dragFingerRoot - overlayRootPos
+            Box(
+                modifier = Modifier
+                    .offset {
+                        val ox = if (goingToToolbar) (fingerInOverlay.x - 20.dp.toPx()) else (fingerInOverlay.x - dragGrabOffset.x)
+                        val oy = if (goingToToolbar) (fingerInOverlay.y - 20.dp.toPx()) else (fingerInOverlay.y - dragGrabOffset.y)
+                        IntOffset(ox.roundToInt(), oy.roundToInt())
+                    }
+                    .width(ghostW)
+                    .height(ghostH)
+                    .zIndex(98f)
+                    .graphicsLayer {
+                        scaleX = 1.05f
+                        scaleY = 1.05f
+                        shadowElevation = 18.dp.toPx()
+                    }
+            ) {
+                if (goingToToolbar) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        EgoIcon(
+                            imageVector = dragSpec.icon,
+                            contentDescription = dragSpec.title,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(20.dp),
+                            symbolSize = 20.dp
+                        )
+                    }
+                } else {
+                    QsMenuTile(
+                        spec = dragSpec,
+                        span = dragSpan,
+                        editMode = false,
+                        isHovered = true,
+                        isPlaceholder = false,
+                        isCompactZoomOpen = false,
+                        colWidthPx = colWidthPxRoot,
+                        modifier = Modifier.fillMaxSize(),
+                        onClick = {},
+                        onSetZoomPercent = {},
+                        onResizeSpan = {},
+                        onMoveDelta = {},
+                        onHide = {}
+                    )
+                }
+            }
+        }
+    }
     }
 }
 
@@ -1220,7 +1456,7 @@ private fun QsMenuTile(
     val containerBg by animateColorAsState(
         targetValue = when {
             isHovered -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
-            isSingle && isActive -> MaterialTheme.colorScheme.primaryContainer
+            isActive -> MaterialTheme.colorScheme.primary
             else -> MaterialTheme.colorScheme.surfaceContainerHigh
         },
         animationSpec = tween(220),
@@ -1228,7 +1464,7 @@ private fun QsMenuTile(
     )
     val iconFg by animateColorAsState(
         targetValue = when {
-            isSingle && isActive -> MaterialTheme.colorScheme.onPrimaryContainer
+            isActive -> MaterialTheme.colorScheme.onPrimary
             else -> spec.accentColor ?: MaterialTheme.colorScheme.onSurface
         },
         animationSpec = tween(200),
@@ -1357,26 +1593,12 @@ private fun QsMenuTile(
                     .drawWithContent {
                         drawContent()
                         if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled) {
-                            val localLight = panelLightRootPos - zoomRootPos
-                            val lightRadius = 210.dp.toPx()
-                            val rimShape = RoundedCornerShape(35.dp)
-                            val outline = rimShape.createOutline(size, layoutDirection, this)
-                            val rimPeak = (0.95f * zoomRimIntensity * panelLightAlpha).coerceAtMost(1.0f)
-                            val rimMid = (0.58f * zoomRimIntensity * panelLightAlpha).coerceAtMost(0.92f)
-                            val strokePx = (1.65.dp.toPx() * (0.85f + 0.28f * zoomRimIntensity)).coerceAtMost(2.8.dp.toPx())
-                            drawOutline(
-                                outline = outline,
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = rimPeak),
-                                        zoomRimColor.copy(alpha = rimMid),
-                                        zoomRimColor.copy(alpha = (0.14f * zoomRimIntensity * panelLightAlpha).coerceAtMost(0.4f)),
-                                        Color.Transparent
-                                    ),
-                                    center = localLight,
-                                    radius = lightRadius
-                                ),
-                                style = Stroke(width = strokePx)
+                            drawUnifiedOpticalRim(
+                                shape = RoundedCornerShape(35.dp),
+                                lightCenter = panelLightRootPos - zoomRootPos,
+                                glowColor = zoomRimColor,
+                                lightAlpha = panelLightAlpha,
+                                intensity = zoomRimIntensity
                             )
                         }
                     }
@@ -1476,7 +1698,8 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
     ) {
         var tileBodyRootPos by remember { mutableStateOf(Offset.Zero) }
         val tileRimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
-        // 내부 클립된 타일 본체: 패널 광감 번짐보다 앞 레이어에 위치하며, 테두리만 실시간 광감 위치에 반응!
+        val tileRimColor = MaterialTheme.colorScheme.primary
+        // 내부 클립된 타일 본체: 패널 광감 번짐보다 앞 레이어에 위치하며, 패널·확대바와 100% 동일한 두께/밝기 테두리로 반응!
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1488,25 +1711,12 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
                 .drawWithContent {
                     drawContent()
                     if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled) {
-                        val localLight = panelLightRootPos - tileBodyRootPos
-                        val lightRadius = 195.dp.toPx()
-                        val outline = tileShape.createOutline(size, layoutDirection, this)
-                        val rimPeak = (0.95f * tileRimIntensity * panelLightAlpha).coerceAtMost(1.0f)
-                        val rimMid = (0.58f * tileRimIntensity * panelLightAlpha).coerceAtMost(0.92f)
-                        val strokePx = (1.65.dp.toPx() * (0.85f + 0.28f * tileRimIntensity)).coerceAtMost(2.8.dp.toPx())
-                        drawOutline(
-                            outline = outline,
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = rimPeak),
-                                    accent.copy(alpha = rimMid),
-                                    accent.copy(alpha = (0.14f * tileRimIntensity * panelLightAlpha).coerceAtMost(0.4f)),
-                                    Color.Transparent
-                                ),
-                                center = localLight,
-                                radius = lightRadius
-                            ),
-                            style = Stroke(width = strokePx)
+                        drawUnifiedOpticalRim(
+                            shape = tileShape,
+                            lightCenter = panelLightRootPos - tileBodyRootPos,
+                            glowColor = tileRimColor,
+                            lightAlpha = panelLightAlpha,
+                            intensity = tileRimIntensity
                         )
                     }
                 }
@@ -1532,12 +1742,12 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
             } else {
                 // 1x2 / 1x3 / 1x4 와이드 타일: 좌측 44dp 아이콘 중심 42dp 고정 (1x1 및 확대바와 0dp 수직 정렬!)
                 val badgeBg by animateColorAsState(
-                    targetValue = if (isActive) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                    targetValue = if (isActive) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f) else Color.Transparent,
                     animationSpec = tween(220),
                     label = "wideBadgeBg"
                 )
                 val badgeFg by animateColorAsState(
-                    targetValue = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else (spec.accentColor ?: MaterialTheme.colorScheme.onSurface),
+                    targetValue = if (isActive) MaterialTheme.colorScheme.onPrimary else (spec.accentColor ?: MaterialTheme.colorScheme.onSurface),
                     animationSpec = tween(220),
                     label = "wideBadgeFg"
                 )
@@ -1568,7 +1778,7 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
                             text = spec.title,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = if (isActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1576,7 +1786,7 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
                             Text(
                                 text = if (spec.checked) "켜짐" else "꺼짐",
                                 fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isActive) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
                             )
                         }
@@ -1613,8 +1823,8 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
             }
 
             // 우하단 둘레 밀착 두꺼운 호흡 크기조절 핸들 (원형/사각 둘레 자동 맞춤, 1x1~1x4, 부드러운 등장·퇴장)
-            val handleTint = if (isSingle && isActive) {
-                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = handleBreathAlpha)
+            val handleTint = if (isActive) {
+                MaterialTheme.colorScheme.onPrimary.copy(alpha = handleBreathAlpha)
             } else {
                 MaterialTheme.colorScheme.onSurface.copy(alpha = handleBreathAlpha)
             }
@@ -1739,9 +1949,13 @@ private fun QsTinyCircleBtn(
 fun ToolbarToQuickMenuDragGhost(
     tbKey: String,
     rootPos: Offset,
-    inQuickMenuZone: Boolean
+    inQuickMenuZone: Boolean,
+    chromeMenuItems: List<ChromeMenuItemSpec> = emptyList()
 ) {
-    val icon = when (tbKey) {
+    val dynIcon = if (tbKey.startsWith("QS:")) {
+        chromeMenuItems.firstOrNull { it.key == tbKey.removePrefix("QS:") }?.icon
+    } else null
+    val icon = dynIcon ?: when (tbKey) {
         "MCP" -> Icons.Default.LinkOff
         "AI" -> Icons.Default.AutoAwesome
         "ADBLOCK" -> Icons.Default.Shield
@@ -1806,6 +2020,7 @@ fun ToolbarToQuickMenuDragGhost(
 @Composable
 fun ToolbarEditDragCaptureOverlay(
     tbIconsRootPos: Offset,
+    qsDropState: QsExternalDropState,
     modifier: Modifier = Modifier,
     onDraggingChanged: (key: String?, rootPos: Offset, inQsZone: Boolean) -> Unit
 ) {
@@ -1821,31 +2036,9 @@ fun ToolbarEditDragCaptureOverlay(
                 var accumX = 0f
                 var accumY = 0f
                 var fingerLocal = Offset.Zero
-                val tbToQsMap = mapOf(
-                    "MCP" to "mcp", "AI" to "aispace", "TRANSLATE" to "translate",
-                    "DARKMODE" to "dark", "NEW_TAB" to "newtab", "SHARE" to "share",
-                    "FIND" to "find", "DESKTOP" to "desktop", "READER" to "reader"
-                )
                 detectDragGesturesAfterLongPress(
                     onDragStart = { startPos ->
-                        val p = SpaceManager.preferences.value
-                        val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
-                        val ord = p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }
-                        val enabled = ord.filter { k ->
-                            when (k) {
-                                "MCP" -> p.showMcpBadgeButton
-                                "ADBLOCK" -> p.showAdBlockButton
-                                "TRANSLATE" -> p.showTranslateButton
-                                "DARKMODE" -> p.showDarkModeButton
-                                "NEW_TAB" -> p.showNewTabToolbarButton
-                                "SHARE" -> p.showShareButton
-                                "FIND" -> p.showFindInPageButton
-                                "DESKTOP" -> p.showDesktopSiteButton
-                                "READER" -> p.showReaderModeButton
-                                "PROFILE" -> p.showProfileAvatarButton
-                                else -> false
-                            }
-                        }
+                        val enabled = getVisibleToolbarKeys(SpaceManager.preferences.value)
                         if (enabled.isNotEmpty() && size.width > 0) {
                             val slotW = size.width.toFloat() / enabled.size.toFloat()
                             val idx = (startPos.x / slotW).toInt().coerceIn(0, enabled.lastIndex)
@@ -1861,27 +2054,38 @@ fun ToolbarEditDragCaptureOverlay(
                     onDragEnd = {
                         val k = activeTbKey
                         val droppedInQs = accumY > downThresholdPx
+                        val targetIdx = qsDropState.targetInsertIndex
                         activeTbKey = null
+                        qsDropState.targetInsertIndex = null
                         latestOnChanged(null, Offset.Zero, false)
-                        if (k != null && droppedInQs) {
-                            val qsKey = tbToQsMap[k]
+                        if (k != null && (droppedInQs || targetIdx != null)) {
+                            val qsKey = resolveQsKeyFromTb(k)
                             if (qsKey != null) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 SpaceManager.updatePreferences { p ->
-                                    val curQs = p.quickMenuLayout.toMutableList()
-                                    curQs.removeAll { it == "hide:$qsKey" || it.startsWith("$qsKey:") }
-                                    curQs.add(0, "$qsKey:1")
-                                    val updated = p.copy(quickMenuLayout = curQs)
-                                    when (k) {
-                                        "MCP" -> updated.copy(showMcpBadgeButton = false)
-                                        "TRANSLATE" -> updated.copy(showTranslateButton = false)
-                                        "DARKMODE" -> updated.copy(showDarkModeButton = false)
-                                        "NEW_TAB" -> updated.copy(showNewTabToolbarButton = false)
-                                        "SHARE" -> updated.copy(showShareButton = false)
-                                        "FIND" -> updated.copy(showFindInPageButton = false)
-                                        "DESKTOP" -> updated.copy(showDesktopSiteButton = false)
-                                        "READER" -> updated.copy(showReaderModeButton = false)
-                                        else -> updated
+                                    val (baseEntries, baseHidden) = parseLayoutTokens(p.quickMenuLayout)
+                                    val mut = baseEntries.toMutableList()
+                                    val oldPos = mut.indexOfFirst { it is QsLayoutEntry.Tile && it.key == qsKey }
+                                    if (oldPos >= 0) mut.removeAt(oldPos)
+                                    val rawIdx = targetIdx ?: mut.size
+                                    val adjIdx = if (oldPos in 0 until rawIdx) rawIdx - 1 else rawIdx
+                                    mut.add(adjIdx.coerceIn(0, mut.size), QsLayoutEntry.Tile(qsKey, 1))
+                                    val newLayout = serializeLayoutTokens(mut, baseHidden - qsKey)
+                                    val updated = p.copy(quickMenuLayout = newLayout)
+                                    if (k.startsWith("QS:")) {
+                                        updated.copy(toolbarButtonOrder = p.toolbarButtonOrder.filter { it != k })
+                                    } else {
+                                        when (k) {
+                                            "MCP" -> updated.copy(showMcpBadgeButton = false)
+                                            "TRANSLATE" -> updated.copy(showTranslateButton = false)
+                                            "DARKMODE" -> updated.copy(showDarkModeButton = false)
+                                            "NEW_TAB" -> updated.copy(showNewTabToolbarButton = false)
+                                            "SHARE" -> updated.copy(showShareButton = false)
+                                            "FIND" -> updated.copy(showFindInPageButton = false)
+                                            "DESKTOP" -> updated.copy(showDesktopSiteButton = false)
+                                            "READER" -> updated.copy(showReaderModeButton = false)
+                                            else -> updated
+                                        }
                                     }
                                 }
                             }
@@ -1889,6 +2093,7 @@ fun ToolbarEditDragCaptureOverlay(
                     },
                     onDragCancel = {
                         activeTbKey = null
+                        qsDropState.targetInsertIndex = null
                         latestOnChanged(null, Offset.Zero, false)
                     },
                     onDrag = { change, dragAmount ->
@@ -1909,7 +2114,7 @@ fun ToolbarEditDragCaptureOverlay(
                                 accumX = 0f
                                 val p = SpaceManager.preferences.value
                                 val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
-                                val full = (p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
+                                val full = (p.toolbarButtonOrder.filter { it in base || it.startsWith("QS:") } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
                                 val fi = full.indexOf(k)
                                 val ti = (fi + dir).coerceIn(0, full.lastIndex)
                                 if (fi >= 0 && ti != fi) {
@@ -1923,5 +2128,47 @@ fun ToolbarEditDragCaptureOverlay(
                     }
                 )
             }
+    )
+}
+
+@Composable
+fun ToolbarDynamicQsIconButton(
+    qsKey: String,
+    chromeMenuItems: List<ChromeMenuItemSpec>,
+    activeIconColor: Color
+) {
+    val spec = chromeMenuItems.firstOrNull { it.key == qsKey } ?: return
+    val tint = when {
+        spec.isToggleCheckbox && spec.checked -> MaterialTheme.colorScheme.primary
+        spec.accentColor != null -> spec.accentColor
+        else -> activeIconColor
+    }
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .pressBounceScale(0.86f)
+            .clip(CircleShape)
+            .clickable { spec.onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        EgoIcon(
+            imageVector = spec.icon,
+            contentDescription = spec.title,
+            tint = tint,
+            modifier = Modifier.size(20.dp),
+            symbolSize = 20.dp
+        )
+    }
+}
+
+@Composable
+fun ToolbarInsertSlotIndicator() {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .width(3.dp)
+            .height(24.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
     )
 }
