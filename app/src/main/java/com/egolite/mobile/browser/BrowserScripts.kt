@@ -296,6 +296,7 @@ object BrowserScripts {
             const items = [];
             window.__egoTranslateNodes = [];
             window.__egoOrigNodes = [];
+            window.__egoTransMap = {};
             let node;
             while ((node = walker.nextNode())) {
                 const parent = node.parentElement;
@@ -322,11 +323,13 @@ object BrowserScripts {
             (function() {
                 const map = $translationsJson;
                 const nodes = window.__egoTranslateNodes || [];
+                window.__egoTransMap = window.__egoTransMap || {};
                 let applied = 0;
                 for (const item of map) {
                     const n = nodes[item.i];
                     if (n && item.t) {
                         n.nodeValue = item.t;
+                        window.__egoTransMap[item.i] = item.t;
                         applied++;
                     }
                 }
@@ -346,6 +349,23 @@ object BrowserScripts {
                 }
             }
             return JSON.stringify({ ok: true, restored: count });
+        })();
+    """
+
+    const val REAPPLY_CACHED_TRANSLATION_JS: String = """
+        (function() {
+            const nodes = window.__egoTranslateNodes || [];
+            const trans = window.__egoTransMap || {};
+            let applied = 0;
+            for (const key in trans) {
+                const idx = parseInt(key, 10);
+                const n = nodes[idx];
+                if (n && trans[key]) {
+                    n.nodeValue = trans[key];
+                    applied++;
+                }
+            }
+            return JSON.stringify({ ok: applied > 0, applied: applied });
         })();
     """
 }
