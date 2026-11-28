@@ -111,7 +111,9 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.offset
@@ -496,7 +498,9 @@ fun QuickSettingsBrowserMenuOverlay(
         items.filter { it.key in hiddenKeys }
     }
 
+    var lastLayoutCommitMs by remember { mutableStateOf(0L) }
     fun commit(newEntries: List<QsLayoutEntry>, newHidden: Set<String> = hiddenKeys) {
+        lastLayoutCommitMs = System.currentTimeMillis()
         onSaveLayout(serializeLayoutTokens(newEntries, newHidden))
     }
 
@@ -589,12 +593,24 @@ fun QuickSettingsBrowserMenuOverlay(
             }
         }
 
+        // 편집 중 행이 늘어나도 새 행의 rowAnims가 0f로 남아 패널이 세로로 찌부되지 않도록 즉시 1f 동기화!
+        LaunchedEffect(visible, totalContentRows, editMode) {
+            if (visible && (editMode || panelAnim.value > 0.5f)) {
+                for (r in 0..15) {
+                    if (rowAnims[r].value < 0.99f) {
+                        rowAnims[r].snapTo(1f)
+                    }
+                }
+            }
+        }
+
         val anyRowVisible = rowAnims.any { it.value > 0.015f }
         if (visible || panelAnim.value > 0.015f || anyRowVisible) {
             val pv = panelAnim.value.coerceIn(0f, 1.06f)
             val p = pv.coerceIn(0f, 1f)
             val maxRowIdxNow = totalContentRows.coerceIn(1, 15)
             // 최하단 행이 접히면 패널 하단도 함께 위로 따라 올라가도록 동적 높이 비율 계산
+            // 단, 편집 모드이거나 열림이 완료된 상태에서는 scaleY = 1f 고정 (행 증가 시 버튼/조절바 찌부 원천 방지!)
             var lowestVisibleRatio = 0f
             for (r in 0..maxRowIdxNow) {
                 val rv = rowAnims[r].value.coerceIn(0f, 1f)
@@ -605,12 +621,16 @@ fun QuickSettingsBrowserMenuOverlay(
                     if (reached > lowestVisibleRatio) lowestVisibleRatio = reached
                 }
             }
-            val dynamicScaleY = (0.24f + 0.76f * maxOf(pv * 0.35f, lowestVisibleRatio)).coerceIn(0.24f, 1.04f)
+            val dynamicScaleY = if (editMode || (visible && pv > 0.96f)) {
+                1f
+            } else {
+                (0.24f + 0.76f * maxOf(pv * 0.35f, lowestVisibleRatio)).coerceIn(0.24f, 1.04f)
+            }
             val morphCornerDp = (30f + (1f - p) * 44f).dp
             val morphShape = RoundedCornerShape(morphCornerDp)
             val panelGlowColor = MaterialTheme.colorScheme.primary
             val rimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
-            var panelRootPos by remember { mutableStateOf(Offset.Zero) }
+            var panelCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
             var panelTouchLocal by remember { mutableStateOf(Offset.Zero) }
             var panelTouching by remember { mutableStateOf(false) }
             val panelGlowAlpha by animateFloatAsState(
@@ -618,7 +638,6 @@ fun QuickSettingsBrowserMenuOverlay(
                 animationSpec = tween(durationMillis = if (panelTouching) 75 else 380),
                 label = "qsPanelLightAlpha"
             )
-            val panelTouchRootPos = panelRootPos + panelTouchLocal
             Surface(
                 shape = morphShape,
                 color = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -628,7 +647,7 @@ fun QuickSettingsBrowserMenuOverlay(
                     .width(384.dp)
                     .heightIn(max = if (editMode) 1600.dp else 820.dp)
                     .onGloballyPositioned { coords ->
-                        if (coords.isAttached) panelRootPos = coords.positionInRoot()
+                        if (coords.isAttached) panelCoords = coords
                     }
                     .graphicsLayer {
                         scaleX = 0.28f + 0.72f * pv
@@ -834,9 +853,18 @@ fun QuickSettingsBrowserMenuOverlay(
                     // 4열 섹션 격리 영역 + 안정적 부모 레벨 영구 드래그 오버레이 (리컴포지션 시에도 드래그 절대 끊기지 않음!)
                     val colWidthPx = with(density) { 84.dp.toPx() }
                     val tileRootBounds = remember { mutableStateMapOf<String, Rect>() }
+                    val dividerRootBounds = remember { mutableStateMapOf<String, Rect>() }
                     val emptySlotBounds = remember { mutableStateMapOf<String, Pair<Rect, Int>>() }
                     var hoveredEmptySlotId by remember { mutableStateOf<String?>(null) }
+                    var draggingDividerId by remember { mutableStateOf<String?>(null) }
+                    var divDragLiveOffsetY by remember { mutableFloatStateOf(0f) }
+                    val deletingDividerIds = remember { mutableStateListOf<String>() }
+                    val prevTileGridPos = remember { mutableMapOf<String, Offset>() }
+                    val prevDividerGridY = remember { mutableMapOf<String, Float>() }
+                    val tileAnimScope = rememberCoroutineScope()
+                    val gridScrollState = rememberScrollState()
                     var gridRootPos by remember { mutableStateOf(Offset.Zero) }
+                    val latestBlocks by rememberUpdatedState(blocks)
                     var dragFingerLocal by remember { mutableStateOf(Offset.Zero) }
                     var lastSwapMs by remember { mutableStateOf(0L) }
                     var showCompactZoomSlider by remember { mutableStateOf(false) }
@@ -866,11 +894,16 @@ fun QuickSettingsBrowserMenuOverlay(
                     LaunchedEffect(editMode, visible) {
                         if (!editMode || !visible) {
                             draggingKey = null
+                            draggingDividerId = null
+                            divDragLiveOffsetY = 0f
                             hoveredEmptySlotId = null
                             latestOnTbSlotChanged(null)
                             externalDropState?.targetInsertIndex = null
                             tileRootBounds.clear()
+                            dividerRootBounds.clear()
                             emptySlotBounds.clear()
+                            prevTileGridPos.clear()
+                            prevDividerGridY.clear()
                         }
                     }
 
@@ -892,12 +925,15 @@ fun QuickSettingsBrowserMenuOverlay(
                                             val slotW = tbRect.width / vis.size.toFloat()
                                             return ((rootPt.x - tbRect.left) / slotW).roundToInt().coerceIn(0, vis.size)
                                         }
+                                        val divRowStepPx = 58.dp.toPx()
+                                        var divAccumY = 0f
                                         detectDragGesturesAfterLongPress(
                                             onDragStart = { startLocal ->
                                                 val rootPt = gridRootPos + startLocal
                                                 val hit = tileRootBounds.entries.firstOrNull { (_, r) -> r.contains(rootPt) }
                                                 if (hit != null) {
                                                     draggingKey = hit.key
+                                                    draggingDividerId = null
                                                     dragTileSizePx = Size(hit.value.width, hit.value.height)
                                                     val tileTopLeftLocal = Offset(hit.value.left - gridRootPos.x, hit.value.top - gridRootPos.y)
                                                     dragGrabOffset = startLocal - tileTopLeftLocal
@@ -906,9 +942,24 @@ fun QuickSettingsBrowserMenuOverlay(
                                                     lastSwapMs = 0L
                                                     latestOnTbSlotChanged(null)
                                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                } else {
+                                                    val hitDiv = dividerRootBounds.entries.firstOrNull { (_, r) -> r.contains(rootPt) }
+                                                    if (hitDiv != null) {
+                                                        draggingDividerId = hitDiv.key
+                                                        draggingKey = null
+                                                        divAccumY = 0f
+                                                        divDragLiveOffsetY = 0f
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    }
                                                 }
                                             },
                                             onDragEnd = {
+                                                if (draggingDividerId != null) {
+                                                    draggingDividerId = null
+                                                    divAccumY = 0f
+                                                    divDragLiveOffsetY = 0f
+                                                    return@detectDragGesturesAfterLongPress
+                                                }
                                                 val dk = draggingKey
                                                 val fy = dragFingerLocal.y
                                                 val endRoot = dragFingerRoot
@@ -964,10 +1015,35 @@ fun QuickSettingsBrowserMenuOverlay(
                                             },
                                             onDragCancel = {
                                                 draggingKey = null
+                                                draggingDividerId = null
+                                                divAccumY = 0f
+                                                divDragLiveOffsetY = 0f
                                                 hoveredEmptySlotId = null
                                                 latestOnTbSlotChanged(null)
                                             },
                                             onDrag = { change, dragAmount ->
+                                                val activeDivId = draggingDividerId
+                                                if (activeDivId != null) {
+                                                    change.consume()
+                                                    divAccumY += dragAmount.y
+                                                    divDragLiveOffsetY = (divAccumY * 0.36f).coerceIn(-24.dp.toPx(), 24.dp.toPx())
+                                                    if (divAccumY <= -divRowStepPx) {
+                                                        divAccumY = 0f
+                                                        divDragLiveOffsetY = 0f
+                                                        moveDividerByRow(latestEntries, latestBlocks, activeDivId, -1)?.let {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            commit(it)
+                                                        }
+                                                    } else if (divAccumY >= divRowStepPx) {
+                                                        divAccumY = 0f
+                                                        divDragLiveOffsetY = 0f
+                                                        moveDividerByRow(latestEntries, latestBlocks, activeDivId, +1)?.let {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            commit(it)
+                                                        }
+                                                    }
+                                                    return@detectDragGesturesAfterLongPress
+                                                }
                                                 val dk = draggingKey ?: return@detectDragGesturesAfterLongPress
                                                 change.consume()
                                                 dragFingerLocal += dragAmount
@@ -1030,7 +1106,7 @@ fun QuickSettingsBrowserMenuOverlay(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .verticalScroll(rememberScrollState()),
+                            .verticalScroll(gridScrollState),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         var visualRowCursor = 1
@@ -1039,101 +1115,123 @@ fun QuickSettingsBrowserMenuOverlay(
                             when (block) {
                                 is QsRenderBlock.DividerRow -> {
                                     val divRowIdx = (visualRowCursor++).coerceIn(1, 15)
-                                    val divV = rowAnims[divRowIdx].value
+                                    val divV = if (editMode && visible) 1f else rowAnims[divRowIdx].value
                                     val divInv = 1f - divV
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .zIndex(blockZ)
-                                            .graphicsLayer {
-                                                translationY = ((-34f - divRowIdx * 8f) * divInv * 1.50f).dp.toPx()
-                                                scaleX = (0.55f + 0.45f * divV).coerceAtLeast(0.2f)
-                                                alpha = (divV.coerceIn(0f, 1f) * 1.75f).coerceIn(0f, 1f)
+                                    key("div_${block.id}") {
+                                        val isThisDivDragging = editMode && draggingDividerId == block.id
+                                        val isDeleting = block.id in deletingDividerIds
+                                        val divFlipY = remember { Animatable(0f) }
+                                        val divAppear = remember { Animatable(if (editMode && (System.currentTimeMillis() - lastLayoutCommitMs) < 420L) 0f else 1f) }
+                                        LaunchedEffect(Unit) {
+                                            if (divAppear.value < 1f) {
+                                                divAppear.animateTo(1f, spring(dampingRatio = 0.74f, stiffness = 320f))
                                             }
-                                    ) {
-                                    if (editMode) {
-                                        var divDragging by remember(block.id) { mutableStateOf(false) }
-                                        val latestBlocksNow by rememberUpdatedState(blocks)
-                                        Row(
+                                        }
+                                        val deleteFactor by animateFloatAsState(
+                                            targetValue = if (isDeleting) 0f else 1f,
+                                            animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
+                                            label = "divDelFactor_${block.id}"
+                                        )
+                                        val dragLiftScale by animateFloatAsState(
+                                            targetValue = if (isThisDivDragging) 1.03f else 1f,
+                                            animationSpec = spring(dampingRatio = 0.72f, stiffness = 360f),
+                                            label = "divDragScale_${block.id}"
+                                        )
+                                        DisposableEffect(block.id) {
+                                            onDispose { dividerRootBounds.remove(block.id) }
+                                        }
+                                        Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(
-                                                    if (divDragging) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)
-                                                    else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f)
-                                                )
-                                                .then(
-                                                    if (divDragging) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
-                                                    else Modifier
-                                                )
-                                                .pointerInput("div_drag_${block.id}") {
-                                                    val rowStepPx = 62.dp.toPx()
-                                                    var accumY = 0f
-                                                    detectDragGesturesAfterLongPress(
-                                                        onDragStart = {
-                                                            divDragging = true
-                                                            accumY = 0f
-                                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                        },
-                                                        onDragEnd = { divDragging = false; accumY = 0f },
-                                                        onDragCancel = { divDragging = false; accumY = 0f },
-                                                        onDrag = { change, dragAmount ->
-                                                            change.consume()
-                                                            accumY += dragAmount.y
-                                                            if (accumY <= -rowStepPx) {
-                                                                accumY = 0f
-                                                                moveDividerByRow(latestEntries, latestBlocksNow, block.id, -1)?.let {
-                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                                    commit(it)
-                                                                }
-                                                            } else if (accumY >= rowStepPx) {
-                                                                accumY = 0f
-                                                                moveDividerByRow(latestEntries, latestBlocksNow, block.id, +1)?.let {
-                                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                                    commit(it)
+                                                .zIndex(if (isThisDivDragging) 90f else blockZ)
+                                                .onGloballyPositioned { coords ->
+                                                    if (coords.isAttached) {
+                                                        val br = coords.boundsInRoot()
+                                                        if (editMode) dividerRootBounds[block.id] = br
+                                                        val curY = br.top - gridRootPos.y + gridScrollState.value
+                                                        val oldY = prevDividerGridY[block.id]
+                                                        val justCommitted = (System.currentTimeMillis() - lastLayoutCommitMs) < 420L
+                                                        if (editMode && justCommitted && oldY != null) {
+                                                            val dy = oldY - curY
+                                                            if (kotlin.math.abs(dy) > 2f) {
+                                                                tileAnimScope.launch {
+                                                                    divFlipY.snapTo(dy)
+                                                                    divFlipY.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 260f))
                                                                 }
                                                             }
                                                         }
-                                                    )
+                                                        prevDividerGridY[block.id] = curY
+                                                    }
                                                 }
-                                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                .graphicsLayer {
+                                                    val life = divAppear.value * deleteFactor
+                                                    val openY = ((-34f - divRowIdx * 8f) * divInv * 1.50f).dp.toPx()
+                                                    translationY = openY + divFlipY.value + (if (isThisDivDragging) divDragLiveOffsetY else 0f)
+                                                    scaleX = ((0.55f + 0.45f * divV) * (0.70f + 0.30f * life) * dragLiftScale).coerceAtLeast(0.2f)
+                                                    scaleY = ((0.18f + 0.82f * life) * dragLiftScale).coerceAtLeast(0.05f)
+                                                    alpha = ((divV.coerceIn(0f, 1f) * 1.75f).coerceIn(0f, 1f) * life).coerceIn(0f, 1f)
+                                                }
                                         ) {
-                                            Text(
-                                                text = "구분선",
-                                                fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            HorizontalDivider(
-                                                modifier = Modifier.weight(1f),
-                                                color = MaterialTheme.colorScheme.outlineVariant
-                                            )
-                                            QsTinyCircleBtn(Icons.Default.KeyboardArrowUp, "한 행 위로") {
-                                                moveDividerByRow(parsedEntries, blocks, block.id, -1)?.let {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    commit(it)
+                                            if (editMode) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .background(
+                                                            if (isThisDivDragging) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.82f)
+                                                            else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f)
+                                                        )
+                                                        .then(
+                                                            if (isThisDivDragging) Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
+                                                            else Modifier
+                                                        )
+                                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "구분선",
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = if (isThisDivDragging) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                    HorizontalDivider(
+                                                        modifier = Modifier.weight(1f),
+                                                        color = MaterialTheme.colorScheme.outlineVariant
+                                                    )
+                                                    QsTinyCircleBtn(Icons.Default.KeyboardArrowUp, "한 행 위로") {
+                                                        moveDividerByRow(parsedEntries, blocks, block.id, -1)?.let {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            commit(it)
+                                                        }
+                                                    }
+                                                    QsTinyCircleBtn(Icons.Default.KeyboardArrowDown, "한 행 아래로") {
+                                                        moveDividerByRow(parsedEntries, blocks, block.id, +1)?.let {
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            commit(it)
+                                                        }
+                                                    }
+                                                    QsTinyCircleBtn(Icons.Default.Close, "삭제", tint = EgoDangerRed) {
+                                                        if (block.id !in deletingDividerIds) {
+                                                            deletingDividerIds.add(block.id)
+                                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                            tileAnimScope.launch {
+                                                                delay(190L)
+                                                                val mut = latestEntries.toMutableList()
+                                                                mut.removeAll { it is QsLayoutEntry.Divider && it.id == block.id }
+                                                                deletingDividerIds.remove(block.id)
+                                                                commit(mut)
+                                                            }
+                                                        }
+                                                    }
                                                 }
-                                            }
-                                            QsTinyCircleBtn(Icons.Default.KeyboardArrowDown, "한 행 아래로") {
-                                                moveDividerByRow(parsedEntries, blocks, block.id, +1)?.let {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    commit(it)
-                                                }
-                                            }
-                                            QsTinyCircleBtn(Icons.Default.Close, "삭제", tint = EgoDangerRed) {
-                                                val mut = parsedEntries.toMutableList()
-                                                mut.removeAt(block.layoutIndex)
-                                                commit(mut)
+                                            } else {
+                                                HorizontalDivider(
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                                                )
                                             }
                                         }
-                                    } else {
-                                        HorizontalDivider(
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-                                        )
-                                    }
                                     }
                                 }
 
@@ -1146,7 +1244,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                     ) {
                                         block.rows.forEachIndexed { rowIdx, rowSlots ->
                                             val curVisualRow = (visualRowCursor++).coerceIn(1, 15)
-                                            val rowV = rowAnims[curVisualRow].value
+                                            val rowV = if (editMode && visible) 1f else rowAnims[curVisualRow].value
                                             val rowInv = 1f - rowV
                                             // 확정 리퀴드 드롭 행별 모핑 (int=150%) + 내림차순 zIndex로 윗행이 항상 앞 레이어!
                                             Row(
@@ -1185,6 +1283,8 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                 animationSpec = spring(dampingRatio = 0.78f, stiffness = 280f),
                                                                 label = "qsTileSpanWeight_${placed.spec.key}"
                                                             )
+                                                            val flipX = remember { Animatable(0f) }
+                                                            val flipY = remember { Animatable(0f) }
                                                             QsMenuTile(
                                                                 spec = placed.spec,
                                                                 span = sp,
@@ -1193,7 +1293,8 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                 isPlaceholder = isThisLifted,
                                                                 isCompactZoomOpen = showCompactZoomSlider,
                                                                 colWidthPx = colWidthPx,
-                                                                panelLightRootPos = panelTouchRootPos,
+                                                                panelCoords = panelCoords,
+                                                                panelLightLocalPos = panelTouchLocal,
                                                                 panelLightAlpha = panelGlowAlpha,
                                                                 modifier = Modifier
                                                                     .weight(animatedSpanWeight.coerceAtLeast(0.5f))
@@ -1204,13 +1305,41 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                             val br = coords.boundsInRoot()
                                                                             onTileBoundsUpdated(placed.spec.key, br)
                                                                             tileRootBounds[placed.spec.key] = br
+                                                                            // 스크롤 보정 그리드 좌표: 오직 크기 조절/재배치 직후(350ms 이내)에만 부드러운 2D 모프 이동!
+                                                                            val curGridPos = Offset(
+                                                                                br.left - gridRootPos.x,
+                                                                                br.top - gridRootPos.y + gridScrollState.value
+                                                                            )
+                                                                            val oldGridPos = prevTileGridPos[placed.spec.key]
+                                                                            val justCommitted = (System.currentTimeMillis() - lastLayoutCommitMs) < 420L
+                                                                            if (editMode && !isThisLifted && justCommitted && oldGridPos != null) {
+                                                                                val dx = oldGridPos.x - curGridPos.x
+                                                                                val dy = oldGridPos.y - curGridPos.y
+                                                                                if (kotlin.math.abs(dx) > 2f || kotlin.math.abs(dy) > 2f) {
+                                                                                    tileAnimScope.launch {
+                                                                                        flipX.snapTo(dx)
+                                                                                        flipX.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 260f))
+                                                                                    }
+                                                                                    tileAnimScope.launch {
+                                                                                        flipY.snapTo(dy)
+                                                                                        flipY.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 260f))
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            prevTileGridPos[placed.spec.key] = curGridPos
                                                                         }
+                                                                    }
+                                                                    .graphicsLayer {
+                                                                        translationX = flipX.value
+                                                                        translationY = flipY.value
                                                                     },
                                                                 onClick = {
                                                                     if (placed.spec.zoomPercent != null && sp == 1) {
                                                                         showCompactZoomSlider = !showCompactZoomSlider
                                                                     } else if (placed.spec.zoomPercent == null) {
-                                                                        if (placed.spec.key !in QS_KEEP_OPEN_KEYS && !placed.spec.isToggleCheckbox) {
+                                                                        val keepOpen = placed.spec.key in QS_KEEP_OPEN_KEYS ||
+                                                                            (placed.spec.isToggleCheckbox && placed.spec.key != "adblock")
+                                                                        if (!keepOpen) {
                                                                             onDismiss()
                                                                         }
                                                                         placed.spec.onClick()
@@ -1447,13 +1576,18 @@ fun QuickSettingsBrowserMenuOverlay(
                             .background(MaterialTheme.colorScheme.primary),
                         contentAlignment = Alignment.Center
                     ) {
-                        EgoIcon(
-                            imageVector = dragSpec.icon,
-                            contentDescription = dragSpec.title,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(20.dp),
-                            symbolSize = 20.dp
-                        )
+                        if (dragSpec.key.startsWith("ext:")) {
+                            val extPath = ExtensionManager.extensions.value.firstOrNull { it.id == dragSpec.key.removePrefix("ext:") }?.iconPath
+                            ExtensionIconBadge(iconPath = extPath, tint = MaterialTheme.colorScheme.onPrimary, sizeDp = 20)
+                        } else {
+                            EgoIcon(
+                                imageVector = dragSpec.icon,
+                                contentDescription = dragSpec.title,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(20.dp),
+                                symbolSize = 20.dp
+                            )
+                        }
                     }
                 } else {
                     Box(
@@ -1541,7 +1675,8 @@ private fun QsMenuTile(
     isPlaceholder: Boolean = false,
     isCompactZoomOpen: Boolean = false,
     colWidthPx: Float,
-    panelLightRootPos: Offset = Offset.Zero,
+    panelCoords: LayoutCoordinates? = null,
+    panelLightLocalPos: Offset = Offset.Zero,
     panelLightAlpha: Float = 0f,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -1593,6 +1728,78 @@ private fun QsMenuTile(
         label = "a17IconFg"
     )
 
+    val iconAnimScope = rememberCoroutineScope()
+    val iconTapScale = remember(spec.key) { Animatable(1f) }
+    val iconTapRotZ = remember(spec.key) { Animatable(0f) }
+    val iconTapRotY = remember(spec.key) { Animatable(0f) }
+    val iconTapOffsetY = remember(spec.key) { Animatable(0f) }
+    val isKeepOpenTile = spec.key in QS_KEEP_OPEN_KEYS || (spec.isToggleCheckbox && spec.key != "adblock")
+    fun triggerDynamicIconAnim() {
+        if (!isKeepOpenTile) return
+        when (spec.key) {
+            "dark" -> {
+                iconAnimScope.launch {
+                    iconTapRotZ.snapTo(0f)
+                    iconTapRotZ.animateTo(180f, spring(dampingRatio = 0.62f, stiffness = 280f))
+                    iconTapRotZ.snapTo(0f)
+                }
+                iconAnimScope.launch {
+                    iconTapScale.snapTo(0.76f)
+                    iconTapScale.animateTo(1.22f, spring(dampingRatio = 0.48f, stiffness = 520f))
+                    iconTapScale.animateTo(1f, spring(dampingRatio = 0.65f, stiffness = 360f))
+                }
+            }
+            "translate" -> {
+                iconAnimScope.launch {
+                    iconTapRotY.snapTo(0f)
+                    iconTapRotY.animateTo(360f, spring(dampingRatio = 0.66f, stiffness = 300f))
+                    iconTapRotY.snapTo(0f)
+                }
+                iconAnimScope.launch {
+                    iconTapScale.snapTo(0.80f)
+                    iconTapScale.animateTo(1.20f, spring(dampingRatio = 0.50f, stiffness = 540f))
+                    iconTapScale.animateTo(1f, spring(dampingRatio = 0.68f, stiffness = 360f))
+                }
+            }
+            "clear" -> {
+                iconAnimScope.launch {
+                    iconTapRotZ.snapTo(0f)
+                    iconTapRotZ.animateTo(-18f, tween(55))
+                    iconTapRotZ.animateTo(16f, tween(65))
+                    iconTapRotZ.animateTo(-10f, tween(55))
+                    iconTapRotZ.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 420f))
+                }
+                iconAnimScope.launch {
+                    iconTapScale.snapTo(0.82f)
+                    iconTapScale.animateTo(1.18f, spring(dampingRatio = 0.50f, stiffness = 500f))
+                    iconTapScale.animateTo(1f, spring(dampingRatio = 0.68f, stiffness = 360f))
+                }
+            }
+            "copy_link" -> {
+                iconAnimScope.launch {
+                    iconTapOffsetY.snapTo(0f)
+                    iconTapOffsetY.animateTo(-7f, tween(90))
+                    iconTapOffsetY.animateTo(0f, spring(dampingRatio = 0.50f, stiffness = 380f))
+                }
+                iconAnimScope.launch {
+                    iconTapScale.snapTo(0.78f)
+                    iconTapScale.animateTo(1.24f, spring(dampingRatio = 0.46f, stiffness = 520f))
+                    iconTapScale.animateTo(1f, spring(dampingRatio = 0.65f, stiffness = 360f))
+                }
+            }
+            else -> {
+                iconAnimScope.launch {
+                    iconTapRotZ.snapTo(-14f)
+                    iconTapRotZ.animateTo(0f, spring(dampingRatio = 0.52f, stiffness = 360f))
+                }
+                iconAnimScope.launch {
+                    iconTapScale.snapTo(0.76f)
+                    iconTapScale.animateTo(1.22f, spring(dampingRatio = 0.48f, stiffness = 520f))
+                    iconTapScale.animateTo(1f, spring(dampingRatio = 0.66f, stiffness = 360f))
+                }
+            }
+        }
+    }
     var isTileLifted by remember { mutableStateOf(false) }
     var liftOffsetX by remember { mutableFloatStateOf(0f) }
     var liftOffsetY by remember { mutableFloatStateOf(0f) }
@@ -1667,14 +1874,14 @@ private fun QsMenuTile(
             animationSpec = EgoMotion.responsiveSpring(),
             label = "qsZoomLift"
         )
-        var zoomRootPos by remember { mutableStateOf(Offset.Zero) }
+        var zoomCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
         val zoomRimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
         val zoomRimColor = MaterialTheme.colorScheme.primary
         Box(
             modifier = modifier
                 .height(70.dp)
                 .onGloballyPositioned { coords ->
-                    if (coords.isAttached) zoomRootPos = coords.positionInRoot()
+                    if (coords.isAttached) zoomCoords = coords
                 }
                 .zIndex(if (zoomDraggingRow) 20f else 0f)
                 .graphicsLayer {
@@ -1714,10 +1921,12 @@ private fun QsMenuTile(
                     .align(Alignment.Center)
                     .drawWithContent {
                         drawContent()
-                        if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled) {
+                        val pc = panelCoords
+                        val zc = zoomCoords
+                        if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled && pc != null && zc != null && pc.isAttached && zc.isAttached) {
                             drawUnifiedOpticalRim(
                                 shape = RoundedCornerShape(35.dp),
-                                lightCenter = panelLightRootPos - zoomRootPos,
+                                lightCenter = zc.localPositionOf(pc, panelLightLocalPos),
                                 glowColor = zoomRimColor,
                                 lightAlpha = panelLightAlpha,
                                 intensity = zoomRimIntensity
@@ -1819,27 +2028,32 @@ private fun QsMenuTile(
                 translationY = if (isTileLifted) liftOffsetY else 0f
             }
             .then(
-if (!editMode) Modifier.clickable { onClick() } else Modifier
+                if (!editMode) Modifier.clickable {
+                    triggerDynamicIconAnim()
+                    onClick()
+                } else Modifier
             )
     ) {
-        var tileBodyRootPos by remember { mutableStateOf(Offset.Zero) }
+        var tileBodyCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
         val tileRimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
         val tileRimColor = MaterialTheme.colorScheme.primary
-        // 내부 클립된 타일 본체: 패널 광감 번짐보다 앞 레이어에 위치하며, 패널·확대바와 100% 동일한 두께/밝기 테두리로 반응!
+        // 내부 클립된 타일 본체: 실시간 localPositionOf 변환으로 배경 광감과 0px 오차 테두리 일치!
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .onGloballyPositioned { coords ->
-                    if (coords.isAttached) tileBodyRootPos = coords.positionInRoot()
+                    if (coords.isAttached) tileBodyCoords = coords
                 }
                 .clip(tileShape)
                 .background(containerBg)
                 .drawWithContent {
                     drawContent()
-                    if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled) {
+                    val pc = panelCoords
+                    val tc = tileBodyCoords
+                    if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled && pc != null && tc != null && pc.isAttached && tc.isAttached) {
                         drawUnifiedOpticalRim(
                             shape = tileShape,
-                            lightCenter = panelLightRootPos - tileBodyRootPos,
+                            lightCenter = tc.localPositionOf(pc, panelLightLocalPos),
                             glowColor = tileRimColor,
                             lightAlpha = panelLightAlpha,
                             intensity = tileRimIntensity
@@ -1857,13 +2071,41 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    EgoIcon(
-                        imageVector = spec.icon,
-                        contentDescription = spec.title,
-                        tint = iconFg,
-                        modifier = Modifier.size(22.dp),
-                        symbolSize = 22.dp
-                    )
+                    val iconMotionMod = Modifier.graphicsLayer {
+                        scaleX = iconTapScale.value
+                        scaleY = iconTapScale.value
+                        rotationZ = iconTapRotZ.value
+                        rotationY = iconTapRotY.value
+                        translationY = iconTapOffsetY.value.dp.toPx()
+                        cameraDistance = 12f * density
+                    }
+                    if (spec.key == "mcp") {
+                        Box(modifier = iconMotionMod) {
+                            McpHubStatusIcon(
+                                disconnected = !spec.checked,
+                                contentDescription = spec.title,
+                                tint = iconFg,
+                                cutoutColor = containerBg,
+                                symbolSize = 22.dp
+                            )
+                        }
+                    } else if (spec.key.startsWith("ext:")) {
+                        val extPath = ExtensionManager.extensions.value.firstOrNull { it.id == spec.key.removePrefix("ext:") }?.iconPath
+                        ExtensionIconBadge(
+                            iconPath = extPath,
+                            tint = iconFg,
+                            sizeDp = 22,
+                            modifier = iconMotionMod
+                        )
+                    } else {
+                        EgoIcon(
+                            imageVector = spec.icon,
+                            contentDescription = spec.title,
+                            tint = iconFg,
+                            modifier = iconMotionMod.size(22.dp),
+                            symbolSize = 22.dp
+                        )
+                    }
                 }
             } else {
                 // 1x2 / 1x3 / 1x4 와이드 타일: 좌측 44dp 아이콘 중심 42dp 고정 (1x1 및 확대바와 0dp 수직 정렬!)
@@ -1891,13 +2133,41 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
                             .background(badgeBg),
                         contentAlignment = Alignment.Center
                     ) {
-                        EgoIcon(
-                            imageVector = spec.icon,
-                            contentDescription = null,
-                            tint = badgeFg,
-                            modifier = Modifier.size(21.dp),
-                            symbolSize = 21.dp
-                        )
+                        val wideIconMotionMod = Modifier.graphicsLayer {
+                            scaleX = iconTapScale.value
+                            scaleY = iconTapScale.value
+                            rotationZ = iconTapRotZ.value
+                            rotationY = iconTapRotY.value
+                            translationY = iconTapOffsetY.value.dp.toPx()
+                            cameraDistance = 12f * density
+                        }
+                        if (spec.key == "mcp") {
+                            Box(modifier = wideIconMotionMod) {
+                                McpHubStatusIcon(
+                                    disconnected = !spec.checked,
+                                    contentDescription = spec.title,
+                                    tint = badgeFg,
+                                    cutoutColor = containerBg,
+                                    symbolSize = 21.dp
+                                )
+                            }
+                        } else if (spec.key.startsWith("ext:")) {
+                            val extPath = ExtensionManager.extensions.value.firstOrNull { it.id == spec.key.removePrefix("ext:") }?.iconPath
+                            ExtensionIconBadge(
+                                iconPath = extPath,
+                                tint = badgeFg,
+                                sizeDp = 21,
+                                modifier = wideIconMotionMod
+                            )
+                        } else {
+                            EgoIcon(
+                                imageVector = spec.icon,
+                                contentDescription = null,
+                                tint = badgeFg,
+                                modifier = wideIconMotionMod.size(21.dp),
+                                symbolSize = 21.dp
+                            )
+                        }
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -2152,13 +2422,22 @@ fun ToolbarToQuickMenuDragGhost(
             ),
         contentAlignment = Alignment.Center
     ) {
-        EgoIcon(
-            imageVector = icon,
-            contentDescription = tbKey,
-            tint = fgColor,
-            modifier = Modifier.size(if (inQuickMenuZone) 22.dp else 20.dp),
-            symbolSize = if (inQuickMenuZone) 22.dp else 20.dp
-        )
+        if (tbKey.startsWith("EXT:")) {
+            val extPath = ExtensionManager.extensions.value.firstOrNull { it.id == tbKey.removePrefix("EXT:") }?.iconPath
+            ExtensionIconBadge(
+                iconPath = extPath,
+                tint = fgColor,
+                sizeDp = if (inQuickMenuZone) 22 else 20
+            )
+        } else {
+            EgoIcon(
+                imageVector = icon,
+                contentDescription = tbKey,
+                tint = fgColor,
+                modifier = Modifier.size(if (inQuickMenuZone) 22.dp else 20.dp),
+                symbolSize = if (inQuickMenuZone) 22.dp else 20.dp
+            )
+        }
     }
 }
 
@@ -2167,20 +2446,21 @@ fun ToolbarEditDragCaptureOverlay(
     tbIconsRootPos: Offset,
     qsDropState: QsExternalDropState,
     modifier: Modifier = Modifier,
+    onToolbarInsertSlotChanged: (Int?) -> Unit = {},
     onDraggingChanged: (key: String?, rootPos: Offset, inQsZone: Boolean) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
     val latestRootPos by rememberUpdatedState(tbIconsRootPos)
     val latestOnChanged by rememberUpdatedState(onDraggingChanged)
+    val latestOnSlot by rememberUpdatedState(onToolbarInsertSlotChanged)
     Box(
         modifier = modifier
             .pointerInput("real_toolbar_edit_drag_overlay") {
                 val downThresholdPx = 38.dp.toPx()
-                val stepXPx = 34.dp.toPx()
                 var activeTbKey: String? = null
-                var accumX = 0f
                 var accumY = 0f
                 var fingerLocal = Offset.Zero
+                var lastPreviewSlot: Int? = null
                 detectDragGesturesAfterLongPress(
                     onDragStart = { startPos ->
                         val enabled = getVisibleToolbarKeys(SpaceManager.preferences.value)
@@ -2189,9 +2469,10 @@ fun ToolbarEditDragCaptureOverlay(
                             val idx = (startPos.x / slotW).toInt().coerceIn(0, enabled.lastIndex)
                             val picked = enabled[idx]
                             activeTbKey = picked
-                            accumX = 0f
                             accumY = 0f
                             fingerLocal = startPos
+                            lastPreviewSlot = idx
+                            latestOnSlot(idx)
                             latestOnChanged(picked, latestRootPos + startPos, false)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
@@ -2200,8 +2481,11 @@ fun ToolbarEditDragCaptureOverlay(
                         val k = activeTbKey
                         val droppedInQs = accumY > downThresholdPx
                         val targetIdx = qsDropState.targetInsertIndex
+                        val finalTbSlot = lastPreviewSlot
                         activeTbKey = null
+                        lastPreviewSlot = null
                         qsDropState.targetInsertIndex = null
+                        latestOnSlot(null)
                         latestOnChanged(null, Offset.Zero, false)
                         if (k != null && (droppedInQs || targetIdx != null)) {
                             val qsKey = resolveQsKeyFromTb(k)
@@ -2239,40 +2523,55 @@ fun ToolbarEditDragCaptureOverlay(
                                     }
                                 }
                             }
+                        } else if (k != null && !k.startsWith("EXT:") && finalTbSlot != null) {
+                            // 보이는 툴바 아이콘 기준으로만 1:1 정확히 자리 이동 (숨겨진 버튼 헛바꿈 완전 제거!)
+                            val p = SpaceManager.preferences.value
+                            val visCore = getVisibleToolbarKeys(p).filter { !it.startsWith("EXT:") }
+                            val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+                            val full = (p.toolbarButtonOrder.filter { it in base || it.startsWith("QS:") } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
+                            val clampedSlot = finalTbSlot.coerceIn(0, visCore.size)
+                            val anchorKey = visCore.getOrNull(clampedSlot)
+                            if (anchorKey != k) {
+                                full.remove(k)
+                                val insertPos = if (anchorKey != null) {
+                                    full.indexOf(anchorKey).takeIf { it >= 0 } ?: full.size
+                                } else {
+                                    full.size
+                                }
+                                full.add(insertPos.coerceIn(0, full.size), k)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = full) }
+                            }
                         }
                     },
                     onDragCancel = {
                         activeTbKey = null
+                        lastPreviewSlot = null
                         qsDropState.targetInsertIndex = null
+                        latestOnSlot(null)
                         latestOnChanged(null, Offset.Zero, false)
                     },
                     onDrag = { change, dragAmount ->
                         val k = activeTbKey ?: return@detectDragGesturesAfterLongPress
                         change.consume()
-                        accumX += dragAmount.x
                         accumY += dragAmount.y
                         fingerLocal += dragAmount
                         val inQs = accumY > downThresholdPx
                         latestOnChanged(k, latestRootPos + fingerLocal, inQs)
-                        if (!inQs) {
-                            val dir = when {
-                                accumX >= stepXPx -> 1
-                                accumX <= -stepXPx -> -1
-                                else -> 0
+                        if (inQs) {
+                            if (lastPreviewSlot != null) {
+                                lastPreviewSlot = null
+                                latestOnSlot(null)
                             }
-                            if (dir != 0) {
-                                accumX = 0f
-                                val p = SpaceManager.preferences.value
-                                val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
-                                val full = (p.toolbarButtonOrder.filter { it in base || it.startsWith("QS:") } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
-                                val fi = full.indexOf(k)
-                                val ti = (fi + dir).coerceIn(0, full.lastIndex)
-                                if (fi >= 0 && ti != fi) {
-                                    full.removeAt(fi)
-                                    full.add(ti, k)
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = full) }
-                                }
+                        } else if (size.width > 0) {
+                            val vis = getVisibleToolbarKeys(SpaceManager.preferences.value)
+                            val visCoreCount = vis.count { !it.startsWith("EXT:") }
+                            val slotW = (size.width.toFloat() / vis.size.coerceAtLeast(1)).coerceAtLeast(24f)
+                            val slot = (fingerLocal.x / slotW).roundToInt().coerceIn(0, visCoreCount)
+                            if (slot != lastPreviewSlot) {
+                                lastPreviewSlot = slot
+                                latestOnSlot(slot)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                         }
                     }
@@ -2312,13 +2611,26 @@ fun ToolbarDynamicQsIconButton(
 }
 
 @Composable
-fun ToolbarInsertSlotIndicator() {
-    Box(
-        modifier = Modifier
-            .padding(horizontal = 2.dp)
-            .width(3.dp)
-            .height(24.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primary)
+fun ToolbarInsertSlotIndicator(active: Boolean = true) {
+    val gapW by animateDpAsState(
+        targetValue = if (active) 34.dp else 0.dp,
+        animationSpec = spring(dampingRatio = 0.76f, stiffness = 340f),
+        label = "tbInsertGapW"
     )
+    if (gapW > 0.5.dp) {
+        Box(
+            modifier = Modifier
+                .width(gapW)
+                .height(34.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(3.5.dp)
+                    .height(22.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+        }
+    }
 }
