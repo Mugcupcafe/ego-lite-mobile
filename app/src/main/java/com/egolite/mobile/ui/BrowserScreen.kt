@@ -306,9 +306,11 @@ fun BrowserScreen() {
     var managingExt by remember { mutableStateOf<InstalledExtension?>(null) }
     var showDownloadsScreen by remember { mutableStateOf(false) }
     val downloadBanner by DownloadCenter.banner.collectAsState()
+    val closedTabUndo by SpaceManager.closedTabUndoBanner.collectAsState()
     val duplicateDownloadPrompt by DownloadCenter.duplicatePrompt.collectAsState()
     var settingsInitialCategory by remember { mutableStateOf(SettingsCategory.ACCOUNT) }
     val googleAccount by GoogleAccountManager.state.collectAsState()
+    val completedDoneIds by SpaceManager.completedDoneSpaceIds.collectAsState()
     val googleAvatar by GoogleAccountManager.avatarBitmap.collectAsState()
     var showAllTabsDialog by remember { mutableStateOf(false) }
     var showChromeMenu by remember { mutableStateOf(false) }
@@ -713,7 +715,7 @@ fun BrowserScreen() {
                         onSelectSpace = { id -> triggerSpaceSwap(id) },
                         onCloseSpace = { id -> SpaceManager.closeAiSpace(id) },
                         onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
-                        onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
+                        onCreateAiSpace = { SpaceManager.createAiSpace() },
                         onGlobalDustVanish = { snap, accent -> emitDustSnapshot(snap, accent, 1.0f) },
                         onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
                     )
@@ -748,7 +750,7 @@ fun BrowserScreen() {
                             onSelectSpace = { id -> triggerSpaceSwap(id) },
                             onCloseSpace = { id -> SpaceManager.closeAiSpace(id) },
                             onMoveSpace = { fromId, toId -> SpaceManager.moveSpaceById(fromId, toId) },
-                            onCreateAiSpace = { SpaceManager.createAiSpace()?.let { triggerSpaceSwap(it.id) } },
+                            onCreateAiSpace = { SpaceManager.createAiSpace() },
                             onGlobalDustVanish = { snap, accent -> emitDustSnapshot(snap, accent, 1.0f) },
                             onCollapse = { monitorAutoOpenedByDrag = false; showAiMonitorTray = false }
                         )
@@ -1531,6 +1533,15 @@ fun BrowserScreen() {
                     onClickBookmark = {
                         if (existingBookmark != null) editingBookmark = existingBookmark
                         else showAddBookmarkDialog = true
+                    },
+                    showAiCommand = prefs.showAiCommandButton && runtimeState.connectionState == McpConnectionState.CONNECTED,
+                    aiCommandExpanded = showAiCommandPopup,
+                    aiPendingCount = mcpPendingCount,
+                    onClickAiCommand = {
+                        aiPopupSpaceId = null
+                        aiPopupTabId = null
+                        if (!showAiCommandPopup) showOmniboxOverlay = false
+                        showAiCommandPopup = !showAiCommandPopup
                     }
                 )
 
@@ -1601,24 +1612,7 @@ fun BrowserScreen() {
                                 }
                             }
                         }
-                        "AI" -> {
-                            AnimatedVisibility(
-                                visible = prefs.showAiCommandButton && runtimeState.connectionState == McpConnectionState.CONNECTED,
-                                enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.78f, animationSpec = EgoMotion.bouncySpring()),
-                                exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.78f, animationSpec = tween(140))
-                            ) {
-                                AiCommandToolbarButton(
-                                    expanded = showAiCommandPopup,
-                                    pendingCount = mcpPendingCount,
-                                    onClick = {
-                                        aiPopupSpaceId = null
-                                        aiPopupTabId = null
-                                        if (!showAiCommandPopup) showOmniboxOverlay = false
-                                        showAiCommandPopup = !showAiCommandPopup
-                                    }
-                                )
-                            }
-                        }
+                        "AI" -> { /* MCP 연결 시 주소창(Omnibox) 우측에 통합 표시 */ }
                         "ADBLOCK" -> {
                             if (prefs.showAdBlockButton) {
                                 val shieldWaveColor = MaterialTheme.colorScheme.primary
@@ -2162,6 +2156,7 @@ fun BrowserScreen() {
                 spaceCount = spaces.size,
                 canAddAiSpace = canAddAiSpace,
                 isExpanded = spaceBarExpanded,
+                isMonitorExpanded = showAiMonitorTray,
                 onSetExpanded = { spaceBarExpanded = it },
                 onToggleAiMonitor = {
                     monitorAutoOpenedByDrag = false
@@ -2172,11 +2167,26 @@ fun BrowserScreen() {
                     if (idx in spaces.indices) {
                         SpaceManager.selectSpace(spaces[idx].id)
                     } else if (canAddAiSpace && idx == spaces.size) {
-                        SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+                        SpaceManager.createAiSpace()
                     }
                 }
             )
         }
+        // 단일 통합 M3 완료 미니 말풍선 (여러 공간 완료 시에도 말풍선은 항상 1개만 깔끔하게 합쳐서 표시!)
+        UnifiedAiDoneSpeechBubble(
+            completedIds = completedDoneIds,
+            spaces = spaces,
+            onSelectSpace = { sid ->
+                SpaceManager.dismissCompletedDoneBanner()
+                SpaceManager.selectSpace(sid)
+            },
+            onAutoDismiss = { SpaceManager.dismissCompletedDoneBanner() },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(start = 10.dp, top = 44.dp)
+                .zIndex(52f)
+        )
         }
 
         // 세로모드 상태바 60%+ 0.5초 / 가로모드 좌측 0.45초 자동 열기 진행 게이지
@@ -2269,39 +2279,7 @@ fun BrowserScreen() {
 
         // 상단 탭 바 직접 은은한 광감 하이라이트 및 자동 스크롤로 대체 완료
 
-        // 주소창 아래 크롬 스타일 슬림 알약 번역 팝업
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 100.dp + monitorTopOffset)
-        ) {
-            ChromeStyleTranslatePopup(
-                state = translateState,
-                engine = prefs.translationEngine,
-                currentHost = currentHost,
-                alwaysTranslateSite = currentHost in prefs.autoTranslateHosts,
-                pinnedLangs = prefs.pinnedTranslateLangs,
-                onChangeSourceLang = { newSrc -> triggerTranslation(newSrc, translateState.targetLang) },
-                onChangeTargetLang = { newDst -> triggerTranslation(translateState.sourceLang, newDst) },
-                onTogglePinLang = { code -> SpaceManager.togglePinnedTranslateLang(code) },
-                onToggleAlwaysTranslate = {
-                    val willEnable = currentHost !in prefs.autoTranslateHosts
-                    SpaceManager.toggleAutoTranslateHost(currentHost)
-                    Toast.makeText(
-                        context,
-                        if (willEnable) "$currentHost 항상 자동 번역 켜짐" else "$currentHost 자동 번역 해제됨",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                },
-                onUndoRestore = {
-                    scope.launch {
-                        TranslationManager.restoreOriginalInSpace(activeSpace.id)
-                        translateState = translateState.copy(isTranslated = false, visible = false)
-                    }
-                },
-                onDismiss = { snap -> emitDustSnapshot(snap, popupDustColor, 0.55f); translateState = translateState.copy(visible = false) }
-            )
-        }
+        // 번역·다운로드·닫은 탭 되돌리기 배너는 하단 통합 상단 스택(Column)에서 겹침 없이 렌더링
 
         // 모바일 크롬 스타일 주소창(Omnibox) 오버레이 (주소창에서 펼쳐지는 스프링 모프)
         AnimatedVisibility(
@@ -2405,14 +2383,18 @@ fun BrowserScreen() {
             )
         }
 
-        // 링크 · 이미지 길게 누르기 크롬 1:1 컨텍스트 메뉴 (주/야간 자동 대응)
+        // 링크 · 이미지 길게 누르기 M3 Expressive 1+2 하이브리드 컨텍스트 메뉴 (썸네일 + 스프링 등장 + 파티클 퇴장)
         longPressTarget?.let { target ->
             ChromeLongPressContextMenu(
                 target = target,
                 activeSpaceId = activeSpace.id,
                 darkTheme = isEffectiveDark,
                 onPreviewPage = { url -> previewPageUrl = url },
-                onDismiss = { BrowserActivityBridge.dismissLongPressMenu() }
+                onDismiss = { BrowserActivityBridge.dismissLongPressMenu() },
+                onDustDismiss = { snap ->
+                    emitDustSnapshot(snap, popupDustColor, 0.82f)
+                    BrowserActivityBridge.dismissLongPressMenu()
+                }
             )
         }
 
@@ -2450,6 +2432,9 @@ fun BrowserScreen() {
             onSaveLayout = { newLayout ->
                 SpaceManager.updatePreferences { it.copy(quickMenuLayout = newLayout) }
             },
+            onSetZoomPercent = { pct ->
+                SpaceManager.updatePreferences { it.copy(textZoom = pct.coerceIn(50, 150)) }
+            },
             onDismiss = {
                 showChromeMenu = false
                 hoveredQuickMenuKey = null
@@ -2482,21 +2467,78 @@ fun BrowserScreen() {
             }
         }
 
-        // 크롬 스타일 상단 다운로드 상태 팝업 ("파일 1개 다운로드 중..." / "다운로드 1개 완료")
-        ChromeDownloadStatusBanner(
-            banner = downloadBanner,
-            onOpenDetails = { SpaceManager.openDownloadsTab(activeSpace.id) },
-            onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true) },
-            onDismiss = { DownloadCenter.dismissBanner() },
-            onDustDismiss = { snap ->
-                emitDustSnapshot(snap, popupDustColor, 0.72f)
-                DownloadCenter.dismissBanner()
-            },
+        // 통합 상단 배너 스택 (다운로드 · 자동번역 · 닫은 탭 되돌리기 — 동시 표시 시 겹침 없이 세로 자동 정렬)
+        Column(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 98.dp)
+                .padding(top = 98.dp + monitorTopOffset)
                 .zIndex(46f)
-        )
+                .animateContentSize(animationSpec = EgoMotion.intSizeSpring),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ChromeDownloadStatusBanner(
+                banner = downloadBanner,
+                onOpenDetails = { SpaceManager.openDownloadsTab(activeSpace.id) },
+                onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true) },
+                onDismiss = { DownloadCenter.dismissBanner() },
+                onDustDismiss = { snap ->
+                    emitDustSnapshot(snap, popupDustColor, 0.72f)
+                    DownloadCenter.dismissBanner()
+                }
+            )
+            ChromeStyleTranslatePopup(
+                state = translateState,
+                engine = prefs.translationEngine,
+                currentHost = currentHost,
+                alwaysTranslateSite = currentHost in prefs.autoTranslateHosts,
+                pinnedLangs = prefs.pinnedTranslateLangs,
+                onChangeSourceLang = { newSrc -> triggerTranslation(newSrc, translateState.targetLang) },
+                onChangeTargetLang = { newDst -> triggerTranslation(translateState.sourceLang, newDst) },
+                onTogglePinLang = { code -> SpaceManager.togglePinnedTranslateLang(code) },
+                onToggleAlwaysTranslate = {
+                    val willEnable = currentHost !in prefs.autoTranslateHosts
+                    SpaceManager.toggleAutoTranslateHost(currentHost)
+                    Toast.makeText(
+                        context,
+                        if (willEnable) "$currentHost 항상 자동 번역 켜짐" else "$currentHost 자동 번역 해제됨",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                onUndoRestore = {
+                    scope.launch {
+                        TranslationManager.restoreOriginalInSpace(activeSpace.id)
+                        translateState = translateState.copy(isTranslated = false, visible = true, statusText = "원문 표시 중")
+                    }
+                },
+                onReapplyTranslate = {
+                    scope.launch {
+                        val applied = TranslationManager.reapplyCachedTranslationInSpace(activeSpace.id)
+                        if (applied) {
+                            translateState = translateState.copy(isTranslated = true, visible = true, statusText = "번역됨")
+                        } else {
+                            triggerTranslation(translateState.sourceLang, translateState.targetLang)
+                        }
+                    }
+                },
+                onSwipeDismiss = {
+                    translateState = translateState.copy(visible = false)
+                },
+                onDismiss = { snap ->
+                    emitDustSnapshot(snap, popupDustColor, 0.55f)
+                    translateState = translateState.copy(visible = false)
+                }
+            )
+            UndoClosedTabBanner(
+                entry = closedTabUndo,
+                onUndo = { SpaceManager.reopenUndoClosedTab() },
+                onSwipeDismiss = { SpaceManager.dismissClosedTabUndoBanner() },
+                onDustDismiss = { snap ->
+                    emitDustSnapshot(snap, popupDustColor, 0.68f)
+                    SpaceManager.dismissClosedTabUndoBanner()
+                }
+            )
+        }
 
         // 상단 탭 · MCP · 광고차단 · 번역 설정 · 번역 캡슐 · 다운로드 알림 통합 먼지 소멸 오버레이
         if (globalDustBursts.isNotEmpty()) {
@@ -2898,5 +2940,87 @@ private fun IsolatedTabProgressBar(
                 .height(2.dp),
             color = if (isAiSpace) EgoEmerald else MaterialTheme.colorScheme.primary
         )
+    }
+}
+
+
+@Composable
+private fun UnifiedAiDoneSpeechBubble(
+    completedIds: List<String>,
+    spaces: List<BrowserSpace>,
+    onSelectSpace: (String) -> Unit,
+    onAutoDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val completedSpaces = remember(completedIds, spaces) {
+        completedIds.mapNotNull { cid -> spaces.firstOrNull { it.id == cid } }
+    }
+    LaunchedEffect(completedIds) {
+        if (completedIds.isNotEmpty()) {
+            delay(4500L)
+            onAutoDismiss()
+        }
+    }
+    AnimatedVisibility(
+        visible = completedSpaces.isNotEmpty(),
+        enter = fadeIn(tween(180)) + scaleIn(spring(dampingRatio = 0.72f, stiffness = 420f), initialScale = 0.86f),
+        exit = fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 0.88f),
+        modifier = modifier
+    ) {
+        val latest = completedSpaces.lastOrNull() ?: return@AnimatedVisibility
+        val label = if (completedSpaces.size == 1) {
+            "${latest.name.replace("AI Space", "AI 공간")} 완료"
+        } else {
+            "${completedSpaces.first().name.replace("AI Space", "AI 공간")} 외 ${completedSpaces.size - 1}개 완료"
+        }
+        val bubbleBg = MaterialTheme.colorScheme.secondaryContainer
+        val bubbleFg = MaterialTheme.colorScheme.onSecondaryContainer
+        Column(horizontalAlignment = Alignment.Start) {
+            // 작은 M3 말풍선 윗꼬리
+            Canvas(
+                modifier = Modifier
+                    .padding(start = 14.dp)
+                    .size(width = 10.dp, height = 5.dp)
+            ) {
+                val tri = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(size.width * 0.5f, 0f)
+                    lineTo(size.width, size.height)
+                    lineTo(0f, size.height)
+                    close()
+                }
+                drawPath(tri, color = bubbleBg)
+            }
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = bubbleBg,
+                tonalElevation = 4.dp,
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .animateContentSize(spring(dampingRatio = 0.78f, stiffness = 360f))
+                    .clickable { onSelectSpace(latest.id) }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    completedSpaces.take(3).forEach { sp ->
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(parseSpaceColor(sp.accentColorHex))
+                        )
+                    }
+                    Text(
+                        text = label,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = bubbleFg,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
     }
 }
