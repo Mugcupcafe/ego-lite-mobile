@@ -140,7 +140,7 @@ fun ChromeStyleTranslatePopup(
     ) {
         val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
         val cardBg = if (isDark) Color(0xFF292C33) else Color(0xFFF3F6FC)
-        val invTextCol = if (isDark) Color(0xFF090D16) else Color.White
+        val invTextCol = MaterialTheme.colorScheme.onPrimary
         val trProg = state.progress.coerceIn(0.06f, 0.99f)
         val trActive = state.isTranslating
 
@@ -352,20 +352,19 @@ fun ChromeStyleTranslatePopup(
                     targetChipBgCol = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                 )
 
-                // 방식 B: 지나간 영역은 선명한 검정 글자 유지, 100% 완료 시 자연스럽게 원복
+                // 방식 B: 지나간 영역은 테마 조화 고대비(onPrimary) 글자/아이콘 유지, 100% 도달+100ms 유지 후 파동과 함께 페이드 복원
                 HarmonyModeBClippedOverlay(
-                    enabled = trActive,
-                    progress = trProg,
-                    isActive = trActive
-                ,
+                    enabled = true,
+                    progress = if (trActive) trProg else 1f,
+                    isActive = trActive,
                     modifier = Modifier.matchParentSize()
                 ) {
                     TranslateBannerContent(
                         primaryCol = invTextCol,
                         onSurfCol = invTextCol,
-                        mutedCol = invTextCol.copy(alpha = 0.85f),
-                        chipBgCol = invTextCol.copy(alpha = 0.14f),
-                        targetChipBgCol = invTextCol.copy(alpha = 0.18f)
+                        mutedCol = invTextCol.copy(alpha = 0.86f),
+                        chipBgCol = invTextCol.copy(alpha = 0.16f),
+                        targetChipBgCol = invTextCol.copy(alpha = 0.24f)
                     )
                 }
             }
