@@ -2381,11 +2381,12 @@ private fun ToolbarCustomPreviewCard(
         val qsVisibleEntries = remember(activeQsTokens) {
             activeQsTokens.filter { !it.startsWith("hide:") }
         }
-        val qsHiddenKeys = remember(activeQsTokens, qsCatalog) {
+        val qsHiddenKeys = remember(activeQsTokens, qsCatalog, prefs) {
             val present = qsVisibleEntries.mapNotNull { t ->
                 if (t.startsWith("div:")) null else t.substringBefore(':')
             }.toSet()
-            qsCatalog.map { it.first }.filter { it !in present && it != "zoom" }
+            val onToolbarNow = getVisibleToolbarKeys(prefs).mapNotNull { resolveQsKeyFromTb(it) }.toSet()
+            qsCatalog.map { it.first }.filter { it !in present && it !in onToolbarNow && it != "zoom" }
         }
 
         fun updateQsTokens(transform: (MutableList<String>) -> Unit) {
