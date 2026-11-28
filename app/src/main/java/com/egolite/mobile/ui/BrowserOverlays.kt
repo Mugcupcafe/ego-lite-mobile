@@ -754,16 +754,17 @@ fun UndoClosedTabBanner(
                 .harmonyRimGlow(enabled = prefs.rimGlowEnabled, cornerRadius = 22.dp, glowColor = MaterialTheme.colorScheme.primary)
         ) {
             Box(modifier = Modifier.fillMaxWidth()) {
-                // 하모니 광감 + 양방향 입자 카운트다운 진행바
+                // 하모니 광감 + 양방향 입자 카운트다운 진행바 (우측 끝 1.0 -> 좌측 끝 0.0 정밀 진행)
                 HarmonyHorizontalProgressCanvas(
                     style = ProgressBarStyle.HARMONY_OPTICAL,
-                    progress = countdownProg.value.coerceIn(0.02f, 0.99f),
-                    isActive = countdownProg.value > 0.02f,
+                    progress = countdownProg.value.coerceIn(0f, 1f),
+                    isActive = countdownProg.value > 0.005f,
                     accentColor = MaterialTheme.colorScheme.primary,
                     lightIntensity = prefs.progressLightIntensity,
                     particleDensity = prefs.progressParticleDensity,
                     darkUseThemeColor = prefs.progressDarkUseThemeColor,
                     cornerRadiusDp = 22.dp,
+                    isCountdown = true,
                     modifier = Modifier.matchParentSize()
                 )
 
