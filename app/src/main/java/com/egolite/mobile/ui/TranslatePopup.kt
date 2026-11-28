@@ -110,6 +110,8 @@ fun ChromeStyleTranslatePopup(
     onTogglePinLang: (String) -> Unit,
     onToggleAlwaysTranslate: () -> Unit,
     onUndoRestore: () -> Unit,
+    onReapplyTranslate: () -> Unit = {},
+    onSwipeDismiss: () -> Unit = {},
     onDismiss: (VanishSnapshot) -> Unit
 ) {
     var pickingForSource by remember { mutableStateOf<Boolean?>(null) }
@@ -178,7 +180,7 @@ fun ChromeStyleTranslatePopup(
                                         animationSpec = EgoMotion.responsiveSpring(),
                                         initialVelocity = vx
                                     )
-                                    dismissCapsuleWithCapture()
+                                    onSwipeDismiss()
                                 } else {
                                     swipeX.animateTo(0f, animationSpec = EgoMotion.responsiveSpring(), initialVelocity = vx)
                                 }
@@ -280,27 +282,31 @@ fun ChromeStyleTranslatePopup(
                             val subLine = when {
                                 trActive -> "${state.statusText.ifBlank { "페이지 번역 중..." }} · ${(trProg * 100).roundToInt()}%"
                                 state.isTranslated -> "번역 완료 · 스와이프하여 닫기"
+                                state.statusText == "원문 표시 중" -> "원문 표시 중 · '번역'으로 즉시 전환"
                                 state.statusText.isNotBlank() -> state.statusText
                                 else -> "번역 준비됨"
                             }
                             Text(
                                 text = subLine,
                                 fontSize = 11.5.sp,
-                                color = if (!trActive && !state.isTranslated && state.statusText.isNotBlank()) EgoDangerRed else mutedCol,
+                                color = if (!trActive && !state.isTranslated && state.statusText.isNotBlank() && state.statusText != "원문 표시 중") EgoDangerRed else mutedCol,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
 
-                        if (state.isTranslated && !trActive) {
+                        if (!trActive) {
+                            val showOriginalBtn = state.isTranslated
                             Text(
-                                text = "원문",
+                                text = if (showOriginalBtn) "원문" else "번역",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = primaryCol,
                                 modifier = Modifier
                                     .clip(CircleShape)
-                                    .clickable { onUndoRestore() }
+                                    .clickable {
+                                        if (showOriginalBtn) onUndoRestore() else onReapplyTranslate()
+                                    }
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
