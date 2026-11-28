@@ -458,8 +458,49 @@ object SpaceManager {
         _completedDoneSpaceIds.value = emptyList()
     }
 
-        fun dismissClosedTabUndoBanner() {
+    fun dismissClosedTabUndoBanner() {
         _closedTabUndoBanner.value = null
+    }
+
+    fun showPendingTabUndoBanner(spaceId: String, tabId: String) {
+        val targetSpace = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        val closingIdx = targetSpace.tabs.indexOfFirst { it.id == tabId }
+        val closing = targetSpace.tabs.getOrNull(closingIdx) ?: return
+        closedTabUndoSeq += 1L
+        _closedTabUndoBanner.value = ClosedTabUndoEntry(
+            seq = closedTabUndoSeq,
+            spaceId = spaceId,
+            title = closing.title.ifBlank { closing.url }.take(36),
+            url = closing.url,
+            originalIndex = closingIdx.coerceAtLeast(0),
+            isIncognito = closing.isIncognito
+        )
+    }
+
+    fun closeTabSilent(spaceId: String, tabId: String) {
+        val targetSpace = _spaces.value.firstOrNull { it.id == spaceId } ?: return
+        if (targetSpace.tabs.size <= 1) {
+            navigate(spaceId, "https://www.google.com")
+            return
+        }
+        val closingIdx = targetSpace.tabs.indexOfFirst { it.id == tabId }
+        val closing = targetSpace.tabs.getOrNull(closingIdx)
+        if (closing != null && !closing.isIncognito && closing.url.startsWith("http")) {
+            _recentlyClosedTabs.update { (listOf(PersistedTab(closing.title, closing.url)) + it).take(15) }
+        }
+        _spaces.update { list ->
+            list.map { space ->
+                if (space.id != spaceId) return@map space
+                val remaining = space.tabs.filter { it.id != tabId }
+                if (remaining.isEmpty()) return@map space
+                val nextActive = if (space.activeTabId == tabId) {
+                    remaining.getOrNull((closingIdx - 1).coerceIn(0, remaining.lastIndex))?.id ?: remaining.first().id
+                } else space.activeTabId
+                space.copy(tabs = remaining, activeTabId = nextActive)
+            }
+        }
+        destroyWebViewForTab(tabId)
+        if (spaceId == "personal") savePersonalTabs()
     }
 
     fun reopenUndoClosedTab() {
