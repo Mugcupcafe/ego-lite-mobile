@@ -3,6 +3,7 @@ package com.egolite.mobile.mcp
 import com.egolite.mobile.browser.BrowserScripts
 import com.egolite.mobile.browser.SpaceManager
 import com.egolite.mobile.model.AiSpaceStatus
+import com.egolite.mobile.model.McpActionMotion
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO as ClientCIO
 import io.ktor.client.request.header as clientHeader
@@ -347,7 +348,14 @@ class McpHttpServer(
                             else -> "페이지에서 작업을 처리하는 중..."
                         }
                     }
-                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, friendlyExecStatus)
+                    val execMotion = when {
+                        !url.isNullOrBlank() -> McpActionMotion.NAVIGATE
+                        script.contains("fillRef") -> McpActionMotion.FILL
+                        script.contains("clickRef") -> McpActionMotion.CLICK
+                        script.contains("scrollByY") -> McpActionMotion.SCROLL
+                        else -> McpActionMotion.EXEC_JS
+                    }
+                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, friendlyExecStatus, execMotion)
                     try {
                         if (!url.isNullOrBlank()) {
                             SpaceManager.navigateAndWait(space.id, url)
@@ -361,7 +369,13 @@ class McpHttpServer(
                                     script.contains("scrollByY") -> "페이지를 훑어보는 중..."
                                     else -> "페이지에서 작업을 처리하는 중..."
                                 }
-                                SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, nextPhrase)
+                                val nextMotion = when {
+                                    script.contains("fillRef") -> McpActionMotion.FILL
+                                    script.contains("clickRef") -> McpActionMotion.CLICK
+                                    script.contains("scrollByY") -> McpActionMotion.SCROLL
+                                    else -> McpActionMotion.EXEC_JS
+                                }
+                                SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, nextPhrase, nextMotion)
                             }
                             SpaceManager.evaluateJsInSpace(
                                 space.id,
@@ -381,7 +395,7 @@ class McpHttpServer(
                         SpaceManager.enterAiThinkingMode(space.id)
                         toolTextResult(id, out)
                     } catch (e: Exception) {
-                        SpaceManager.setAiStatus(space.id, AiSpaceStatus.IDLE, "오류: ${e.message}")
+                        SpaceManager.setAiStatus(space.id, AiSpaceStatus.IDLE, "오류: ${e.message}", McpActionMotion.ERROR)
                         toolTextResult(id, """{"ok":false,"error":"${e.message}"}""")
                     }
                 }
@@ -398,7 +412,13 @@ class McpHttpServer(
                             else -> "화면을 분석하는 중..."
                         }
                     }
-                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, friendlyObsStatus)
+                    val obsMotion = when (mode) {
+                        "markdown" -> McpActionMotion.READ_MD
+                        "snapshot" -> McpActionMotion.SNAPSHOT
+                        "screenshot" -> McpActionMotion.SCREENSHOT
+                        else -> McpActionMotion.EXEC_JS
+                    }
+                    SpaceManager.setAiStatus(space.id, AiSpaceStatus.WORKING, friendlyObsStatus, obsMotion)
                     try {
                         val url = args["url"]?.jsonPrimitive?.contentOrNull
                         if (!url.isNullOrBlank()) {
@@ -441,7 +461,7 @@ class McpHttpServer(
                         SpaceManager.enterAiThinkingMode(space.id)
                         result
                     } catch (e: Exception) {
-                        SpaceManager.setAiStatus(space.id, AiSpaceStatus.IDLE, "오류: ${e.message}")
+                        SpaceManager.setAiStatus(space.id, AiSpaceStatus.IDLE, "오류: ${e.message}", McpActionMotion.ERROR)
                         toolTextResult(id, """{"ok":false,"error":"${e.message}"}""")
                     }
                 }
