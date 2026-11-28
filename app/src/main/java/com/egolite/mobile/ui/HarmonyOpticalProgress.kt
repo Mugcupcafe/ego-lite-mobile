@@ -263,15 +263,28 @@ internal class OpticalParticlePool(private val maxCount: Int = 220) {
 @Composable
 internal fun rememberSmoothOpticalProgress(
     rawProgress: Float,
-    isActive: Boolean
+    isActive: Boolean,
+    isCountdown: Boolean = false
 ): Pair<Float, Float> {
     val target = rawProgress.coerceIn(0f, 1f)
+    if (isCountdown) {
+        // 카운트다운 모드(되돌리기 배너 등): 우측 끝(1.0)에서 좌측 끝(0.0)까지 1:1 직선 진행!
+        val cdAlpha by animateFloatAsState(
+            targetValue = if (isActive && target > 0.005f) 1f else 0f,
+            animationSpec = tween(durationMillis = if (isActive) 120 else 280),
+            label = "countdownOpticalAlpha"
+        )
+        return target to cdAlpha
+    }
+
     var displayed by remember { mutableFloatStateOf(if (isActive) target.coerceAtMost(0.08f) else 0f) }
     var activeVisual by remember { mutableStateOf(isActive) }
+    var holdAtFullMs by remember { mutableFloatStateOf(0f) }
 
     LaunchedEffect(isActive) {
         if (isActive) {
             activeVisual = true
+            holdAtFullMs = 0f
             if (displayed >= 0.98f || target < displayed - 0.25f) {
                 displayed = target.coerceAtMost(0.06f)
             }
@@ -285,6 +298,7 @@ internal fun rememberSmoothOpticalProgress(
                 val dt = if (lastNs == 0L) 0.016f else ((ns - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.033f)
                 lastNs = ns
                 if (isActive) {
+                    holdAtFullMs = 0f
                     // 점진적 멈춤 크립 상한: 현재 target보다 약간 앞까지 서서히 차오르며 감속
                     val creepCeil = (target + 0.14f).coerceAtMost(0.92f)
                     val goal = if (target > displayed) target else creepCeil
@@ -292,10 +306,13 @@ internal fun rememberSmoothOpticalProgress(
                     val factor = 1f - exp(-dt * rate)
                     displayed = (displayed + (goal - displayed) * factor).coerceIn(0f, 0.99f)
                 } else {
-                    // 완료 시 100% 끝까지 부드럽게 흘러 도달한 뒤 페이드아웃 시작
+                    // 완료 시 100% 끝까지 부드럽게 도달 -> 100ms 인터벌 유지 -> 부드럽게 페이드아웃!
                     if (target >= 0.95f && displayed < 0.995f) {
                         val factor = 1f - exp(-dt * 8.5f)
                         displayed = (displayed + (1f - displayed) * factor).coerceAtMost(1f)
+                    } else if (target >= 0.95f && holdAtFullMs < 100f) {
+                        displayed = 1f
+                        holdAtFullMs += dt * 1000f
                     } else {
                         displayed = if (target >= 0.95f) 1f else 0f
                         activeVisual = false
@@ -306,8 +323,8 @@ internal fun rememberSmoothOpticalProgress(
     }
 
     val effectAlpha by animateFloatAsState(
-        targetValue = if (isActive || (activeVisual && displayed < 0.995f)) 1f else 0f,
-        animationSpec = tween(durationMillis = if (isActive) 150 else 320),
+        targetValue = if (isActive || activeVisual) 1f else 0f,
+        animationSpec = tween(durationMillis = if (isActive) 150 else 360),
         label = "smoothOpticalAlpha"
     )
     return displayed to effectAlpha
@@ -323,6 +340,7 @@ fun HarmonyHorizontalProgressCanvas(
     particleDensity: Float = 1.4f,
     cornerRadiusDp: Dp = 6.dp,
     darkUseThemeColor: Boolean = false,
+    isCountdown: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (style == ProgressBarStyle.MATERIAL) return
@@ -330,7 +348,8 @@ fun HarmonyHorizontalProgressCanvas(
     val isLightTheme = MaterialTheme.colorScheme.background.luminance() >= 0.5f
     val (smoothProg, effectAlpha) = rememberSmoothOpticalProgress(
         rawProgress = progress,
-        isActive = isActive
+        isActive = isActive,
+        isCountdown = isCountdown
     )
 
     val pool = remember { OpticalParticlePool(200) }
