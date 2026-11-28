@@ -499,7 +499,7 @@ object SpaceManager {
                 space.copy(tabs = remaining, activeTabId = nextActive)
             }
         }
-        destroyWebViewForTab(tabId)
+        destroyWebView(tabId)
         if (spaceId == "personal") savePersonalTabs()
     }
 
