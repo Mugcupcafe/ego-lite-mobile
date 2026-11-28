@@ -1,9 +1,22 @@
 package com.egolite.mobile.ui
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 
 import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
 import android.provider.Settings
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.view.WindowManager
+import androidx.compose.runtime.DisposableEffect
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.RenderEffect as AndroidRenderEffect
@@ -326,30 +339,36 @@ fun HarmonyHorizontalProgressCanvas(
     var smoothSpeed by remember { mutableFloatStateOf(0f) }
     var lastSize by remember { mutableStateOf(Size.Zero) }
 
+    val latestSmoothProg by rememberUpdatedState(smoothProg)
+    val latestEffectAlpha by rememberUpdatedState(effectAlpha)
+    val latestParticleDensity by rememberUpdatedState(particleDensity)
+
     LaunchedEffect(style, effectAlpha > 0.01f) {
         if (style != ProgressBarStyle.HARMONY_OPTICAL) {
             pool.clear()
             return@LaunchedEffect
         }
         var lastNs = 0L
-        while (effectAlpha > 0.01f || pool.particles.isNotEmpty()) {
+        while (latestEffectAlpha > 0.01f || pool.particles.isNotEmpty()) {
             withFrameNanos { ns ->
                 val dt = if (lastNs == 0L) 0.016f else ((ns - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.033f)
                 lastNs = ns
-                val rawSpd = (abs(smoothProg - prevProg) / dt * 1.35f).coerceAtMost(1.5f)
-                prevProg = smoothProg
+                val curProg = latestSmoothProg
+                val curAlpha = latestEffectAlpha
+                val rawSpd = (abs(curProg - prevProg) / dt * 1.35f).coerceAtMost(1.5f)
+                prevProg = curProg
                 smoothSpeed += (rawSpd - smoothSpeed) * (dt * 10f).coerceAtMost(1f)
                 val w = lastSize.width
                 val h = lastSize.height
-                val cutX = w * smoothProg
+                val cutX = w * curProg
                 pool.stepHorizontal(
                     dt = dt,
                     cutX = cutX,
                     barW = w,
                     barH = h,
                     speed = smoothSpeed,
-                    densityMul = particleDensity,
-                    spawning = effectAlpha > 0.08f && smoothProg in 0.01f..0.992f
+                    densityMul = latestParticleDensity,
+                    spawning = curAlpha > 0.08f && curProg in 0.01f..0.992f
                 )
                 frameTick = ns
             }
@@ -767,6 +786,7 @@ fun FullscreenVideoVerticalHudOverlay(
     enabled: Boolean,
     lightIntensity: Float,
     particleDensity: Float,
+    syncSystemBrightness: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     if (!enabled) return
@@ -861,12 +881,63 @@ fun FullscreenVideoVerticalHudOverlay(
         return (sys / 255f).coerceIn(0.05f, 1f)
     }
 
-    fun applyBrightness(v: Float) {
-        val clamped = v.coerceIn(0.02f, 1f)
+    fun resetWindowBrightnessOverride() {
         activity?.window?.let { win ->
             val lp = win.attributes
-            lp.screenBrightness = clamped
-            win.attributes = lp
+            if (lp.screenBrightness != WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE) {
+                lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                win.attributes = lp
+            }
+        }
+    }
+
+    // 전체화면 종료 시 앱 창 밝기 오버라이드 자동 복원 + 상태창 퀵패널 밝기 변경 실시간 감지
+    DisposableEffect(activity, syncSystemBrightness) {
+        val resolver = context.contentResolver
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                if (activeBar != "bright") {
+                    resetWindowBrightnessOverride()
+                    brightnessVal = readCurrentBrightness()
+                }
+            }
+        }
+        runCatching {
+            resolver.registerContentObserver(
+                Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
+                false,
+                observer
+            )
+        }
+        onDispose {
+            runCatching { resolver.unregisterContentObserver(observer) }
+            resetWindowBrightnessOverride()
+        }
+    }
+
+    fun applyBrightness(v: Float) {
+        val clamped = v.coerceIn(0.02f, 1f)
+        val canWriteSys = syncSystemBrightness && runCatching { Settings.System.canWrite(context) }.getOrDefault(false)
+        if (canWriteSys) {
+            runCatching {
+                Settings.System.putInt(
+                    context.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE,
+                    Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                )
+                Settings.System.putInt(
+                    context.contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS,
+                    (clamped * 255f).roundToInt().coerceIn(4, 255)
+                )
+            }
+            resetWindowBrightnessOverride()
+        } else {
+            activity?.window?.let { win ->
+                val lp = win.attributes
+                lp.screenBrightness = clamped
+                win.attributes = lp
+            }
         }
     }
 
@@ -1218,6 +1289,269 @@ fun FullscreenVideoVerticalHudOverlay(
                     )
                 }
             }
+        }
+    }
+}
+
+
+/**
+ * 하모니OS 7 가로형 광감 캡슐 슬라이더 (빠른메뉴 페이지 확대바용)
+ * - 미터치(19278): 5.5dp 네스티드 인셋 차분한 반투명 글래스 채움 (광감 0%, 입자 0%)
+ * - 터치/드래그(19279): 실버/테마색 HDR 순백 단면 빛 커튼 + 양방향 개별 입자 풀 점등
+ * - 좌측 끝(0%) ~ 우측 끝(100%) 풀 레인지 + 더블탭 100% 초기화
+ */
+@Composable
+fun HorizontalHarmonyCapsuleSlider(
+    valueFraction: Float,
+    valueLabel: String = "",
+    icon: ImageVector,
+    accentColor: Color,
+    lightIntensity: Float = 1.8f,
+    particleDensity: Float = 1.6f,
+    darkUseThemeColor: Boolean = false,
+    dayParticleColor: Color? = null,
+    interactive: Boolean = true,
+    iconCenterOffsetDp: Dp = 42.dp,
+    onValueChange: (Float) -> Unit,
+    onDoubleTapReset: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val pool = remember { OpticalParticlePool(180) }
+    var frameTick by remember { mutableLongStateOf(0L) }
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFrac by remember { mutableFloatStateOf(valueFraction.coerceIn(0f, 1f)) }
+    var prevFrac by remember { mutableFloatStateOf(valueFraction.coerceIn(0f, 1f)) }
+    var smoothSpeed by remember { mutableFloatStateOf(0f) }
+    var lastSize by remember { mutableStateOf(Size.Zero) }
+
+    LaunchedEffect(valueFraction, isDragging) {
+        if (!isDragging) {
+            dragFrac = valueFraction.coerceIn(0f, 1f)
+        }
+    }
+
+    val activeEnergy by animateFloatAsState(
+        targetValue = if (isDragging && interactive) 1f else 0f,
+        animationSpec = tween(durationMillis = if (isDragging && interactive) 140 else 360),
+        label = "horizHarmonyEnergy"
+    )
+    val latestEnergy by rememberUpdatedState(activeEnergy)
+    val latestFrac by rememberUpdatedState(if (isDragging) dragFrac else valueFraction.coerceIn(0f, 1f))
+    val latestDensity by rememberUpdatedState(particleDensity)
+    val latestOnChange by rememberUpdatedState(onValueChange)
+    val latestOnReset by rememberUpdatedState(onDoubleTapReset)
+
+    LaunchedEffect(activeEnergy > 0.01f) {
+        var lastNs = 0L
+        while (latestEnergy > 0.01f || pool.particles.isNotEmpty()) {
+            withFrameNanos { ns ->
+                val dt = if (lastNs == 0L) 0.016f else ((ns - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.033f)
+                lastNs = ns
+                val fNow = latestFrac
+                val eNow = latestEnergy
+                val rawSpd = (abs(fNow - prevFrac) / dt * 1.4f).coerceAtMost(1.8f)
+                prevFrac = fNow
+                smoothSpeed += (rawSpd - smoothSpeed) * (dt * 10f).coerceAtMost(1f)
+                val w = lastSize.width
+                val h = lastSize.height
+                val cutX = w * fNow
+                pool.stepHorizontal(
+                    dt = dt,
+                    cutX = cutX,
+                    barW = w,
+                    barH = h,
+                    speed = smoothSpeed,
+                    densityMul = (latestDensity * eNow).coerceAtLeast(if (eNow > 0.08f) 0.65f else 0f),
+                    spawning = eNow > 0.08f && fNow in 0.005f..0.995f
+                )
+                frameTick = ns
+            }
+        }
+    }
+
+    val isLightTheme = MaterialTheme.colorScheme.background.luminance() >= 0.5f
+    val m3TrackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+    val clamped = latestFrac.coerceIn(0f, 1f)
+    val leftIconCovered = activeEnergy > 0.32f && clamped > 0.14f
+    val resolvedDayParticle = dayParticleColor ?: accentColor
+
+    val gestureMod = if (interactive) {
+        Modifier
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = { latestOnReset() }
+                )
+            }
+            .pointerInput(Unit) {
+                // 상대 드래그 방식: 어느 지점을 터치해도 값이 튀지 않고 현재 값에서 드래그량만큼 부드럽게 가감
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        isDragging = true
+                        dragFrac = latestFrac
+                    },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()
+                        if (size.width > 0) {
+                            dragFrac = (dragFrac + dragAmount / size.width.toFloat()).coerceIn(0f, 1f)
+                            latestOnChange(dragFrac)
+                        }
+                    }
+                )
+            }
+    } else {
+        Modifier
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(70.dp)
+            .clip(RoundedCornerShape(35.dp))
+            .then(gestureMod)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            lastSize = size
+            @Suppress("UNUSED_EXPRESSION")
+            frameTick
+
+            val w = size.width
+            val h = size.height
+            val rPx = h * 0.5f
+            val e = activeEnergy.coerceIn(0f, 1f)
+            val clipShape = Path().apply {
+                addRoundRect(RoundRect(Rect(0f, 0f, w, h), CornerRadius(rPx, rPx)))
+            }
+
+            clipPath(clipShape) {
+                // 1) M3 버튼 톤과 동일한 캡슐 트랙 배경
+                drawRect(color = m3TrackColor)
+
+                // 2) 미터치 상태(90도 회전 하모니 캡슐): 5.5dp 동심 인셋 + 좌측 둥근 끝 + 우측 직선 절단면
+                val insetPx = 5.5.dp.toPx()
+                val innerH = (h - insetPx * 2f).coerceAtLeast(1f)
+                val innerR = innerH * 0.5f
+                val cutX = (w * clamped).coerceIn(0f, w)
+                val fillW = (cutX - insetPx).coerceAtLeast(0f)
+                val calmAlpha = (1f - e * 0.92f).coerceIn(0f, 1f)
+                if (fillW > 1f && calmAlpha > 0.01f) {
+                    val flatRightPath = Path().apply {
+                        addRoundRect(
+                            RoundRect(
+                                rect = Rect(insetPx, insetPx, insetPx + fillW, insetPx + innerH),
+                                topLeft = CornerRadius(innerR, innerR),
+                                bottomLeft = CornerRadius(innerR, innerR),
+                                topRight = CornerRadius.Zero,
+                                bottomRight = CornerRadius.Zero
+                            )
+                        )
+                    }
+                    drawPath(
+                        path = flatRightPath,
+                        brush = Brush.horizontalGradient(
+                            0.0f to accentColor.copy(alpha = 0.16f * calmAlpha),
+                            1.0f to accentColor.copy(alpha = 0.30f * calmAlpha),
+                            startX = insetPx,
+                            endX = (insetPx + fillW).coerceAtLeast(insetPx + 1f)
+                        )
+                    )
+                    val edgeW = 1.5.dp.toPx()
+                    drawRect(
+                        color = accentColor.copy(alpha = (if (isLightTheme) 0.68f else 0.62f) * calmAlpha),
+                        topLeft = Offset((insetPx + fillW - edgeW).coerceAtLeast(insetPx), insetPx),
+                        size = Size(edgeW, innerH)
+                    )
+                }
+
+                // 3) 터치/드래그 상태(140ms 점등 -> 360ms 잔광 복귀): 전체 높이 M3 톤 + HDR 광감 커튼 + 1.5dp 경계선
+                if (e > 0.01f && cutX > 1f) {
+                    val baseFill = if (isLightTheme || darkUseThemeColor) {
+                        accentColor.copy(alpha = 0.86f * e)
+                    } else {
+                        accentColor.copy(alpha = 0.68f * e)
+                    }
+                    drawRect(color = baseFill, topLeft = Offset.Zero, size = Size(cutX, h))
+
+                    val curtainW = (w * (0.28f + smoothSpeed.coerceIn(0f, 1f) * 0.14f) * (0.82f + 0.18f * lightIntensity))
+                        .coerceIn(22f, w * 0.52f)
+                    val startX = (cutX - curtainW).coerceAtLeast(0f)
+                    val peakAlpha = (0.96f * e * (0.82f + 0.18f * lightIntensity)).coerceIn(0f, 1f)
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            0.0f to Color.Transparent,
+                            0.52f to Color(0xFFEAF2FF).copy(alpha = peakAlpha * (if (isLightTheme) 0.42f else 0.54f)),
+                            0.85f to Color.White.copy(alpha = peakAlpha * (if (isLightTheme) 0.84f else 0.96f)),
+                            1.0f to Color.White.copy(alpha = peakAlpha),
+                            startX = startX,
+                            endX = cutX.coerceAtLeast(startX + 1f)
+                        ),
+                        topLeft = Offset(startX, 0f),
+                        size = Size(cutX - startX, h)
+                    )
+                    val cutEdgeW = 1.5.dp.toPx()
+                    drawRect(
+                        color = Color.White.copy(alpha = (0.98f * e).coerceIn(0f, 1f)),
+                        topLeft = Offset((cutX - cutEdgeW).coerceAtLeast(0f), 0f),
+                        size = Size(cutEdgeW, h)
+                    )
+                }
+
+                // 4) 양방향 개별 입자 풀 (야간 순백 가산발광 / 주간 파티클 색감 SrcOver)
+                val blend = if (isLightTheme) BlendMode.SrcOver else BlendMode.Plus
+                val pColor = if (isLightTheme) resolvedDayParticle else Color.White
+                for (i in 0 until pool.particles.size) {
+                    val pt = pool.particles[i]
+                    val t = (pt.life / pt.maxLife).coerceIn(0f, 1f)
+                    val distNorm = (abs(pt.x - cutX) / pt.maxDist).coerceIn(0f, 1f)
+                    val env = sin((t * 4f).coerceAtMost(1f) * (PI.toFloat() * 0.5f)) *
+                        (1f - t).pow(1.35f) * (1f - distNorm).pow(1.65f)
+                    val tw = 0.45f + 0.55f * sin(pt.life * pt.freq + pt.phase)
+                    val a = (env * tw * (0.35f + 0.65f * e)).coerceIn(0f, 1f)
+                    if (a < 0.025f) continue
+                    drawCircle(
+                        color = pColor.copy(alpha = a),
+                        radius = pt.radius,
+                        center = Offset(pt.x, pt.y),
+                        blendMode = blend
+                    )
+                }
+
+                // 5) 1.5dp M3 외곽 글래스 림
+                val rimColor = if (isLightTheme) {
+                    accentColor.copy(alpha = (0.34f + 0.36f * e).coerceIn(0f, 0.78f))
+                } else {
+                    if (e > 0.2f) Color.White.copy(alpha = (0.36f + 0.44f * e).coerceIn(0f, 0.82f))
+                    else accentColor.copy(alpha = 0.38f)
+                }
+                drawRoundRect(
+                    color = rimColor,
+                    cornerRadius = CornerRadius(rPx, rPx),
+                    style = Stroke(width = 1.5.dp.toPx())
+                )
+            }
+        }
+
+        // 좌측 확대경 아이콘 (1열 중심 수직축 0dp 정밀 정렬, 숫자/화살표 없음)
+        val iconStartPad = (iconCenterOffsetDp - 11.dp).coerceAtLeast(12.dp)
+        val iconTint = when {
+            leftIconCovered && isLightTheme -> Color.White
+            leftIconCovered && !isLightTheme -> Color(0xFF090D16)
+            else -> MaterialTheme.colorScheme.onSurface
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = iconStartPad),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            EgoIcon(
+                imageVector = icon,
+                contentDescription = "페이지 확대",
+                tint = iconTint,
+                modifier = Modifier.size(22.dp),
+                symbolSize = 22.dp
+            )
         }
     }
 }
