@@ -1802,3 +1802,126 @@ fun ToolbarToQuickMenuDragGhost(
         )
     }
 }
+
+@Composable
+fun ToolbarEditDragCaptureOverlay(
+    tbIconsRootPos: Offset,
+    modifier: Modifier = Modifier,
+    onDraggingChanged: (key: String?, rootPos: Offset, inQsZone: Boolean) -> Unit
+) {
+    val haptic = LocalHapticFeedback.current
+    val latestRootPos by rememberUpdatedState(tbIconsRootPos)
+    val latestOnChanged by rememberUpdatedState(onDraggingChanged)
+    Box(
+        modifier = modifier
+            .pointerInput("real_toolbar_edit_drag_overlay") {
+                val downThresholdPx = 38.dp.toPx()
+                val stepXPx = 34.dp.toPx()
+                var activeTbKey: String? = null
+                var accumX = 0f
+                var accumY = 0f
+                var fingerLocal = Offset.Zero
+                val tbToQsMap = mapOf(
+                    "MCP" to "mcp", "AI" to "aispace", "TRANSLATE" to "translate",
+                    "DARKMODE" to "dark", "NEW_TAB" to "newtab", "SHARE" to "share",
+                    "FIND" to "find", "DESKTOP" to "desktop", "READER" to "reader"
+                )
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { startPos ->
+                        val p = SpaceManager.preferences.value
+                        val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+                        val ord = p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }
+                        val enabled = ord.filter { k ->
+                            when (k) {
+                                "MCP" -> p.showMcpBadgeButton
+                                "ADBLOCK" -> p.showAdBlockButton
+                                "TRANSLATE" -> p.showTranslateButton
+                                "DARKMODE" -> p.showDarkModeButton
+                                "NEW_TAB" -> p.showNewTabToolbarButton
+                                "SHARE" -> p.showShareButton
+                                "FIND" -> p.showFindInPageButton
+                                "DESKTOP" -> p.showDesktopSiteButton
+                                "READER" -> p.showReaderModeButton
+                                "PROFILE" -> p.showProfileAvatarButton
+                                else -> false
+                            }
+                        }
+                        if (enabled.isNotEmpty() && size.width > 0) {
+                            val slotW = size.width.toFloat() / enabled.size.toFloat()
+                            val idx = (startPos.x / slotW).toInt().coerceIn(0, enabled.lastIndex)
+                            val picked = enabled[idx]
+                            activeTbKey = picked
+                            accumX = 0f
+                            accumY = 0f
+                            fingerLocal = startPos
+                            latestOnChanged(picked, latestRootPos + startPos, false)
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    },
+                    onDragEnd = {
+                        val k = activeTbKey
+                        val droppedInQs = accumY > downThresholdPx
+                        activeTbKey = null
+                        latestOnChanged(null, Offset.Zero, false)
+                        if (k != null && droppedInQs) {
+                            val qsKey = tbToQsMap[k]
+                            if (qsKey != null) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                SpaceManager.updatePreferences { p ->
+                                    val curQs = p.quickMenuLayout.toMutableList()
+                                    curQs.removeAll { it == "hide:$qsKey" || it.startsWith("$qsKey:") }
+                                    curQs.add(0, "$qsKey:1")
+                                    val updated = p.copy(quickMenuLayout = curQs)
+                                    when (k) {
+                                        "MCP" -> updated.copy(showMcpBadgeButton = false)
+                                        "TRANSLATE" -> updated.copy(showTranslateButton = false)
+                                        "DARKMODE" -> updated.copy(showDarkModeButton = false)
+                                        "NEW_TAB" -> updated.copy(showNewTabToolbarButton = false)
+                                        "SHARE" -> updated.copy(showShareButton = false)
+                                        "FIND" -> updated.copy(showFindInPageButton = false)
+                                        "DESKTOP" -> updated.copy(showDesktopSiteButton = false)
+                                        "READER" -> updated.copy(showReaderModeButton = false)
+                                        else -> updated
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    onDragCancel = {
+                        activeTbKey = null
+                        latestOnChanged(null, Offset.Zero, false)
+                    },
+                    onDrag = { change, dragAmount ->
+                        val k = activeTbKey ?: return@detectDragGesturesAfterLongPress
+                        change.consume()
+                        accumX += dragAmount.x
+                        accumY += dragAmount.y
+                        fingerLocal += dragAmount
+                        val inQs = accumY > downThresholdPx
+                        latestOnChanged(k, latestRootPos + fingerLocal, inQs)
+                        if (!inQs) {
+                            val dir = when {
+                                accumX >= stepXPx -> 1
+                                accumX <= -stepXPx -> -1
+                                else -> 0
+                            }
+                            if (dir != 0) {
+                                accumX = 0f
+                                val p = SpaceManager.preferences.value
+                                val base = listOf("MCP", "AI", "ADBLOCK", "TRANSLATE", "DARKMODE", "NEW_TAB", "SHARE", "FIND", "DESKTOP", "READER", "PROFILE")
+                                val full = (p.toolbarButtonOrder.filter { it in base } + base.filter { it !in p.toolbarButtonOrder }).toMutableList()
+                                val fi = full.indexOf(k)
+                                val ti = (fi + dir).coerceIn(0, full.lastIndex)
+                                if (fi >= 0 && ti != fi) {
+                                    full.removeAt(fi)
+                                    full.add(ti, k)
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    SpaceManager.updatePreferences { it.copy(toolbarButtonOrder = full) }
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+    )
+}
