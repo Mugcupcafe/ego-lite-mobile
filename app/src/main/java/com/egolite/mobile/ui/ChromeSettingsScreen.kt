@@ -74,6 +74,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Offset
@@ -2371,7 +2373,7 @@ private fun ToolbarCustomPreviewCard(
         }
 
         // =========================================================================
-        // ZONE ② 빠른메뉴 통합 미리보기 (4열 · 편집 전용 · 탭 ON/OFF 및 확대 조절 비활성)
+        // ZONE ② 빠른메뉴 통합 미리보기 (4열 · 편집 전용 · 잘림 0% · 롱프레스 이동 · 툴바↔빠른메뉴 이동)
         // =========================================================================
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
         val defaultQsLayout = remember {
@@ -2397,6 +2399,9 @@ private fun ToolbarCustomPreviewCard(
                 Triple("download", "다운로드", Icons.Default.Download),
                 Triple("recent", "최근 탭", Icons.Default.Tab),
                 Triple("share", "공유", Icons.Default.Share),
+                Triple("find", "페이지 내 찾기", Icons.Default.FindInPage),
+                Triple("desktop", "데스크톱", Icons.Default.DesktopWindows),
+                Triple("reader", "리더 모드", Icons.Default.MenuBook),
                 Triple("clear", "기록 삭제", Icons.Default.DeleteOutline),
                 Triple("settings", "설정", Icons.Default.Settings),
                 Triple("mcp", "MCP 연결", Icons.Default.Hub),
@@ -2404,9 +2409,62 @@ private fun ToolbarCustomPreviewCard(
             )
         }
         val qsCatalogMap = remember(qsCatalog) { qsCatalog.associateBy { it.first } }
-        val activeQsTokens = remember(prefs.quickMenuLayout) {
-            prefs.quickMenuLayout.ifEmpty { defaultQsLayout }
+        // 빠른메뉴 키 <-> 주소창 툴바 키 1:1 매핑 (양방향 이동 지원)
+        val qsToToolbarKey = remember {
+            mapOf(
+                "newtab" to "NEW_TAB",
+                "aispace" to "AI",
+                "dark" to "DARKMODE",
+                "share" to "SHARE",
+                "find" to "FIND",
+                "desktop" to "DESKTOP",
+                "reader" to "READER",
+                "mcp" to "MCP"
+            )
         }
+        val toolbarToQsKey = remember(qsToToolbarKey) { qsToToolbarKey.entries.associate { (k, v) -> v to k } }
+
+        fun setToolbarKeyEnabled(tbKey: String, enabled: Boolean) {
+            SpaceManager.updatePreferences { p ->
+                when (tbKey) {
+                    "MCP" -> p.copy(showMcpBadgeButton = enabled)
+                    "AI" -> p.copy(showAiCommandButton = enabled)
+                    "ADBLOCK" -> p.copy(showAdBlockButton = enabled)
+                    "TRANSLATE" -> p.copy(showTranslateButton = enabled)
+                    "DARKMODE" -> p.copy(showDarkModeButton = enabled)
+                    "NEW_TAB" -> p.copy(showNewTabToolbarButton = enabled)
+                    "SHARE" -> p.copy(showShareButton = enabled)
+                    "FIND" -> p.copy(showFindInPageButton = enabled)
+                    "DESKTOP" -> p.copy(showDesktopSiteButton = enabled)
+                    "READER" -> p.copy(showReaderModeButton = enabled)
+                    "PROFILE" -> p.copy(showProfileAvatarButton = enabled)
+                    else -> p
+                }
+            }
+        }
+
+        // 미등록 레거시 키 필터링 + 중복 키 제거로 Tune 아이콘 중복 버그 완전 해소!
+        val activeQsTokens = remember(prefs.quickMenuLayout, qsCatalogMap) {
+            val raw = prefs.quickMenuLayout.ifEmpty { defaultQsLayout }
+            val seen = mutableSetOf<String>()
+            val cleaned = mutableListOf<String>()
+            for (tok in raw) {
+                when {
+                    tok.startsWith("div:") -> if (seen.add(tok)) cleaned.add(tok)
+                    tok.startsWith("hide:") -> {
+                        val k = tok.removePrefix("hide:")
+                        if (k in qsCatalogMap && seen.add(tok)) cleaned.add(tok)
+                    }
+                    else -> {
+                        val k = tok.substringBefore(':')
+                        if (k in qsCatalogMap && seen.add("tile:$k")) cleaned.add(tok)
+                    }
+                }
+            }
+            cleaned
+        }
+        val latestActiveQsTokens by rememberUpdatedState(activeQsTokens)
+
         val qsVisibleEntries = remember(activeQsTokens) {
             activeQsTokens.filter { !it.startsWith("hide:") }
         }
@@ -2418,9 +2476,55 @@ private fun ToolbarCustomPreviewCard(
         }
 
         fun updateQsTokens(transform: (MutableList<String>) -> Unit) {
-            val next = activeQsTokens.toMutableList()
+            val next = latestActiveQsTokens.toMutableList()
             transform(next)
             SpaceManager.updatePreferences { it.copy(quickMenuLayout = next) }
+        }
+
+        // 툴바 -> 빠른메뉴로 바로 내리기 칩 행
+        val transferableToolbarKeys = remember(enabledKeys, toolbarToQsKey) {
+            enabledKeys.filter { it in toolbarToQsKey }
+        }
+        if (transferableToolbarKeys.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "툴바→빠른메뉴:",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                transferableToolbarKeys.forEach { tbKey ->
+                    val qsKey = toolbarToQsKey[tbKey] ?: return@forEach
+                    val meta = qsCatalogMap[qsKey]
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.clickable {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            setToolbarKeyEnabled(tbKey, false)
+                            updateQsTokens { list ->
+                                list.removeAll { it == "hide:$qsKey" || it.startsWith("$qsKey:") }
+                                list.add(1.coerceAtMost(list.size), "$qsKey:1")
+                            }
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            EgoIcon(Icons.Default.ArrowDownward, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp), symbolSize = 12.dp)
+                            Text(meta?.second ?: tbKey, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+            }
         }
 
         Row(
@@ -2431,7 +2535,7 @@ private fun ToolbarCustomPreviewCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text("빠른메뉴 통합 미리보기 (4열)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "편집 전용 · 탭 ON/OFF 및 확대 조절 비활성 · 확대바 꾹 눌러 위치 이동",
+                    "길게 눌러 위치 이동 · 우하단 핸들 크기조절 · ↑ 툴바 올리기 · − 보관함",
                     fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2492,7 +2596,6 @@ private fun ToolbarCustomPreviewCard(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 4열 행 단위 패킹
                 val packedRows = remember(qsVisibleEntries) {
                     val out = mutableListOf<List<Pair<Int, String>>>()
                     var curRow = mutableListOf<Pair<Int, String>>()
@@ -2528,7 +2631,7 @@ private fun ToolbarCustomPreviewCard(
                 packedRows.forEach { rowItems ->
                     val first = rowItems.first()
                     if (first.second.startsWith("div:")) {
-                        val divIdx = first.first
+                        val divTok = first.second
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2546,10 +2649,7 @@ private fun ToolbarCustomPreviewCard(
                                 modifier = Modifier
                                     .size(22.dp)
                                     .clickable {
-                                        updateQsTokens { list ->
-                                            val visIdx = list.indexOfFirst { it == first.second }
-                                            if (visIdx >= 0) list.removeAt(visIdx)
-                                        }
+                                        updateQsTokens { list -> list.removeAll { it == divTok } }
                                     }
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -2560,30 +2660,37 @@ private fun ToolbarCustomPreviewCard(
                     } else if (first.second.startsWith("zoom:")) {
                         var zDragging by remember { mutableStateOf(false) }
                         var zAccumY by remember { mutableFloatStateOf(0f) }
+                        var zLiftY by remember { mutableFloatStateOf(0f) }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(70.dp)
+                                .zIndex(if (zDragging) 20f else 0f)
+                                .graphicsLayer {
+                                    scaleX = if (zDragging) 1.03f else 1f
+                                    scaleY = if (zDragging) 1.03f else 1f
+                                    translationY = if (zDragging) zLiftY else 0f
+                                }
                                 .border(
                                     width = if (zDragging) 2.dp else 1.dp,
                                     color = if (zDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.25f),
                                     shape = RoundedCornerShape(35.dp)
                                 )
-                                .pointerInput("settings_zoom_drag_${first.first}") {
-                                    val stepY = 46.dp.toPx()
+                                .pointerInput("settings_zoom_drag") {
+                                    val stepY = 44.dp.toPx()
                                     detectDragGesturesAfterLongPress(
                                         onDragStart = {
-                                            zDragging = true
-                                            zAccumY = 0f
+                                            zDragging = true; zAccumY = 0f; zLiftY = 0f
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         },
-                                        onDragEnd = { zDragging = false; zAccumY = 0f },
-                                        onDragCancel = { zDragging = false; zAccumY = 0f },
+                                        onDragEnd = { zDragging = false; zAccumY = 0f; zLiftY = 0f },
+                                        onDragCancel = { zDragging = false; zAccumY = 0f; zLiftY = 0f },
                                         onDrag = { change, dragAmount ->
                                             change.consume()
                                             zAccumY += dragAmount.y
+                                            zLiftY = (zLiftY + dragAmount.y * 0.35f).coerceIn(-36f, 36f)
                                             if (zAccumY <= -stepY) {
-                                                zAccumY = 0f
+                                                zAccumY = 0f; zLiftY = 0f
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                 updateQsTokens { list ->
                                                     val i = list.indexOfFirst { it.startsWith("zoom:") }
@@ -2593,7 +2700,7 @@ private fun ToolbarCustomPreviewCard(
                                                     }
                                                 }
                                             } else if (zAccumY >= stepY) {
-                                                zAccumY = 0f
+                                                zAccumY = 0f; zLiftY = 0f
                                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                 updateQsTokens { list ->
                                                     val i = list.indexOfFirst { it.startsWith("zoom:") }
@@ -2609,6 +2716,7 @@ private fun ToolbarCustomPreviewCard(
                         ) {
                             HorizontalHarmonyCapsuleSlider(
                                 valueFraction = 0.5f,
+                                valueLabel = "100%",
                                 icon = Icons.Default.Search,
                                 accentColor = MaterialTheme.colorScheme.primary,
                                 lightIntensity = prefs.progressLightIntensity,
@@ -2633,53 +2741,114 @@ private fun ToolbarCustomPreviewCard(
                                 val meta = qsCatalogMap[key]
                                 val label = meta?.second ?: key
                                 val iconVec = meta?.third ?: Icons.Default.Tune
+                                val matchingTbKey = qsToToolbarKey[key]
                                 val isSingle = sp == 1
                                 val tileShape = RoundedCornerShape(35.dp)
 
-                                // 설정 화면에서는 탭 시 ON/OFF 토글 동작 안 함 (크기 순환/숨기기/이동만)
+                                var lifted by remember(key) { mutableStateOf(false) }
+                                var liftX by remember(key) { mutableFloatStateOf(0f) }
+                                var liftY by remember(key) { mutableFloatStateOf(0f) }
+                                var accX by remember(key) { mutableFloatStateOf(0f) }
+                                var accY by remember(key) { mutableFloatStateOf(0f) }
+
+                                // 외곽 Box는 clip하지 않음 -> '-' 버튼, '↑' 툴바 이동 버튼, 우하단 크기조절 핸들 잘림 0%!
                                 Box(
                                     modifier = Modifier
                                         .weight(sp.toFloat())
                                         .height(70.dp)
-                                        .clip(tileShape)
-                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                                ) {
-                                    if (isSingle) {
-                                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                            EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp), symbolSize = 22.dp)
+                                        .zIndex(if (lifted) 24f else 0f)
+                                        .graphicsLayer {
+                                            scaleX = if (lifted) 1.07f else 1f
+                                            scaleY = if (lifted) 1.07f else 1f
+                                            translationX = if (lifted) liftX else 0f
+                                            translationY = if (lifted) liftY else 0f
                                         }
-                                    } else {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .padding(start = 20.dp, end = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier.size(44.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(21.dp), symbolSize = 21.dp)
-                                            }
-                                            Text(
-                                                text = label,
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                        .pointerInput("settings_tile_drag_$key") {
+                                            val stepX = 52.dp.toPx()
+                                            val stepY = 56.dp.toPx()
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = {
+                                                    lifted = true; liftX = 0f; liftY = 0f; accX = 0f; accY = 0f
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                },
+                                                onDragEnd = { lifted = false; liftX = 0f; liftY = 0f; accX = 0f; accY = 0f },
+                                                onDragCancel = { lifted = false; liftX = 0f; liftY = 0f; accX = 0f; accY = 0f },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    liftX = (liftX + dragAmount.x * 0.45f).coerceIn(-64f, 64f)
+                                                    liftY = (liftY + dragAmount.y * 0.45f).coerceIn(-64f, 64f)
+                                                    accX += dragAmount.x
+                                                    accY += dragAmount.y
+                                                    val delta = when {
+                                                        accX >= stepX -> { accX = 0f; liftX = 0f; 1 }
+                                                        accX <= -stepX -> { accX = 0f; liftX = 0f; -1 }
+                                                        accY >= stepY -> { accY = 0f; liftY = 0f; 2 }
+                                                        accY <= -stepY -> { accY = 0f; liftY = 0f; -2 }
+                                                        else -> 0
+                                                    }
+                                                    if (delta != 0) {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        updateQsTokens { list ->
+                                                            val curIdx = list.indexOfFirst { it.startsWith("$key:") }
+                                                            if (curIdx >= 0) {
+                                                                val visEnd = list.indexOfLast { !it.startsWith("hide:") }.coerceAtLeast(0)
+                                                                val nextIdx = (curIdx + delta).coerceIn(0, visEnd)
+                                                                if (nextIdx != curIdx) {
+                                                                    val item = list.removeAt(curIdx)
+                                                                    list.add(nextIdx, item)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             )
                                         }
+                                ) {
+                                    // 내부 클립된 타일 본체 (설정에서는 탭 ON/OFF 비활성)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(tileShape)
+                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                            .then(
+                                                if (lifted) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, tileShape)
+                                                else Modifier
+                                            )
+                                    ) {
+                                        if (isSingle) {
+                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp), symbolSize = 22.dp)
+                                            }
+                                        } else {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .padding(start = 20.dp, end = 12.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                                                    EgoIcon(iconVec, contentDescription = label, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(21.dp), symbolSize = 21.dp)
+                                                }
+                                                Text(
+                                                    text = label,
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
                                     }
-                                    // 좌상단 숨기기(보관함으로 빼기)
+
+                                    // 좌상단 '-' 보관함으로 빼기 (잘림 없음!)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopStart)
-                                            .padding(4.dp)
-                                            .size(18.dp)
+                                            .size(21.dp)
                                             .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.9f))
+                                            .background(EgoDangerRed)
                                             .clickable {
                                                 updateQsTokens { list ->
                                                     list.removeAll { it.startsWith("$key:") }
@@ -2688,9 +2857,32 @@ private fun ToolbarCustomPreviewCard(
                                             },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        EgoIcon(Icons.Default.Remove, contentDescription = "보관함으로 빼기", tint = EgoDangerRed, modifier = Modifier.size(12.dp), symbolSize = 12.dp)
+                                        EgoIcon(Icons.Default.Remove, contentDescription = "보관함으로 빼기", tint = Color.White, modifier = Modifier.size(13.dp), symbolSize = 13.dp)
                                     }
-                                    // 우하단 크기 조절 (1->2->3->4->1 순환)
+
+                                    // 우상단 '↑' 상단 툴바로 바로 올리기 (툴바 호환 버튼만 표시!)
+                                    if (matchingTbKey != null) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .size(21.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primary)
+                                                .clickable {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    setToolbarKeyEnabled(matchingTbKey, true)
+                                                    updateQsTokens { list ->
+                                                        list.removeAll { it.startsWith("$key:") }
+                                                        if ("hide:$key" !in list) list.add("hide:$key")
+                                                    }
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            EgoIcon(Icons.Default.ArrowUpward, contentDescription = "상단 툴바로 이동", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(13.dp), symbolSize = 13.dp)
+                                        }
+                                    }
+
+                                    // 우하단 두꺼운 호흡 크기조절 핸들 (1->2->3->4->1, 잘림 없음!)
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.BottomEnd)
@@ -2706,18 +2898,18 @@ private fun ToolbarCustomPreviewCard(
                                     ) {
                                         Canvas(
                                             modifier = Modifier
-                                                .size(22.dp)
-                                                .padding(end = 3.dp, bottom = 3.dp)
+                                                .size(24.dp)
+                                                .padding(end = 2.dp, bottom = 2.dp)
                                         ) {
-                                            val arcSize = size.minDimension * 1.75f
+                                            val arcSize = size.minDimension * 1.80f
                                             drawArc(
-                                                color = Color.White.copy(alpha = 0.72f),
+                                                color = Color.White.copy(alpha = 0.78f),
                                                 startAngle = 8f,
                                                 sweepAngle = 74f,
                                                 useCenter = false,
                                                 topLeft = Offset(size.width - arcSize, size.height - arcSize),
                                                 size = Size(arcSize, arcSize),
-                                                style = Stroke(width = 4.5.dp.toPx(), cap = StrokeCap.Round)
+                                                style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
                                             )
                                         }
                                     }
@@ -2774,7 +2966,6 @@ private fun ToolbarCustomPreviewCard(
                 }
             }
         }
-
     }
 }
 
