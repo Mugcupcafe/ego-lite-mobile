@@ -177,6 +177,25 @@ private fun buildMorphedBuddyPath(
  * Fixed reserved slot width for the top-left M3 buddy strip (34dp each, 3dp resting gap).
  * Adjacent Row 1 page tabs use this fixed width so they never shift left when buddies huddle.
  */
+private fun buildRadiiBuddyPath(
+    radii: FloatArray,
+    centerX: Float,
+    centerY: Float,
+    radius: Float
+): Path {
+    val samples = radii.size
+    val path = Path()
+    for (i in 0 until samples) {
+        val theta = (i.toDouble() / samples.toDouble()) * 2.0 * PI
+        val r = radius * radii[i]
+        val x = centerX + (cos(theta) * r).toFloat()
+        val y = centerY + (sin(theta) * r).toFloat()
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    path.close()
+    return path
+}
+
 fun buddySlotWidthDp(spaces: List<BrowserSpace>): Dp {
     val visibleCount = spaces.size.coerceIn(1, 5)
     return (visibleCount * 34 + (visibleCount - 1) * 3 + 8).dp
@@ -343,22 +362,54 @@ fun M3ExpressiveBuddyAvatar(
         }
     }
 
-    val motionTargetShape = when (resolvedMotion) {
-        McpActionMotion.NAVIGATE, McpActionMotion.SCROLL -> M3BuddyShape.PEBBLE
-        McpActionMotion.READ_MD, McpActionMotion.SCREENSHOT -> M3BuddyShape.SQUIRCLE
-        McpActionMotion.FILL, McpActionMotion.CMD_RECV -> M3BuddyShape.PILLOW
-        McpActionMotion.CLICK, McpActionMotion.TAKEOVER -> M3BuddyShape.CIRCLE
-        McpActionMotion.EXEC_JS, McpActionMotion.RESEARCH -> M3BuddyShape.SCALLOP
-        McpActionMotion.ERROR -> M3BuddyShape.DIAMOND
-        else -> targetShape
+    val desiredShape = when {
+        morphProgress > 0.5f -> targetShape
+        resolvedMotion == McpActionMotion.NAVIGATE || resolvedMotion == McpActionMotion.SCROLL -> M3BuddyShape.PEBBLE
+        resolvedMotion == McpActionMotion.READ_MD || resolvedMotion == McpActionMotion.SCREENSHOT -> M3BuddyShape.SQUIRCLE
+        resolvedMotion == McpActionMotion.FILL || resolvedMotion == McpActionMotion.CMD_RECV -> M3BuddyShape.PILLOW
+        resolvedMotion == McpActionMotion.CLICK || resolvedMotion == McpActionMotion.TAKEOVER -> M3BuddyShape.CIRCLE
+        resolvedMotion == McpActionMotion.EXEC_JS || resolvedMotion == McpActionMotion.RESEARCH -> M3BuddyShape.SCALLOP
+        resolvedMotion == McpActionMotion.ERROR -> M3BuddyShape.DIAMOND
+        else -> baseShape
     }
-    val motionShapeBlend by animateFloatAsState(
-        targetValue = if (motionActive) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.74f, stiffness = 260f),
-        label = "mcpShapeBlend"
-    )
-    val effectiveTargetShape = if (motionShapeBlend > 0.01f) motionTargetShape else targetShape
-    val effectiveMorphProgress = maxOf(morphProgress, motionShapeBlend)
+    // 64-정점 연속 극좌표 버퍼: 어떤 셰이프에서 다른 셰이프로 바뀌어도 절대 끊기지 않고 액체처럼 연속 모핑!
+    val liveRadii = remember {
+        FloatArray(64) { i ->
+            sampleShapeRadius(baseShape, (i.toDouble() / 64.0) * 2.0 * PI).toFloat()
+        }
+    }
+    var radiiFrameTick by remember { mutableLongStateOf(0L) }
+    val latestDesiredShape by rememberUpdatedState(desiredShape)
+    val latestMorphP by rememberUpdatedState(morphProgress)
+
+    LaunchedEffect(desiredShape, morphProgress > 0.01f) {
+        var lastNs = 0L
+        while (true) {
+            var maxDiff = 0f
+            withFrameNanos { ns ->
+                val dt = if (lastNs == 0L) 0.016f else ((ns - lastNs) / 1_000_000_000f).coerceIn(0.004f, 0.033f)
+                lastNs = ns
+                val kShape = (dt * 9.5f).coerceAtMost(1f)
+                val targetS = latestDesiredShape
+                val mp = latestMorphP.coerceIn(0f, 1f)
+                for (i in 0 until 64) {
+                    val th = (i.toDouble() / 64.0) * 2.0 * PI
+                    val goalR = if (mp in 0.01f..0.99f && !motionActive) {
+                        val r0 = sampleShapeRadius(baseShape, th).toFloat()
+                        val r1 = sampleShapeRadius(targetShape, th).toFloat()
+                        r0 + (r1 - r0) * mp
+                    } else {
+                        sampleShapeRadius(targetS, th).toFloat()
+                    }
+                    val diff = goalR - liveRadii[i]
+                    if (abs(diff) > maxDiff) maxDiff = abs(diff)
+                    liveRadii[i] += diff * kShape
+                }
+                radiiFrameTick = ns
+            }
+            if (maxDiff < 0.002f && latestMorphP !in 0.01f..0.99f) break
+        }
+    }
     val effectiveSquinting = isSquinting || smoothShutter > 0.45f
 
     val tiltDeg = if (!isSquinting) smoothRot else 0f
@@ -380,14 +431,17 @@ fun M3ExpressiveBuddyAvatar(
         val cy = this.size.height / 2f
         val r = this.size.minDimension * 0.47f
 
+        @Suppress("UNUSED_EXPRESSION")
+        radiiFrameTick
+
         // Subtle aura glow when AI is actively working
         if (glowPulse > 0.01f) {
-            val auraPath = buildMorphedBuddyPath(baseShape, effectiveTargetShape, effectiveMorphProgress, cx, cy, r * 1.13f)
+            val auraPath = buildRadiiBuddyPath(liveRadii, cx, cy, r * 1.13f)
             drawPath(path = auraPath, color = color.copy(alpha = glowPulse))
         }
 
-        // Main M3 geometric body
-        val bodyPath = buildMorphedBuddyPath(baseShape, effectiveTargetShape, effectiveMorphProgress, cx, cy, r)
+        // Main M3 64-vertex continuously morphed geometric body
+        val bodyPath = buildRadiiBuddyPath(liveRadii, cx, cy, r)
         drawPath(path = bodyPath, color = color)
 
         // Subtle specular top highlight for tactile depth
@@ -497,11 +551,20 @@ fun PillSpaceCapsule(
         val rest = spaces.filter { it.id != activeSpace.id }
         (listOf(activeSpace) + rest).take(5)
     }
-    val displaySpaces = remember(orderedCollapsed, activeSpace, isMonitorExpanded) {
-        if (isMonitorExpanded) listOf(activeSpace) else orderedCollapsed
-    }
-    val buddyCount = displaySpaces.size
-    val slotWidthDp = remember(buddyCount) { (buddyCount * 34 + (buddyCount - 1) * 3 + 8).dp }
+    // 접힘 <-> 펼침 인터럽트 가능 연속 스프링 모프 (진행 중 다시 눌러도 그 자리에서 즉시 유턴!)
+    val monitorMorph by animateFloatAsState(
+        targetValue = if (isMonitorExpanded) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.74f, stiffness = 270f),
+        label = "monitorExpandMorph"
+    )
+    val collapsedCount = orderedCollapsed.size.coerceAtLeast(1)
+    val targetSlotWidthDp = if (isMonitorExpanded) 42.dp else (collapsedCount * 34 + (collapsedCount - 1) * 3 + 8).dp
+    val slotWidthDp by animateDpAsState(
+        targetValue = targetSlotWidthDp,
+        animationSpec = spring(dampingRatio = 0.76f, stiffness = 280f),
+        label = "buddySlotWidthMorph"
+    )
+    val buddyCount = if (isMonitorExpanded) 1 else collapsedCount
     val slotWidthPx = with(density) { slotWidthDp.toPx() }
 
     val chipWidthPx = with(density) { 112.dp.toPx() }
@@ -664,20 +727,36 @@ fun PillSpaceCapsule(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(buddyGapDp)
         ) {
-            displaySpaces.forEachIndexed { idx, space ->
+            orderedCollapsed.forEachIndexed { idx, space ->
+                val isCompanion = idx > 0
+                if (isCompanion && monitorMorph >= 0.99f) return@forEachIndexed
                 val isPersonal = space.type == SpaceType.PERSONAL
                 val buddyColor = if (isPersonal) EgoCobalt else parseSpaceColor(space.accentColorHex, workingAccentColor)
                 val baseShape = if (isPersonal) M3BuddyShape.CIRCLE else buddyShapeForSpace(space.id, idx)
                 val targetShape = if (isPersonal) M3BuddyShape.CLOVER4 else morphTargetShape(baseShape)
+                val compAlpha = if (isCompanion) (1f - monitorMorph * 1.15f).coerceIn(0f, 1f) else 1f
+                val compScale = if (isCompanion) (1f - monitorMorph * 0.42f).coerceIn(0.45f, 1f) else 1f
+                val compShiftX = if (isCompanion) (-monitorMorph * (idx * 24f)) else 0f
+                val compShiftY = if (isCompanion) (monitorMorph * (28f + idx * 14f)) else 0f
+                // 펼침/접힘 도중 활성 버디도 부드러운 M3 셰이프 모프 펄스!
+                val activeEdgeMorph = if (!isCompanion) (sin(monitorMorph * PI.toFloat()) * 0.65f).coerceIn(0f, 1f) else monitorMorph
                 M3ExpressiveBuddyAvatar(
                     color = buddyColor,
                     baseShape = baseShape,
                     targetShape = targetShape,
-                    morphProgress = morphProgress,
+                    morphProgress = maxOf(morphProgress, activeEdgeMorph),
                     isSquinting = huddleActive,
                     aiStatus = if (isPersonal) AiSpaceStatus.IDLE else space.aiStatus,
+                    actionMotion = if (isPersonal) McpActionMotion.IDLE else space.aiActionMotion,
                     size = 34.dp,
-                    blinkSeed = idx + (space.id.hashCode() and 0xFF)
+                    blinkSeed = idx + (space.id.hashCode() and 0xFF),
+                    modifier = Modifier.graphicsLayer {
+                        alpha = compAlpha
+                        scaleX = compScale
+                        scaleY = compScale
+                        translationX = compShiftX.dp.toPx()
+                        translationY = compShiftY.dp.toPx()
+                    }
                 )
             }
         }
