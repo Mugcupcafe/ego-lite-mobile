@@ -262,6 +262,37 @@ object TranslationManager {
         ChunkResult(allTranslated, detected, totalOk)
     }
 
+    private suspend fun translateOnlineBatchWithFallback(
+        chunk: List<String>,
+        sourceLang: String,
+        targetLang: String
+    ): ChunkResult {
+        if (chunk.isEmpty()) return ChunkResult(emptyList(), sourceLang, 0)
+        val joined = chunk.joinToString("\n")
+        val res = callGoogleTranslateWithFallback(joined, sourceLang, targetLang)
+        if (res != null) {
+            val parts = res.first.split("\n")
+            if (parts.size == chunk.size) {
+                return ChunkResult(parts, res.second, parts.size)
+            }
+        }
+        // 줄 수가 어긋나거나 실패하면 개별 항목 폴백
+        var det = sourceLang
+        var ok = 0
+        val out = ArrayList<String>(chunk.size)
+        for (item in chunk) {
+            val single = callGoogleTranslateWithFallback(item, sourceLang, targetLang)
+            if (single != null) {
+                if (single.second.isNotBlank() && single.second != "auto" && det == "auto") det = single.second
+                out.add(single.first)
+                ok++
+            } else {
+                out.add(item)
+            }
+        }
+        return ChunkResult(out, det, ok)
+    }
+
     private suspend fun callGoogleTranslateWithFallback(
         text: String,
         sourceLang: String,
