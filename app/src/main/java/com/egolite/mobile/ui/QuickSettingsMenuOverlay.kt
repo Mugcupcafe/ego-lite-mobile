@@ -1,4 +1,13 @@
 package com.egolite.mobile.ui
+import androidx.compose.animation.core.animateFloat
+import com.egolite.mobile.browser.SpaceManager
+import androidx.compose.runtime.collectAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.FastOutSlowInEasing
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -12,6 +21,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -98,23 +108,23 @@ private sealed class QsRenderBlock {
 }
 
 private val DEFAULT_QUICK_MENU_LAYOUT: List<String> = listOf(
-    "mcp:2",
-    "aispace:1",
+    "zoom:4",
     "newtab:1",
     "incognito:1",
-    "bookmark:1",
+    "aispace:2",
+    "bmbar:2",
+    "dark:2",
     "div:d1",
+    "bookmark:1",
+    "site:1",
     "history:1",
     "download:1",
     "recent:1",
-    "site:1",
+    "share:1",
     "clear:1",
     "settings:1",
-    "div:d2",
-    "zoom:3",
-    "bmbar:2",
-    "dark:1",
-    "default_app:3"
+    "mcp:2",
+    "default_app:2"
 )
 
 private fun parseLayoutTokens(raw: List<String>): Pair<List<QsLayoutEntry>, Set<String>> {
@@ -135,7 +145,7 @@ private fun parseLayoutTokens(raw: List<String>): Pair<List<QsLayoutEntry>, Set<
                 val sep = token.lastIndexOf(':')
                 if (sep > 0) {
                     val key = token.substring(0, sep)
-                    val span = token.substring(sep + 1).toIntOrNull()?.coerceIn(1, 3) ?: 1
+                    val span = token.substring(sep + 1).toIntOrNull()?.coerceIn(1, 4) ?: 1
                     entries.add(QsLayoutEntry.Tile(key, span))
                 } else if (token.isNotBlank()) {
                     entries.add(QsLayoutEntry.Tile(token, 1))
@@ -151,7 +161,7 @@ private fun serializeLayoutTokens(entries: List<QsLayoutEntry>, hidden: Set<Stri
     for (e in entries) {
         when (e) {
             is QsLayoutEntry.Divider -> out.add("$QS_DIV_PREFIX${e.id}")
-            is QsLayoutEntry.Tile -> out.add("${e.key}:${e.span.coerceIn(1, 3)}")
+            is QsLayoutEntry.Tile -> out.add("${e.key}:${e.span.coerceIn(1, 4)}")
         }
     }
     for (h in hidden) out.add("$QS_HIDE_PREFIX$h")
@@ -175,7 +185,7 @@ private fun buildSectionIsolatedBlocks(
         val occupancy = mutableListOf<BooleanArray>()
 
         for (placed in currentSectionTiles) {
-            val sp = placed.span.coerceIn(1, 3)
+            val sp = placed.span.coerceIn(1, 4)
             var foundRow = -1
             var foundCol = -1
             outer@ for (r in occupancy.indices) {
@@ -218,7 +228,7 @@ private fun buildSectionIsolatedBlocks(
             is QsLayoutEntry.Tile -> {
                 val spec = itemByKey[entry.key]
                 if (spec != null) {
-                    currentSectionTiles.add(QsPlacedTile(spec, entry.span.coerceIn(1, 3), idx))
+                    currentSectionTiles.add(QsPlacedTile(spec, entry.span.coerceIn(1, 4), idx))
                 }
             }
         }
@@ -245,6 +255,7 @@ fun QuickSettingsBrowserMenuOverlay(
     onTileBoundsUpdated: (key: String, rect: Rect) -> Unit,
     onClearTileBounds: () -> Unit,
     onSaveLayout: (List<String>) -> Unit,
+    onSetZoomPercent: (Int) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -313,17 +324,17 @@ fun QuickSettingsBrowserMenuOverlay(
             )
         ) {
             Surface(
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(30.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLowest,
                 shadowElevation = 16.dp,
                 tonalElevation = 4.dp,
                 modifier = Modifier
-                    .width(344.dp)
-                    .heightIn(max = 620.dp)
+                    .width(384.dp)
+                    .heightIn(max = 760.dp)
                     .border(
                         1.dp,
                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                        RoundedCornerShape(24.dp)
+                        RoundedCornerShape(30.dp)
                     )
                     .clickable(
                         indication = null,
@@ -389,7 +400,7 @@ fun QuickSettingsBrowserMenuOverlay(
                     }
 
                     // 3열 섹션 격리 스크롤 영역
-                    val colWidthPx = with(density) { ((320.dp - 16.dp) / 3f).toPx() }
+                    val colWidthPx = with(density) { 84.dp.toPx() }
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -489,8 +500,9 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                     placed.spec.onClick()
                                                                 }
                                                             },
-                                                            onResizeSpan = { nextSpan ->
-                                                                val clamped = nextSpan.coerceIn(1, 3)
+                                                            onSetZoomPercent = onSetZoomPercent,
+                                        onResizeSpan = { nextSpan ->
+                                                                val clamped = nextSpan.coerceIn(1, 4)
                                                                 if (clamped != placed.span) {
                                                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                                     val mut = parsedEntries.toMutableList()
@@ -580,149 +592,228 @@ private fun QsMenuTile(
     colWidthPx: Float,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onSetZoomPercent: (Int) -> Unit = {},
     onResizeSpan: (Int) -> Unit,
     onMoveDelta: (Int) -> Unit,
     onHide: () -> Unit
 ) {
-    val isActiveToggle = spec.isToggleCheckbox && spec.checked
+    val prefs by SpaceManager.preferences.collectAsState()
+    val isZoomBar = spec.zoomPercent != null
+    val isActive = (spec.isToggleCheckbox && spec.checked) || spec.bold
+    val isSingle = span == 1 && !isZoomBar
     val accent = spec.accentColor ?: MaterialTheme.colorScheme.primary
-    val baseBg = when {
-        isHovered -> MaterialTheme.colorScheme.primaryContainer
-        isActiveToggle -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.86f)
-        else -> MaterialTheme.colorScheme.surfaceContainerHigh
-    }
-    val animBg by animateColorAsState(baseBg, tween(130), label = "qsTileBg")
-    val hoverScale by animateFloatAsState(if (isHovered) 1.045f else 1f, EgoMotion.responsiveSpring(), label = "qsTileScale")
-    val tileShape = RoundedCornerShape(18.dp)
-    val borderColor = when {
-        isHovered -> MaterialTheme.colorScheme.primary
-        editMode -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
-        isActiveToggle -> MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-        else -> Color.Transparent
-    }
-    val iconTint = when {
-        spec.accentColor != null -> spec.accentColor
-        isHovered || isActiveToggle -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurface
-    }
 
+    val targetCorner by animateDpAsState(
+        targetValue = when {
+            isZoomBar -> 35.dp
+            isSingle && isActive -> 20.dp
+            isSingle -> 36.dp
+            isActive -> 22.dp
+            else -> 36.dp
+        },
+        animationSpec = spring(dampingRatio = 0.78f, stiffness = 300f),
+        label = "a17TileCorner"
+    )
+    val tileShape = RoundedCornerShape(targetCorner)
+
+    val containerBg by animateColorAsState(
+        targetValue = when {
+            isHovered -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
+            isSingle && isActive -> MaterialTheme.colorScheme.primaryContainer
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        animationSpec = tween(220),
+        label = "a17TileBg"
+    )
+    val iconFg by animateColorAsState(
+        targetValue = when {
+            isSingle && isActive -> MaterialTheme.colorScheme.onPrimaryContainer
+            else -> spec.accentColor ?: MaterialTheme.colorScheme.onSurface
+        },
+        animationSpec = tween(200),
+        label = "a17IconFg"
+    )
+    val hoverScale by animateFloatAsState(
+        targetValue = if (isHovered) 1.035f else 1f,
+        animationSpec = EgoMotion.responsiveSpring(),
+        label = "qsTileScale"
+    )
     var dragAccumX by remember(spec.key, span) { mutableFloatStateOf(0f) }
+
+    val handleBreathAlpha = if (editMode && !isZoomBar) {
+        val inf = rememberInfiniteTransition(label = "qsHandleBreath_${spec.key}")
+        inf.animateFloat(
+            initialValue = 0.40f,
+            targetValue = 0.96f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "handleBreathAlpha"
+        ).value
+    } else 0f
+
+    if (isZoomBar) {
+        // 전폭 70.dp M3 하모니 가로 광감 확대바 (상대 드래그, 1열 수직축 42.dp 정렬, 편집모드에서는 확대 비활성 + 롱프레스 상하 위치 이동)
+        val curZoom = (spec.zoomPercent ?: 100).coerceIn(50, 150)
+        val frac = ((curZoom - 50) / 100f).coerceIn(0f, 1f)
+        val haptic = LocalHapticFeedback.current
+        var zoomDraggingRow by remember { mutableStateOf(false) }
+        var zoomDragAccumY by remember { mutableFloatStateOf(0f) }
+        val zoomLiftScale by animateFloatAsState(
+            targetValue = if (zoomDraggingRow) 1.03f else 1f,
+            animationSpec = EgoMotion.responsiveSpring(),
+            label = "qsZoomLift"
+        )
+        Box(
+            modifier = modifier
+                .height(70.dp)
+                .graphicsLayer {
+                    scaleX = zoomLiftScale
+                    scaleY = zoomLiftScale
+                }
+                .then(
+                    if (editMode) {
+                        Modifier
+                            .border(
+                                width = if (zoomDraggingRow) 2.dp else 1.dp,
+                                color = if (zoomDraggingRow) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                                shape = RoundedCornerShape(35.dp)
+                            )
+                            .pointerInput("zoom_row_drag") {
+                                val stepY = 48.dp.toPx()
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = {
+                                        zoomDraggingRow = true
+                                        zoomDragAccumY = 0f
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    },
+                                    onDragEnd = { zoomDraggingRow = false; zoomDragAccumY = 0f },
+                                    onDragCancel = { zoomDraggingRow = false; zoomDragAccumY = 0f },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        zoomDragAccumY += dragAmount.y
+                                        if (zoomDragAccumY <= -stepY) {
+                                            zoomDragAccumY = 0f
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onMoveDelta(-1)
+                                        } else if (zoomDragAccumY >= stepY) {
+                                            zoomDragAccumY = 0f
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onMoveDelta(1)
+                                        }
+                                    }
+                                )
+                            }
+                    } else Modifier
+                )
+        ) {
+            HorizontalHarmonyCapsuleSlider(
+                valueFraction = frac,
+                icon = spec.icon,
+                accentColor = MaterialTheme.colorScheme.primary,
+                lightIntensity = prefs.progressLightIntensity,
+                particleDensity = prefs.progressParticleDensity,
+                darkUseThemeColor = prefs.progressDarkUseThemeColor,
+                dayParticleColor = Color(prefs.lightModeParticleColorHex),
+                interactive = !editMode,
+                iconCenterOffsetDp = 42.dp,
+                onValueChange = { f ->
+                    val snapped = ((50f + f.coerceIn(0f, 1f) * 100f) / 5f).roundToInt() * 5
+                    onSetZoomPercent(snapped.coerceIn(50, 150))
+                },
+                onDoubleTapReset = { onSetZoomPercent(100) },
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+        return
+    }
 
     Box(
         modifier = modifier
+            .height(70.dp)
             .graphicsLayer {
                 scaleX = hoverScale
                 scaleY = hoverScale
             }
             .clip(tileShape)
-            .background(animBg)
-            .border(if (isHovered) 1.5.dp else 1.dp, borderColor, tileShape)
+            .background(containerBg)
+            .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = tileShape, glowColor = accent)
             .then(
-                if (!editMode) Modifier.clickable(onClick = onClick) else Modifier
+                if (isHovered) Modifier.border(1.5.dp, accent, tileShape)
+                else Modifier
             )
+            .clickable(enabled = !editMode) { onClick() }
     ) {
-        if (span == 1) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 6.dp, vertical = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+        if (isSingle) {
+            // 1x1 타일: 텍스트·크기 배지 완전 제거, 중앙 22dp 아이콘 전용 (Android 17 M3)
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
                 EgoIcon(
                     imageVector = spec.icon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(20.dp),
-                    symbolSize = 20.dp
-                )
-                Spacer(modifier = Modifier.height(5.dp))
-                Text(
-                    text = if (spec.zoomPercent != null) "${spec.zoomPercent}%" else spec.title,
-                    fontSize = 11.sp,
-                    fontWeight = if (spec.bold || isActiveToggle || isHovered) FontWeight.Bold else FontWeight.Medium,
-                    color = spec.accentColor ?: MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
+                    contentDescription = spec.title,
+                    tint = iconFg,
+                    modifier = Modifier.size(22.dp),
+                    symbolSize = 22.dp
                 )
             }
         } else {
+            // 1x2 / 1x3 / 1x4 와이드 타일: 좌측 44dp 아이콘 컨테이너 고정(OFF↔ON 시 0px 위치 변화!)
+            val badgeBg by animateColorAsState(
+                targetValue = if (isActive) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                animationSpec = tween(220),
+                label = "wideBadgeBg"
+            )
+            val badgeFg by animateColorAsState(
+                targetValue = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else (spec.accentColor ?: MaterialTheme.colorScheme.onSurface),
+                animationSpec = tween(220),
+                label = "wideBadgeFg"
+            )
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = if (span == 3) 14.dp else 11.dp),
+                    .padding(start = 20.dp, end = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(11.dp)
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(9.dp)
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(badgeBg),
+                    contentAlignment = Alignment.Center
                 ) {
                     EgoIcon(
                         imageVector = spec.icon,
                         contentDescription = null,
-                        tint = iconTint,
-                        modifier = Modifier.size(20.dp),
-                        symbolSize = 20.dp
+                        tint = badgeFg,
+                        modifier = Modifier.size(21.dp),
+                        symbolSize = 21.dp
                     )
+                }
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = spec.title,
-                        fontSize = 12.5.sp,
-                        fontWeight = if (spec.bold || isActiveToggle || isHovered) FontWeight.Bold else FontWeight.SemiBold,
-                        color = spec.accentColor ?: MaterialTheme.colorScheme.onSurface,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                }
-
-                if (spec.zoomPercent != null && !editMode) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        QsTinyCircleBtn(Icons.Default.Remove, "축소") { spec.onZoomOut?.invoke() }
+                    if (spec.isToggleCheckbox) {
                         Text(
-                            text = "${spec.zoomPercent}%",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { spec.onZoomReset?.invoke() }
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
-                        QsTinyCircleBtn(Icons.Default.Add, "확대") { spec.onZoomIn?.invoke() }
-                    }
-                } else if (spec.isToggleCheckbox && !editMode) {
-                    Box(
-                        modifier = Modifier
-                            .width(32.dp)
-                            .height(18.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (spec.checked) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-                            )
-                            .padding(2.dp),
-                        contentAlignment = if (spec.checked) Alignment.CenterEnd else Alignment.CenterStart
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (spec.checked) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.surface
-                                )
+                            text = if (spec.checked) "켜짐" else "꺼짐",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
                         )
                     }
                 }
             }
         }
 
-        // 편집 모드 오버레이: 좌상단 숨기기, 우상단 순서 이동, 우측 하단 모서리 리사이즈 핸들
         if (editMode) {
             Box(
                 modifier = Modifier
@@ -754,22 +845,26 @@ private fun QsMenuTile(
                 QsTinyCircleBtn(Icons.Default.KeyboardArrowRight, "다음으로") { onMoveDelta(1) }
             }
 
-            // 우측 하단 모서리 곡선 리사이즈 핸들 (좌우 드래그로 1x1 / 1x2 / 1x3 조절)
-            val handleColor = accent
+            // 우하단 둘레 밀착 두꺼운 호흡 크기조절 핸들 (원형/사각 둘레 자동 맞춤, 1x1~1x4)
+            val handleTint = if (isSingle && isActive) {
+                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = handleBreathAlpha)
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = handleBreathAlpha)
+            }
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .size(28.dp)
+                    .size(30.dp)
                     .pointerInput(spec.key, span) {
                         detectHorizontalDragGestures(
                             onDragStart = { dragAccumX = 0f },
                             onHorizontalDrag = { change, dragAmount ->
                                 change.consume()
                                 dragAccumX += dragAmount
-                                val threshold = (colWidthPx * 0.58f).coerceAtLeast(36f)
+                                val threshold = (colWidthPx * 0.62f).coerceAtLeast(36f)
                                 val deltaCols = (dragAccumX / threshold).roundToInt()
                                 if (deltaCols != 0) {
-                                    val next = (span + deltaCols).coerceIn(1, 3)
+                                    val next = (span + deltaCols).coerceIn(1, 4)
                                     if (next != span) {
                                         dragAccumX = 0f
                                         onResizeSpan(next)
@@ -782,17 +877,20 @@ private fun QsMenuTile(
             ) {
                 Canvas(
                     modifier = Modifier
-                        .size(18.dp)
+                        .size(28.dp)
                         .padding(end = 3.dp, bottom = 3.dp)
                 ) {
+                    val strokeW = 5.5.dp.toPx()
+                    val isCircleContour = !isActive
+                    val arcSize = if (isCircleContour) size.minDimension * 1.85f else size.minDimension * 1.15f
                     drawArc(
-                        color = handleColor,
-                        startAngle = 0f,
-                        sweepAngle = 90f,
+                        color = handleTint,
+                        startAngle = 8f,
+                        sweepAngle = 74f,
                         useCenter = false,
-                        topLeft = Offset(-size.width * 0.35f, -size.height * 0.35f),
-                        size = Size(size.width * 1.25f, size.height * 1.25f),
-                        style = Stroke(width = 2.6.dp.toPx(), cap = StrokeCap.Round)
+                        topLeft = Offset(size.width - arcSize, size.height - arcSize),
+                        size = Size(arcSize, arcSize),
+                        style = Stroke(width = strokeW, cap = StrokeCap.Round)
                     )
                 }
             }
