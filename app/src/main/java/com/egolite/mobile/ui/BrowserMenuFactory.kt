@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.FindInPage
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
@@ -90,11 +91,11 @@ fun buildBrowserChromeMenuItems(
 ): List<ChromeMenuItemSpec> = buildList {
     add(
         ChromeMenuItemSpec(
-            title = if (isMcpDisconnected) "MCP · 터널 (끊김)" else "MCP · 터널 (연결됨)",
-            icon = Icons.Default.Hub,
+            title = "MCP · 터널",
+            icon = if (isMcpDisconnected) Icons.Default.LinkOff else Icons.Default.Hub,
             key = "mcp",
-            accentColor = if (isMcpDisconnected) EgoDangerRed else EgoEmerald,
-            bold = true,
+            checked = !isMcpDisconnected,
+            bold = !isMcpDisconnected,
             dividerAfter = true,
             onClick = onShowMcpDrawer
         )
@@ -205,7 +206,7 @@ fun buildBrowserChromeMenuItems(
             it.copy(darkModeEnabled = nextDark, themeMode = if (nextDark) ThemeMode.DARK else ThemeMode.LIGHT)
         }
     })
-    add(ChromeMenuItemSpec("광고 차단", Icons.Default.Shield, key = "adblock", accentColor = if (prefs.adBlockEnabled) EgoEmerald else null) { onShowAdBlockDialog() })
+    add(ChromeMenuItemSpec("광고 차단", Icons.Default.Shield, key = "adblock", checked = prefs.adBlockEnabled, isToggleCheckbox = true) { onShowAdBlockDialog() })
     ExtensionManager.extensions.value.filter { it.enabled }.forEach { ext ->
         add(
             ChromeMenuItemSpec(
