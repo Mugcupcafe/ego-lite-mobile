@@ -131,7 +131,9 @@ fun BrowserMenuDragButton(
 ) {
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
-    val menuDragStartPx = with(density) { 18.dp.toPx() }
+    val tapSlopPx = with(density) { 12.dp.toPx() }
+    val openThresholdPx = with(density) { 20.dp.toPx() }
+    val closeThresholdPx = with(density) { 8.dp.toPx() }
     val latestShowMenu by rememberUpdatedState(showChromeMenu)
     val latestMenuItems by rememberUpdatedState(chromeMenuItems)
     val latestBounds by rememberUpdatedState(tileBounds)
@@ -148,10 +150,7 @@ fun BrowserMenuDragButton(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val wasAlreadyOpen = latestShowMenu
-                    if (!wasAlreadyOpen) {
-                        onSetShowMenu(true)
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                    }
+                    var menuOpenNow = wasAlreadyOpen
                     var dragged = false
                     var lastHoverKey: String? = null
                     while (true) {
@@ -159,27 +158,45 @@ fun BrowserMenuDragButton(
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         val itemsNow = latestMenuItems
                         if (!change.pressed) {
-                            if (dragged && lastHoverKey != null) {
-                                val chosen = itemsNow.firstOrNull { it.key == lastHoverKey }
-                                onSetHoveredKey(null)
-                                if (chosen != null && chosen.zoomPercent == null) {
+                            if (dragged) {
+                                if (menuOpenNow && lastHoverKey != null) {
+                                    val chosen = itemsNow.firstOrNull { it.key == lastHoverKey }
+                                    onSetHoveredKey(null)
+                                    if (chosen != null && chosen.zoomPercent == null) {
+                                        onSetShowMenu(false)
+                                        chosen.onClick()
+                                    }
+                                } else {
                                     onSetShowMenu(false)
-                                    chosen.onClick()
+                                    onSetHoveredKey(null)
                                 }
-                            } else if (dragged || wasAlreadyOpen) {
-                                onSetShowMenu(false)
-                                onSetHoveredKey(null)
                             } else {
+                                // 단순 탭: 누른 순간이 아니라 뗄 때 메뉴 토글 (모프 애니메이션 재생)
+                                onSetShowMenu(!wasAlreadyOpen)
                                 onSetHoveredKey(null)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                             break
                         }
                         val dy = change.position.y - down.position.y
                         val dx = change.position.x - down.position.x
-                        if (abs(dy) > menuDragStartPx || abs(dx) > menuDragStartPx) {
+                        if (!dragged && (abs(dy) > tapSlopPx || abs(dx) > tapSlopPx)) {
                             dragged = true
                         }
-                        if (dragged) {
+                        // 아래로 내리면 모프 열기 · 다시 위로 올리면 역모프 닫기 · 다시 내리면 재오픈 (히스테리시스 적용)
+                        if (!menuOpenNow && dy >= openThresholdPx) {
+                            menuOpenNow = true
+                            dragged = true
+                            onSetShowMenu(true)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        } else if (menuOpenNow && dragged && dy <= closeThresholdPx) {
+                            menuOpenNow = false
+                            lastHoverKey = null
+                            onSetHoveredKey(null)
+                            onSetShowMenu(false)
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        if (dragged && menuOpenNow) {
                             val rootPt = buttonRootPos + change.position
                             val hitKey = latestBounds.entries.firstOrNull { (_, r) ->
                                 rootPt.x in r.left..r.right && rootPt.y in r.top..r.bottom
