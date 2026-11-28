@@ -97,6 +97,13 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.CoroutineScope
+import com.egolite.mobile.browser.DownloadBannerState
+import com.egolite.mobile.browser.ClosedTabUndoEntry
+import com.egolite.mobile.mcp.BrowserAiCommand
+import com.egolite.mobile.model.BrowserPreferences
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -2096,144 +2103,54 @@ fun BrowserScreen() {
             }
         }
 
-        // 최상단 좌측 고정 알약 캡슐 (설정·전체 탭·리더 전체화면에서는 숨김)
-        if (!showChromeSettings && !showDownloadsScreen && !showAllTabsDialog && readerMarkdown == null && fullscreenVideo.view == null) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 10.dp, top = 6.dp)
-                .zIndex(15f)
-                .onGloballyPositioned { coords ->
-                    val b = coords.boundsInRoot()
-                    if (personalCapsuleBounds != b) personalCapsuleBounds = b
-                }
-        ) {
-            PillSpaceCapsule(
-                activeSpace = activeSpace,
-                spaces = spaces,
-                isAnyAiWorking = workingSpace != null,
-                workingAccentColor = workingAccent,
-                spaceCount = spaces.size,
-                canAddAiSpace = canAddAiSpace,
-                isExpanded = spaceBarExpanded,
-                isMonitorExpanded = showAiMonitorTray,
-                onSetExpanded = { spaceBarExpanded = it },
-                onToggleAiMonitor = {
-                    monitorAutoOpenedByDrag = false
-                    showAiMonitorTray = !showAiMonitorTray
-                },
-                onHoverIndexChanged = { hoveredSpaceIndex = it },
-                onCommitIndex = { idx ->
-                    if (idx in spaces.indices) {
-                        SpaceManager.selectSpace(spaces[idx].id)
-                    } else if (canAddAiSpace && idx == spaces.size) {
-                        SpaceManager.createAiSpace()
-                    }
-                }
-            )
-        }
-        // 단일 통합 M3 완료 미니 말풍선 (여러 공간 완료 시에도 말풍선은 항상 1개만 깔끔하게 합쳐서 표시!)
-        UnifiedAiDoneSpeechBubble(
-            completedIds = completedDoneIds,
+        // 최상단 좌측 고정 알약 캡슐 · 스페이스 전환 바 · AI 명령 팝업 (JVM 64KB 최적화 분리)
+        BrowserSpaceCapsuleAndOverlays(
+            context = context,
             spaces = spaces,
-            onSelectSpace = { sid ->
-                SpaceManager.dismissCompletedDoneBanner()
-                SpaceManager.selectSpace(sid)
+            activeSpace = activeSpace,
+            activeSpaceId = activeSpaceId,
+            canAddAiSpace = canAddAiSpace,
+            prefs = prefs,
+            showCapsule = !showChromeSettings && !showDownloadsScreen && !showAllTabsDialog && readerMarkdown == null && fullscreenVideo.view == null,
+            isAnyAiWorking = workingSpace != null,
+            workingAccent = workingAccent,
+            spaceBarExpanded = spaceBarExpanded,
+            onSetSpaceBarExpanded = { spaceBarExpanded = it },
+            showAiMonitorTray = showAiMonitorTray,
+            onToggleAiMonitor = {
+                monitorAutoOpenedByDrag = false
+                showAiMonitorTray = !showAiMonitorTray
             },
-            onAutoDismiss = { SpaceManager.dismissCompletedDoneBanner() },
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(start = 10.dp, top = 44.dp)
-                .zIndex(52f)
-        )
-        }
-
-        // 세로모드 상태바 60%+ 0.5초 / 가로모드 좌측 0.45초 자동 열기 진행 게이지
-        if (dwellProgress > 0.01f && !showAiMonitorTray) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth(dwellProgress)
-                    .height(3.dp)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .zIndex(42f)
-            )
-        }
-
-        BrowserFloatingDraggedTabOverlay(
-            floatingTab = draggingTabId?.let { tid -> activeSpace.tabs.firstOrNull { it.id == tid } },
+            hoveredSpaceIndex = hoveredSpaceIndex,
+            onHoverIndexChanged = { hoveredSpaceIndex = it },
+            completedDoneIds = completedDoneIds,
+            dwellProgress = dwellProgress,
+            draggingTabId = draggingTabId,
             rootBoxBounds = rootBoxBounds,
             dragPointerRoot = dragPointerRoot,
             draggedTabWidthPx = draggedTabWidthPx,
-            spaces = spaces,
             hoveredDropSpaceId = hoveredDropSpaceId,
             hoveredNewSpaceDrop = hoveredNewSpaceDrop,
-            prefs = prefs
-        )
-
-        BrowserRecentDropPromptChip(
             recentDropPromptChip = recentDropPromptChip,
             showAiCommandPopup = showAiCommandPopup,
             connectionState = runtimeState.connectionState,
-            onClickChip = { info ->
+            onClickRecentDropChip = { info ->
                 aiPopupSpaceId = info.first
                 aiPopupTabId = info.second
                 recentDropPromptChip = null
                 showAiCommandPopup = true
-            }
+            },
+            aiPopupSpaceId = aiPopupSpaceId,
+            aiPopupTabId = aiPopupTabId,
+            mcpConnectedClients = mcpConnectedClients,
+            connectedAiName = connectedAiName,
+            mcpRecentCommands = mcpRecentCommands,
+            addressBarLeftPx = addressBarLeftPx,
+            addressBarTopPx = addressBarTopPx,
+            addressBarWidthPx = addressBarWidthPx,
+            onDismissAiCommandPopup = { showAiCommandPopup = false },
+            onUpdatePersonalCapsuleBounds = { b -> if (personalCapsuleBounds != b) personalCapsuleBounds = b }
         )
-
-        // 주소창(ChromeOmniboxOverlay)과 1:1 위치·모핑이 일치하는 전용 AI 명령 입력 팝업
-        AnimatedVisibility(
-            visible = showAiCommandPopup,
-            enter = fadeIn(tween(70)),
-            exit = fadeOut(tween(130)),
-            modifier = Modifier.zIndex(48f)
-        ) {
-            AiCommandOverlay(
-                spaces = spaces,
-                activeSpaceId = activeSpaceId,
-                preselectedSpaceId = aiPopupSpaceId,
-                preselectedTabId = aiPopupTabId,
-                connectedClients = mcpConnectedClients,
-                defaultAiName = connectedAiName,
-                recentCommands = mcpRecentCommands,
-                anchorLeftPx = addressBarLeftPx,
-                anchorTopPx = addressBarTopPx,
-                anchorWidthPx = addressBarWidthPx,
-                onDismiss = { showAiCommandPopup = false },
-                onSubmitCommand = { cmd ->
-                    val feedback = McpCommandBridge.enqueueCommand(cmd)
-                    Toast.makeText(context, feedback, Toast.LENGTH_SHORT).show()
-                }
-            )
-        }
-
-        // 알약 캡슐 터치 시 바로 아래로 확장되는 슬라이드 Space 전환 바
-        Box(
-            modifier = Modifier
-                .padding(top = 46.dp)
-                .fillMaxWidth()
-                .zIndex(14f)
-        ) {
-            ExpandedSpaceSlideBar(
-                visible = spaceBarExpanded,
-                spaces = spaces,
-                activeSpaceId = activeSpaceId,
-                canAddAiSpace = canAddAiSpace,
-                hoveredIndex = hoveredSpaceIndex,
-                onSelectSpace = { id ->
-                    SpaceManager.selectSpace(id)
-                    spaceBarExpanded = false
-                },
-                onCreateAiSpace = {
-                    SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
-                },
-                onCloseAiSpace = { id -> SpaceManager.closeAiSpace(id) },
-                onChangeSpaceColor = { id, hex -> SpaceManager.setSpaceAccentColor(id, hex) }
-            )
-        }
 
         val popupDustColor = MaterialTheme.colorScheme.surfaceContainerHigh
 
@@ -2452,121 +2369,30 @@ fun BrowserScreen() {
             }
         }
 
-        // 통합 상단 배너 스택 (다운로드 · 자동번역 · 닫은 탭 되돌리기 — 동시 표시 시 겹침 없이 세로 자동 정렬)
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 98.dp + monitorTopOffset)
-                .zIndex(46f)
-                .animateContentSize(animationSpec = EgoMotion.intSizeSpring),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            ChromeDownloadStatusBanner(
-                banner = downloadBanner,
-                onOpenDetails = { SpaceManager.openDownloadsTab(activeSpace.id) },
-                onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true) },
-                onDismiss = { DownloadCenter.dismissBanner() },
-                onDustDismiss = { snap ->
-                    emitDustSnapshot(snap, popupDustColor, 0.72f)
-                    DownloadCenter.dismissBanner()
-                }
-            )
-            ChromeStyleTranslatePopup(
-                state = translateState,
-                engine = prefs.translationEngine,
-                currentHost = currentHost,
-                alwaysTranslateSite = currentHost in prefs.autoTranslateHosts,
-                pinnedLangs = prefs.pinnedTranslateLangs,
-                onChangeSourceLang = { newSrc -> triggerTranslation(newSrc, translateState.targetLang) },
-                onChangeTargetLang = { newDst -> triggerTranslation(translateState.sourceLang, newDst) },
-                onTogglePinLang = { code -> SpaceManager.togglePinnedTranslateLang(code) },
-                onToggleAlwaysTranslate = {
-                    val willEnable = currentHost !in prefs.autoTranslateHosts
-                    SpaceManager.toggleAutoTranslateHost(currentHost)
-                    Toast.makeText(
-                        context,
-                        if (willEnable) "$currentHost 항상 자동 번역 켜짐" else "$currentHost 자동 번역 해제됨",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                },
-                onUndoRestore = {
-                    scope.launch {
-                        TranslationManager.restoreOriginalInSpace(activeSpace.id)
-                        translateState = translateState.copy(isTranslated = false, visible = true, statusText = "원문 표시 중")
-                    }
-                },
-                onReapplyTranslate = {
-                    scope.launch {
-                        val applied = TranslationManager.reapplyCachedTranslationInSpace(activeSpace.id)
-                        if (applied) {
-                            translateState = translateState.copy(isTranslated = true, visible = true, statusText = "번역됨")
-                        } else {
-                            triggerTranslation(translateState.sourceLang, translateState.targetLang)
-                        }
-                    }
-                },
-                onSwipeDismiss = {
-                    translateState = translateState.copy(visible = false)
-                },
-                onDismiss = { snap ->
-                    emitDustSnapshot(snap, popupDustColor, 0.55f)
-                    translateState = translateState.copy(visible = false)
-                }
-            )
-            fun finalizePendingClosedTab() {
-                val batch = pendingCloseStack
-                pendingCloseStack = emptyList()
-                SpaceManager.dismissClosedTabUndoBanner()
-                if (batch.isNotEmpty()) {
-                    if (prefs.cardVanishStyle == CardVanishStyle.OFF) {
-                        batch.forEach { SpaceManager.closeTabSilent(it.spaceId, it.tabId) }
-                    } else {
-                        val ids = batch.map { it.tabId }.toSet()
-                        val waitMs = (prefs.vanishDurationMs * 0.45f).toLong().coerceIn(200L, 520L)
-                        scope.launch {
-                            vanishingTopTabIds = vanishingTopTabIds + ids
-                            batch.forEach { item ->
-                                val tbRect = tabBoundsMap[item.tabId]
-                                emitDustBurst(tbRect, item.accent, 0.42f, tbRect?.let { Offset(it.right - 20f, it.center.y) }, item.bmp)
-                            }
-                            kotlinx.coroutines.delay(waitMs)
-                            collapsingTopTabIds = collapsingTopTabIds + ids
-                            kotlinx.coroutines.delay(240L)
-                            batch.forEach { SpaceManager.closeTabSilent(it.spaceId, it.tabId) }
-                            collapsingTopTabIds = collapsingTopTabIds - ids
-                            vanishingTopTabIds = vanishingTopTabIds - ids
-                        }
-                    }
-                }
-            }
-            UndoClosedTabBanner(
-                entry = closedTabUndo,
-                onUndo = {
-                    val top = pendingCloseStack.lastOrNull()
-                    if (top != null) {
-                        val remaining = pendingCloseStack.dropLast(1)
-                        pendingCloseStack = remaining
-                        SpaceManager.selectTab(top.spaceId, top.tabId)
-                        val nextTop = remaining.lastOrNull()
-                        if (nextTop != null) {
-                            SpaceManager.showPendingTabUndoBanner(nextTop.spaceId, nextTop.tabId)
-                        } else {
-                            SpaceManager.dismissClosedTabUndoBanner()
-                        }
-                    } else {
-                        SpaceManager.reopenUndoClosedTab()
-                    }
-                },
-                onSwipeDismiss = {
-                    finalizePendingClosedTab()
-                },
-                onDustDismiss = { snap ->
-                    emitDustSnapshot(snap, popupDustColor, 0.68f)
-                    finalizePendingClosedTab()
-                }
-            )
-        }
+        // 통합 상단 배너 스택 (JVM 64KB 최적화 분리)
+        BrowserTopBannerStack(
+            context = context,
+            scope = scope,
+            activeSpaceId = activeSpace.id,
+            prefs = prefs,
+            currentHost = currentHost,
+            monitorTopOffset = monitorTopOffset,
+            popupDustColor = popupDustColor,
+            downloadBanner = downloadBanner,
+            translateState = translateState,
+            onUpdateTranslateState = { translateState = it },
+            onTriggerTranslation = { src, dst -> triggerTranslation(src, dst) },
+            closedTabUndo = closedTabUndo,
+            pendingCloseStack = pendingCloseStack,
+            onUpdatePendingCloseStack = { pendingCloseStack = it },
+            tabBoundsMap = tabBoundsMap,
+            onAddVanishingTabIds = { ids -> vanishingTopTabIds = vanishingTopTabIds + ids },
+            onRemoveVanishingTabIds = { ids -> vanishingTopTabIds = vanishingTopTabIds - ids },
+            onAddCollapsingTabIds = { ids -> collapsingTopTabIds = collapsingTopTabIds + ids },
+            onRemoveCollapsingTabIds = { ids -> collapsingTopTabIds = collapsingTopTabIds - ids },
+            onEmitDustBurst = { rect, accent, densityFactor, origin, bmp -> emitDustBurst(rect, accent, densityFactor, origin, bmp) },
+            onEmitDustSnapshot = { snap, accent, densityFactor -> emitDustSnapshot(snap, accent, densityFactor) }
+        )
 
         // 상단 탭 · MCP · 광고차단 · 번역 설정 · 번역 캡슐 · 다운로드 알림 통합 먼지 소멸 오버레이
         if (globalDustBursts.isNotEmpty()) {
@@ -3213,3 +3039,309 @@ private data class PendingClosedTab(
     val accent: Color,
     val bmp: android.graphics.Bitmap?
 )
+
+@Composable
+private fun BoxScope.BrowserSpaceCapsuleAndOverlays(
+    context: Context,
+    spaces: List<BrowserSpace>,
+    activeSpace: BrowserSpace,
+    activeSpaceId: String,
+    canAddAiSpace: Boolean,
+    prefs: BrowserPreferences,
+    showCapsule: Boolean,
+    isAnyAiWorking: Boolean,
+    workingAccent: Color,
+    spaceBarExpanded: Boolean,
+    onSetSpaceBarExpanded: (Boolean) -> Unit,
+    showAiMonitorTray: Boolean,
+    onToggleAiMonitor: () -> Unit,
+    hoveredSpaceIndex: Int?,
+    onHoverIndexChanged: (Int?) -> Unit,
+    completedDoneIds: List<String>,
+    dwellProgress: Float,
+    draggingTabId: String?,
+    rootBoxBounds: Rect?,
+    dragPointerRoot: Offset,
+    draggedTabWidthPx: Float,
+    hoveredDropSpaceId: String?,
+    hoveredNewSpaceDrop: Boolean,
+    recentDropPromptChip: Triple<String, String, String>?,
+    showAiCommandPopup: Boolean,
+    connectionState: McpConnectionState,
+    onClickRecentDropChip: (Triple<String, String, String>) -> Unit,
+    aiPopupSpaceId: String?,
+    aiPopupTabId: String?,
+    mcpConnectedClients: List<String>,
+    connectedAiName: String?,
+    mcpRecentCommands: List<BrowserAiCommand>,
+    addressBarLeftPx: Float,
+    addressBarTopPx: Float,
+    addressBarWidthPx: Float,
+    onDismissAiCommandPopup: () -> Unit,
+    onUpdatePersonalCapsuleBounds: (Rect) -> Unit
+) {
+    if (showCapsule) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 10.dp, top = 6.dp)
+                .zIndex(15f)
+                .onGloballyPositioned { coords ->
+                    onUpdatePersonalCapsuleBounds(coords.boundsInRoot())
+                }
+        ) {
+            PillSpaceCapsule(
+                activeSpace = activeSpace,
+                spaces = spaces,
+                isAnyAiWorking = isAnyAiWorking,
+                workingAccentColor = workingAccent,
+                spaceCount = spaces.size,
+                canAddAiSpace = canAddAiSpace,
+                isExpanded = spaceBarExpanded,
+                isMonitorExpanded = showAiMonitorTray,
+                onSetExpanded = onSetSpaceBarExpanded,
+                onToggleAiMonitor = onToggleAiMonitor,
+                onHoverIndexChanged = onHoverIndexChanged,
+                onCommitIndex = { idx ->
+                    if (idx in spaces.indices) {
+                        SpaceManager.selectSpace(spaces[idx].id)
+                    } else if (canAddAiSpace && idx == spaces.size) {
+                        SpaceManager.createAiSpace()
+                    }
+                }
+            )
+        }
+        UnifiedAiDoneSpeechBubble(
+            completedIds = completedDoneIds,
+            spaces = spaces,
+            onSelectSpace = { sid ->
+                SpaceManager.dismissCompletedDoneBanner()
+                SpaceManager.selectSpace(sid)
+            },
+            onAutoDismiss = { SpaceManager.dismissCompletedDoneBanner() },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(start = 10.dp, top = 44.dp)
+                .zIndex(52f)
+        )
+    }
+
+    if (dwellProgress > 0.01f && !showAiMonitorTray) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth(dwellProgress)
+                .height(3.dp)
+                .background(MaterialTheme.colorScheme.primary)
+                .zIndex(42f)
+        )
+    }
+
+    BrowserFloatingDraggedTabOverlay(
+        floatingTab = draggingTabId?.let { tid -> activeSpace.tabs.firstOrNull { it.id == tid } },
+        rootBoxBounds = rootBoxBounds,
+        dragPointerRoot = dragPointerRoot,
+        draggedTabWidthPx = draggedTabWidthPx,
+        spaces = spaces,
+        hoveredDropSpaceId = hoveredDropSpaceId,
+        hoveredNewSpaceDrop = hoveredNewSpaceDrop,
+        prefs = prefs
+    )
+
+    BrowserRecentDropPromptChip(
+        recentDropPromptChip = recentDropPromptChip,
+        showAiCommandPopup = showAiCommandPopup,
+        connectionState = connectionState,
+        onClickChip = onClickRecentDropChip
+    )
+
+    AnimatedVisibility(
+        visible = showAiCommandPopup,
+        enter = fadeIn(tween(70)),
+        exit = fadeOut(tween(130)),
+        modifier = Modifier.zIndex(48f)
+    ) {
+        AiCommandOverlay(
+            spaces = spaces,
+            activeSpaceId = activeSpaceId,
+            preselectedSpaceId = aiPopupSpaceId,
+            preselectedTabId = aiPopupTabId,
+            connectedClients = mcpConnectedClients,
+            defaultAiName = connectedAiName,
+            recentCommands = mcpRecentCommands,
+            anchorLeftPx = addressBarLeftPx,
+            anchorTopPx = addressBarTopPx,
+            anchorWidthPx = addressBarWidthPx,
+            onDismiss = onDismissAiCommandPopup,
+            onSubmitCommand = { cmd ->
+                val feedback = McpCommandBridge.enqueueCommand(cmd)
+                Toast.makeText(context, feedback, Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .padding(top = 46.dp)
+            .fillMaxWidth()
+            .zIndex(14f)
+    ) {
+        ExpandedSpaceSlideBar(
+            visible = spaceBarExpanded,
+            spaces = spaces,
+            activeSpaceId = activeSpaceId,
+            canAddAiSpace = canAddAiSpace,
+            hoveredIndex = hoveredSpaceIndex,
+            onSelectSpace = { id ->
+                SpaceManager.selectSpace(id)
+                onSetSpaceBarExpanded(false)
+            },
+            onCreateAiSpace = {
+                SpaceManager.createAiSpace()?.let { SpaceManager.selectSpace(it.id) }
+            },
+            onCloseAiSpace = { id -> SpaceManager.closeAiSpace(id) },
+            onChangeSpaceColor = { id, hex -> SpaceManager.setSpaceAccentColor(id, hex) }
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.BrowserTopBannerStack(
+    context: Context,
+    scope: CoroutineScope,
+    activeSpaceId: String,
+    prefs: BrowserPreferences,
+    currentHost: String,
+    monitorTopOffset: Dp,
+    popupDustColor: Color,
+    downloadBanner: DownloadBannerState,
+    translateState: TranslationPopupState,
+    onUpdateTranslateState: (TranslationPopupState) -> Unit,
+    onTriggerTranslation: (String, String) -> Unit,
+    closedTabUndo: ClosedTabUndoEntry?,
+    pendingCloseStack: List<PendingClosedTab>,
+    onUpdatePendingCloseStack: (List<PendingClosedTab>) -> Unit,
+    tabBoundsMap: Map<String, Rect>,
+    onAddVanishingTabIds: (Set<String>) -> Unit,
+    onRemoveVanishingTabIds: (Set<String>) -> Unit,
+    onAddCollapsingTabIds: (Set<String>) -> Unit,
+    onRemoveCollapsingTabIds: (Set<String>) -> Unit,
+    onEmitDustBurst: (Rect?, Color, Float, Offset?, Bitmap?) -> Unit,
+    onEmitDustSnapshot: (VanishSnapshot, Color, Float) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(top = 98.dp + monitorTopOffset)
+            .zIndex(46f)
+            .animateContentSize(animationSpec = EgoMotion.intSizeSpring),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        ChromeDownloadStatusBanner(
+            banner = downloadBanner,
+            onOpenDetails = { SpaceManager.openDownloadsTab(activeSpaceId) },
+            onOpenFile = { rec -> DownloadCenter.openFile(context, rec.contentUri, rec.mimeType, rec.fileName, forceChooser = true) },
+            onDismiss = { DownloadCenter.dismissBanner() },
+            onDustDismiss = { snap ->
+                onEmitDustSnapshot(snap, popupDustColor, 0.72f)
+                DownloadCenter.dismissBanner()
+            }
+        )
+        ChromeStyleTranslatePopup(
+            state = translateState,
+            engine = prefs.translationEngine,
+            currentHost = currentHost,
+            alwaysTranslateSite = currentHost in prefs.autoTranslateHosts,
+            pinnedLangs = prefs.pinnedTranslateLangs,
+            onChangeSourceLang = { newSrc -> onTriggerTranslation(newSrc, translateState.targetLang) },
+            onChangeTargetLang = { newDst -> onTriggerTranslation(translateState.sourceLang, newDst) },
+            onTogglePinLang = { code -> SpaceManager.togglePinnedTranslateLang(code) },
+            onToggleAlwaysTranslate = {
+                val willEnable = currentHost !in prefs.autoTranslateHosts
+                SpaceManager.toggleAutoTranslateHost(currentHost)
+                Toast.makeText(
+                    context,
+                    if (willEnable) "$currentHost 항상 자동 번역 켜짐" else "$currentHost 자동 번역 해제됨",
+                    Toast.LENGTH_SHORT
+                ).show()
+            },
+            onUndoRestore = {
+                scope.launch {
+                    TranslationManager.restoreOriginalInSpace(activeSpaceId)
+                    onUpdateTranslateState(translateState.copy(isTranslated = false, visible = true, statusText = "원문 표시 중"))
+                }
+            },
+            onReapplyTranslate = {
+                scope.launch {
+                    val applied = TranslationManager.reapplyCachedTranslationInSpace(activeSpaceId)
+                    if (applied) {
+                        onUpdateTranslateState(translateState.copy(isTranslated = true, visible = true, statusText = "번역됨"))
+                    } else {
+                        onTriggerTranslation(translateState.sourceLang, translateState.targetLang)
+                    }
+                }
+            },
+            onSwipeDismiss = {
+                onUpdateTranslateState(translateState.copy(visible = false))
+            },
+            onDismiss = { snap ->
+                onEmitDustSnapshot(snap, popupDustColor, 0.55f)
+                onUpdateTranslateState(translateState.copy(visible = false))
+            }
+        )
+        fun finalizePendingClosedTab() {
+            val batch = pendingCloseStack
+            onUpdatePendingCloseStack(emptyList())
+            SpaceManager.dismissClosedTabUndoBanner()
+            if (batch.isNotEmpty()) {
+                if (prefs.cardVanishStyle == CardVanishStyle.OFF) {
+                    batch.forEach { SpaceManager.closeTabSilent(it.spaceId, it.tabId) }
+                } else {
+                    val ids = batch.map { it.tabId }.toSet()
+                    val waitMs = (prefs.vanishDurationMs * 0.45f).toLong().coerceIn(200L, 520L)
+                    scope.launch {
+                        onAddVanishingTabIds(ids)
+                        batch.forEach { item ->
+                            val tbRect = tabBoundsMap[item.tabId]
+                            onEmitDustBurst(tbRect, item.accent, 0.42f, tbRect?.let { Offset(it.right - 20f, it.center.y) }, item.bmp)
+                        }
+                        kotlinx.coroutines.delay(waitMs)
+                        onAddCollapsingTabIds(ids)
+                        kotlinx.coroutines.delay(240L)
+                        batch.forEach { SpaceManager.closeTabSilent(it.spaceId, it.tabId) }
+                        onRemoveCollapsingTabIds(ids)
+                        onRemoveVanishingTabIds(ids)
+                    }
+                }
+            }
+        }
+        UndoClosedTabBanner(
+            entry = closedTabUndo,
+            onUndo = {
+                val top = pendingCloseStack.lastOrNull()
+                if (top != null) {
+                    val remaining = pendingCloseStack.dropLast(1)
+                    onUpdatePendingCloseStack(remaining)
+                    SpaceManager.selectTab(top.spaceId, top.tabId)
+                    val nextTop = remaining.lastOrNull()
+                    if (nextTop != null) {
+                        SpaceManager.showPendingTabUndoBanner(nextTop.spaceId, nextTop.tabId)
+                    } else {
+                        SpaceManager.dismissClosedTabUndoBanner()
+                    }
+                } else {
+                    SpaceManager.reopenUndoClosedTab()
+                }
+            },
+            onSwipeDismiss = {
+                finalizePendingClosedTab()
+            },
+            onDustDismiss = { snap ->
+                onEmitDustSnapshot(snap, popupDustColor, 0.68f)
+                finalizePendingClosedTab()
+            }
+        )
+    }
+}
