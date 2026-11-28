@@ -1611,8 +1611,8 @@ fun BrowserScreen() {
                 var visCursor = 0
                 effectiveTbOrder.forEach { tbKey ->
                     val isVisSlot = tbKey in visibleTbKeysNow
-                    if (isVisSlot && tbInsertPreviewSlot == visCursor) {
-                        ToolbarInsertSlotIndicator()
+                    if (isVisSlot) {
+                        ToolbarInsertSlotIndicator(active = tbInsertPreviewSlot == visCursor)
                     }
                     if (isVisSlot) visCursor++
                     when (tbKey) {
@@ -1834,15 +1834,14 @@ fun BrowserScreen() {
                     },
                     onLongPressExtension = { ext -> if (!isQuickMenuEditMode) managingExt = ext }
                 )
-                if (tbInsertPreviewSlot != null && tbInsertPreviewSlot!! >= visCursor) {
-                    ToolbarInsertSlotIndicator()
-                }
+                ToolbarInsertSlotIndicator(active = tbInsertPreviewSlot != null && tbInsertPreviewSlot!! >= visCursor)
                 } // end inner Row of customizable toolbar icons + extensions
                 if (isQuickMenuEditMode) {
                     ToolbarEditDragCaptureOverlay(
                         tbIconsRootPos = tbIconsRootPos,
                         qsDropState = qsExternalDropState,
                         modifier = Modifier.matchParentSize(),
+                        onToolbarInsertSlotChanged = { tbInsertPreviewSlot = it },
                         onDraggingChanged = { key, pos, inQs ->
                             tbDraggingKey = key
                             tbDragRootPos = pos
