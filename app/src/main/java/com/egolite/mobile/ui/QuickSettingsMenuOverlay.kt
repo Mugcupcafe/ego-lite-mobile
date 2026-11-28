@@ -2928,8 +2928,10 @@ private fun QsEditSettingsChoreographyHeader(
             val colorMix = ((cP - 0.28f) / 0.45f).coerceIn(0f, 1f)
             val penTint = lerp(onSurfaceCol, onPrimaryCol, colorMix)
             val pUnit = 0.48.dp.toPx()
+            val penDxPx = penX.value.dp.toPx()
+            val penDyPx = penY.value.dp.toPx()
             withTransform({
-                translate(left = penCx + penX.value.dp.toPx(), top = cy + penY.value.dp.toPx())
+                translate(left = penCx + penDxPx, top = cy + penDyPx)
                 rotate(degrees = penRot.value, pivot = Offset.Zero)
                 val sc = penScale.value.coerceAtLeast(0.7f)
                 scale(scaleX = sc, scaleY = sc, pivot = Offset.Zero)
