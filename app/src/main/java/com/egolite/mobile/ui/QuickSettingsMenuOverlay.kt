@@ -94,6 +94,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -352,17 +358,27 @@ fun QuickSettingsBrowserMenuOverlay(
         val morphProgress by animateFloatAsState(
             targetValue = if (visible) 1f else 0f,
             animationSpec = if (visible) {
-                spring(dampingRatio = 0.76f, stiffness = 310f)
+                spring(dampingRatio = 0.78f, stiffness = 285f)
             } else {
-                tween(durationMillis = 175, easing = FastOutSlowInEasing)
+                tween(durationMillis = 210, easing = FastOutSlowInEasing)
             },
             label = "qsMenuDynamicMorph"
         )
         if (visible || morphProgress > 0.015f) {
             val p = morphProgress.coerceIn(0f, 1f)
-            val morphCornerDp = (30f + (1f - p) * 90f).dp
+            val morphCornerDp = (30f + (1f - p) * 72f).dp
             val morphShape = RoundedCornerShape(morphCornerDp)
-            val contentReveal = ((p - 0.16f) / 0.68f).coerceIn(0f, 1f)
+            val panelGlowColor = MaterialTheme.colorScheme.primary
+            val rimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
+            var panelRootPos by remember { mutableStateOf(Offset.Zero) }
+            var panelTouchLocal by remember { mutableStateOf(Offset.Zero) }
+            var panelTouching by remember { mutableStateOf(false) }
+            val panelGlowAlpha by animateFloatAsState(
+                targetValue = if (panelTouching) 1f else 0f,
+                animationSpec = tween(durationMillis = if (panelTouching) 75 else 380),
+                label = "qsPanelLightAlpha"
+            )
+            val panelTouchRootPos = panelRootPos + panelTouchLocal
             Surface(
                 shape = morphShape,
                 color = MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -371,23 +387,35 @@ fun QuickSettingsBrowserMenuOverlay(
                 modifier = Modifier
                     .width(384.dp)
                     .heightIn(max = if (editMode) 1600.dp else 820.dp)
+                    .onGloballyPositioned { coords ->
+                        if (coords.isAttached) panelRootPos = coords.positionInRoot()
+                    }
                     .graphicsLayer {
-                        scaleX = 0.16f + 0.84f * p
-                        scaleY = 0.09f + 0.91f * p
-                        alpha = (p * 1.45f).coerceIn(0f, 1f)
-                        translationY = (1f - p) * (-18.dp.toPx())
+                        scaleX = 0.22f + 0.78f * p
+                        scaleY = 0.14f + 0.86f * p
+                        alpha = (p * 1.55f).coerceIn(0f, 1f)
+                        translationY = (1f - p) * (-16.dp.toPx())
                         transformOrigin = TransformOrigin(0.94f, 0f)
                     }
                     .animateContentSize(
                         animationSpec = spring(dampingRatio = 0.78f, stiffness = 260f)
                     )
-                    .harmonyRimGlow(
-                        enabled = true,
-                        cornerRadius = morphCornerDp,
-                        glowColor = MaterialTheme.colorScheme.primary,
-                        strokeWidth = 1.8.dp,
-                        shape = morphShape
-                    )
+                    .pointerInput("qs_panel_light_field") {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                panelTouchLocal = down.position
+                                panelTouching = true
+                                while (true) {
+                                    val ev = awaitPointerEvent()
+                                    val cur = ev.changes.firstOrNull { it.id == down.id }
+                                    if (cur == null || !cur.pressed) break
+                                    panelTouchLocal = cur.position
+                                }
+                                panelTouching = false
+                            }
+                        }
+                    }
                     .border(
                         1.dp,
                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
@@ -398,14 +426,49 @@ fun QuickSettingsBrowserMenuOverlay(
                         interactionSource = remember { MutableInteractionSource() }
                     ) {}
             ) {
+                // 광감 번짐은 패널 배경 레이어(drawBehind)에 그려져 모든 버튼·조절바보다 뒤에 위치!
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(12.dp)
-                        .graphicsLayer {
-                            alpha = contentReveal
-                            translationY = (1f - contentReveal) * 14.dp.toPx()
+                        .drawBehind {
+                            if (panelGlowAlpha > 0.01f) {
+                                val radiusPx = (size.maxDimension * 0.56f).coerceIn(140f, 400f)
+                                val outline = morphShape.createOutline(size, layoutDirection, this)
+                                val surfCore = (0.16f * rimIntensity * panelGlowAlpha).coerceAtMost(0.42f)
+                                val surfMid = (0.24f * rimIntensity * panelGlowAlpha).coerceAtMost(0.55f)
+                                drawOutline(
+                                    outline = outline,
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = surfCore),
+                                            panelGlowColor.copy(alpha = surfMid),
+                                            Color.Transparent
+                                        ),
+                                        center = panelTouchLocal,
+                                        radius = radiusPx
+                                    ),
+                                    style = Fill
+                                )
+                                val rimPeak = (0.94f * rimIntensity * panelGlowAlpha).coerceAtMost(1.0f)
+                                val rimMid = (0.58f * rimIntensity * panelGlowAlpha).coerceAtMost(0.95f)
+                                val strokePx = (1.8.dp.toPx() * (0.85f + 0.30f * rimIntensity)).coerceAtMost(3.2.dp.toPx())
+                                drawOutline(
+                                    outline = outline,
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = rimPeak),
+                                            panelGlowColor.copy(alpha = rimMid),
+                                            panelGlowColor.copy(alpha = (0.18f * rimIntensity * panelGlowAlpha).coerceAtMost(0.5f)),
+                                            Color.Transparent
+                                        ),
+                                        center = panelTouchLocal,
+                                        radius = radiusPx * 0.92f
+                                    ),
+                                    style = Stroke(width = strokePx)
+                                )
+                            }
                         }
+                        .padding(12.dp)
                 ) {
                     // 헤더: 텍스트·안내문구 없이 아이콘 전용 — 편집 진입 시 펜 아이콘이 원래 위치를 유지한 채 원형으로 감싸지며 토글
                     val editBtnBg by animateColorAsState(
@@ -538,15 +601,16 @@ fun QuickSettingsBrowserMenuOverlay(
                         mapOf(
                             "newtab" to "NEW_TAB", "aispace" to "AI", "dark" to "DARKMODE",
                             "share" to "SHARE", "find" to "FIND", "desktop" to "DESKTOP",
-                            "reader" to "READER", "mcp" to "MCP"
+                            "reader" to "READER", "mcp" to "MCP", "translate" to "TRANSLATE"
                         )
                     }
-                    LaunchedEffect(editMode) {
-                        if (!editMode) {
+                    LaunchedEffect(editMode, visible) {
+                        if (!editMode || !visible) {
                             draggingKey = null
                             hoveredEmptySlotId = null
                             tileRootBounds.clear()
                             emptySlotBounds.clear()
+                            prevTileRoots.clear()
                         }
                     }
 
@@ -593,6 +657,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                 "FIND" -> p.copy(showFindInPageButton = true)
                                                                 "DESKTOP" -> p.copy(showDesktopSiteButton = true)
                                                                 "READER" -> p.copy(showReaderModeButton = true)
+                                                                "TRANSLATE" -> p.copy(showTranslateButton = true)
                                                                 else -> p
                                                             }
                                                         }
@@ -659,6 +724,11 @@ fun QuickSettingsBrowserMenuOverlay(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val gridInnerWidthPx = with(density) { 360.dp.toPx() }
+                        val rowPitchPx = with(density) { 78.dp.toPx() }
+                        val menuAnchorLocalX = gridInnerWidthPx - with(density) { 18.dp.toPx() }
+                        val menuAnchorLocalY = with(density) { (-42).dp.toPx() }
+                        var visualRowCursor = 0
                         blocks.forEach { block ->
                             when (block) {
                                 is QsRenderBlock.DividerRow -> {
@@ -720,6 +790,7 @@ fun QuickSettingsBrowserMenuOverlay(
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         block.rows.forEachIndexed { rowIdx, rowSlots ->
+                                            val curVisualRow = visualRowCursor++
                                             // 모든 행 높이 70.dp 동일 고정!
                                             Row(
                                                 modifier = Modifier
@@ -733,6 +804,19 @@ fun QuickSettingsBrowserMenuOverlay(
                                                     if (placed != null) {
                                                         val sp = placed.span.coerceIn(1, 4 - col)
                                                         val isThisLifted = editMode && draggingKey == placed.spec.key
+                                                        // 우상단 ⋮ 메뉴 버튼 기준 방사형 날아오기(열림) · 빨려들어가기(닫힘) 모프 벡터 계산
+                                                        val tileCenterX = (col + sp * 0.5f) * (gridInnerWidthPx / 4f)
+                                                        val tileCenterY = curVisualRow * rowPitchPx + with(density) { 35.dp.toPx() }
+                                                        val toAnchorX = menuAnchorLocalX - tileCenterX
+                                                        val toAnchorY = menuAnchorLocalY - tileCenterY
+                                                        val rawStagger = (curVisualRow * 0.042f + (3 - (col + sp - 1)).coerceAtLeast(0) * 0.024f).coerceIn(0f, 0.28f)
+                                                        val tileMorphP = if (visible) {
+                                                            ((p - rawStagger) / (1f - rawStagger)).coerceIn(0f, 1f)
+                                                        } else {
+                                                            val revStagger = (0.28f - rawStagger) * 0.55f
+                                                            ((p - revStagger) / (1f - revStagger)).coerceIn(0f, 1f)
+                                                        }
+                                                        val flyFactor = 1f - tileMorphP
                                                         key(placed.spec.key) {
                                                             val flipX = remember { Animatable(0f) }
                                                             val flipY = remember { Animatable(0f) }
@@ -744,6 +828,8 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                 isPlaceholder = isThisLifted,
                                                                 isCompactZoomOpen = showCompactZoomSlider,
                                                                 colWidthPx = colWidthPx,
+                                                                panelLightRootPos = panelTouchRootPos,
+                                                                panelLightAlpha = panelGlowAlpha,
                                                                 modifier = Modifier
                                                                     .weight(sp.toFloat())
                                                                     .fillMaxHeight()
@@ -752,28 +838,34 @@ fun QuickSettingsBrowserMenuOverlay(
                                                                             val br = coords.boundsInRoot()
                                                                             onTileBoundsUpdated(placed.spec.key, br)
                                                                             tileRootBounds[placed.spec.key] = br
-                                                                            val curPos = Offset(br.left, br.top)
-                                                                            val oldPos = prevTileRoots[placed.spec.key]
-                                                                            if (oldPos != null && !isThisLifted) {
-                                                                                val dx = oldPos.x - curPos.x
-                                                                                val dy = oldPos.y - curPos.y
-                                                                                if (kotlin.math.abs(dx) > 1.5f || kotlin.math.abs(dy) > 1.5f) {
-                                                                                    tileAnimScope.launch {
-                                                                                        flipX.snapTo(dx)
-                                                                                        flipX.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 230f))
-                                                                                    }
-                                                                                    tileAnimScope.launch {
-                                                                                        flipY.snapTo(dy)
-                                                                                        flipY.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 230f))
+                                                                            // 2D FLIP 자리바꿈 스프링은 편집 모드에서만 동작 (열기/닫기 모프와 충돌 방지)
+                                                                            if (editMode && p > 0.98f) {
+                                                                                val curPos = Offset(br.left, br.top)
+                                                                                val oldPos = prevTileRoots[placed.spec.key]
+                                                                                if (oldPos != null && !isThisLifted) {
+                                                                                    val dx = oldPos.x - curPos.x
+                                                                                    val dy = oldPos.y - curPos.y
+                                                                                    if (kotlin.math.abs(dx) > 1.5f || kotlin.math.abs(dy) > 1.5f) {
+                                                                                        tileAnimScope.launch {
+                                                                                            flipX.snapTo(dx)
+                                                                                            flipX.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 230f))
+                                                                                        }
+                                                                                        tileAnimScope.launch {
+                                                                                            flipY.snapTo(dy)
+                                                                                            flipY.animateTo(0f, spring(dampingRatio = 0.78f, stiffness = 230f))
+                                                                                        }
                                                                                     }
                                                                                 }
+                                                                                prevTileRoots[placed.spec.key] = curPos
                                                                             }
-                                                                            prevTileRoots[placed.spec.key] = curPos
                                                                         }
                                                                     }
                                                                     .graphicsLayer {
-                                                                        translationX = flipX.value
-                                                                        translationY = flipY.value
+                                                                        translationX = flipX.value + toAnchorX * flyFactor * 0.72f
+                                                                        translationY = flipY.value + toAnchorY * flyFactor * 0.72f
+                                                                        scaleX = 0.42f + 0.58f * tileMorphP
+                                                                        scaleY = 0.42f + 0.58f * tileMorphP
+                                                                        alpha = (tileMorphP * 1.45f).coerceIn(0f, 1f)
                                                                     },
                                                                 onClick = {
                                                                     if (placed.spec.zoomPercent != null && sp == 1) {
@@ -1091,6 +1183,8 @@ private fun QsMenuTile(
     isPlaceholder: Boolean = false,
     isCompactZoomOpen: Boolean = false,
     colWidthPx: Float,
+    panelLightRootPos: Offset = Offset.Zero,
+    panelLightAlpha: Float = 0f,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onSetZoomPercent: (Int) -> Unit = {},
@@ -1157,6 +1251,17 @@ private fun QsMenuTile(
         label = "qsTileScale"
     )
 
+    val editControlsProgress by animateFloatAsState(
+        targetValue = if (editMode) 1f else 0f,
+        animationSpec = if (editMode) {
+            spring(dampingRatio = 0.78f, stiffness = 320f)
+        } else {
+            tween(durationMillis = 180, easing = FastOutSlowInEasing)
+        },
+        label = "qsEditControlsProgress_${spec.key}"
+    )
+    val showEditControls = editMode || editControlsProgress > 0.015f
+
     val handleBreathAlpha = if (editMode && !isZoomBar) {
         val inf = rememberInfiniteTransition(label = "qsHandleBreath_${spec.key}")
         inf.animateFloat(
@@ -1168,7 +1273,7 @@ private fun QsMenuTile(
             ),
             label = "handleBreathAlpha"
         ).value
-    } else 0f
+    } else 0.78f
 
     if (isPlaceholder) {
         val dashColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
@@ -1204,9 +1309,15 @@ private fun QsMenuTile(
             animationSpec = EgoMotion.responsiveSpring(),
             label = "qsZoomLift"
         )
+        var zoomRootPos by remember { mutableStateOf(Offset.Zero) }
+        val zoomRimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
+        val zoomRimColor = MaterialTheme.colorScheme.primary
         Box(
             modifier = modifier
                 .height(70.dp)
+                .onGloballyPositioned { coords ->
+                    if (coords.isAttached) zoomRootPos = coords.positionInRoot()
+                }
                 .zIndex(if (zoomDraggingRow) 20f else 0f)
                 .graphicsLayer {
                     scaleX = zoomLiftScale
@@ -1214,14 +1325,14 @@ private fun QsMenuTile(
                     translationY = if (zoomDraggingRow) zoomLiftY else 0f
                 }
                 .then(
-                    if (editMode) {
+                    if (showEditControls) {
+                        val ep = editControlsProgress.coerceIn(0f, 1f)
                         Modifier
                             .border(
                                 width = if (zoomDraggingRow) 2.dp else 1.dp,
-                                color = if (zoomDraggingRow) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                                color = if (zoomDraggingRow) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0.28f * ep),
                                 shape = RoundedCornerShape(35.dp)
                             )
-
                     } else Modifier
                 )
         ) {
@@ -1241,16 +1352,50 @@ private fun QsMenuTile(
                     onSetZoomPercent(snapped.coerceIn(50, 150))
                 },
                 onDoubleTapReset = { onSetZoomPercent(100) },
-                modifier = Modifier.align(Alignment.Center)
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .drawWithContent {
+                        drawContent()
+                        if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled) {
+                            val localLight = panelLightRootPos - zoomRootPos
+                            val lightRadius = 210.dp.toPx()
+                            val rimShape = RoundedCornerShape(35.dp)
+                            val outline = rimShape.createOutline(size, layoutDirection, this)
+                            val rimPeak = (0.95f * zoomRimIntensity * panelLightAlpha).coerceAtMost(1.0f)
+                            val rimMid = (0.58f * zoomRimIntensity * panelLightAlpha).coerceAtMost(0.92f)
+                            val strokePx = (1.65.dp.toPx() * (0.85f + 0.28f * zoomRimIntensity)).coerceAtMost(2.8.dp.toPx())
+                            drawOutline(
+                                outline = outline,
+                                brush = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = rimPeak),
+                                        zoomRimColor.copy(alpha = rimMid),
+                                        zoomRimColor.copy(alpha = (0.14f * zoomRimIntensity * panelLightAlpha).coerceAtMost(0.4f)),
+                                        Color.Transparent
+                                    ),
+                                    center = localLight,
+                                    radius = lightRadius
+                                ),
+                                style = Stroke(width = strokePx)
+                            )
+                        }
+                    }
             )
-            if (editMode) {
+            if (showEditControls) {
+                val ep = editControlsProgress.coerceIn(0f, 1f)
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .size(22.dp)
+                        .graphicsLayer {
+                            alpha = ep
+                            scaleX = 0.45f + 0.55f * ep
+                            scaleY = 0.45f + 0.55f * ep
+                            transformOrigin = TransformOrigin(0.25f, 0.25f)
+                        }
                         .clip(CircleShape)
                         .background(EgoDangerRed)
-                        .clickable(onClick = onHide),
+                        .clickable(enabled = editMode, onClick = onHide),
                     contentAlignment = Alignment.Center
                 ) {
                     EgoIcon(
@@ -1266,6 +1411,12 @@ private fun QsMenuTile(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .size(30.dp)
+                        .graphicsLayer {
+                            alpha = ep
+                            scaleX = 0.65f + 0.35f * ep
+                            scaleY = 0.65f + 0.35f * ep
+                            transformOrigin = TransformOrigin(0.85f, 0.85f)
+                        }
                         .pointerInput("resize_zoom_${spec.key}") {
                             detectHorizontalDragGestures(
                                 onDragStart = { zResizeAccumX = 0f },
@@ -1323,13 +1474,42 @@ private fun QsMenuTile(
 if (!editMode) Modifier.clickable { onClick() } else Modifier
             )
     ) {
-        // 내부 클립된 타일 본체
+        var tileBodyRootPos by remember { mutableStateOf(Offset.Zero) }
+        val tileRimIntensity = LocalRimGlowIntensity.current.coerceIn(0.4f, 2.6f)
+        // 내부 클립된 타일 본체: 패널 광감 번짐보다 앞 레이어에 위치하며, 테두리만 실시간 광감 위치에 반응!
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .onGloballyPositioned { coords ->
+                    if (coords.isAttached) tileBodyRootPos = coords.positionInRoot()
+                }
                 .clip(tileShape)
                 .background(containerBg)
-                .harmonyRimGlow(enabled = prefs.rimGlowEnabled, shape = tileShape, glowColor = accent)
+                .drawWithContent {
+                    drawContent()
+                    if (panelLightAlpha > 0.01f && prefs.rimGlowEnabled) {
+                        val localLight = panelLightRootPos - tileBodyRootPos
+                        val lightRadius = 195.dp.toPx()
+                        val outline = tileShape.createOutline(size, layoutDirection, this)
+                        val rimPeak = (0.95f * tileRimIntensity * panelLightAlpha).coerceAtMost(1.0f)
+                        val rimMid = (0.58f * tileRimIntensity * panelLightAlpha).coerceAtMost(0.92f)
+                        val strokePx = (1.65.dp.toPx() * (0.85f + 0.28f * tileRimIntensity)).coerceAtMost(2.8.dp.toPx())
+                        drawOutline(
+                            outline = outline,
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = rimPeak),
+                                    accent.copy(alpha = rimMid),
+                                    accent.copy(alpha = (0.14f * tileRimIntensity * panelLightAlpha).coerceAtMost(0.4f)),
+                                    Color.Transparent
+                                ),
+                                center = localLight,
+                                radius = lightRadius
+                            ),
+                            style = Stroke(width = strokePx)
+                        )
+                    }
+                }
                 .then(
                     if (isHovered || isTileLifted) Modifier.border(2.dp, accent, tileShape)
                     else Modifier
@@ -1405,15 +1585,22 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
             }
         }
 
-        // 편집 모드 오버레이 (외곽 Box 기준이라 절대 잘리지 않음! < > 화살표 제거 완료)
-        if (editMode) {
+        // 편집 모드 오버레이 (외곽 Box 기준이라 절대 잘리지 않으며 부드러운 스프링 페이드/스케일로 등장·퇴장)
+        if (showEditControls) {
+            val ep = editControlsProgress.coerceIn(0f, 1f)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .size(22.dp)
+                    .graphicsLayer {
+                        alpha = ep
+                        scaleX = 0.45f + 0.55f * ep
+                        scaleY = 0.45f + 0.55f * ep
+                        transformOrigin = TransformOrigin(0.25f, 0.25f)
+                    }
                     .clip(CircleShape)
                     .background(EgoDangerRed)
-                    .clickable(onClick = onHide),
+                    .clickable(enabled = editMode, onClick = onHide),
                 contentAlignment = Alignment.Center
             ) {
                 EgoIcon(
@@ -1425,7 +1612,7 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
                 )
             }
 
-            // 우하단 둘레 밀착 두꺼운 호흡 크기조절 핸들 (원형/사각 둘레 자동 맞춤, 1x1~1x4, 잘림 0%)
+            // 우하단 둘레 밀착 두꺼운 호흡 크기조절 핸들 (원형/사각 둘레 자동 맞춤, 1x1~1x4, 부드러운 등장·퇴장)
             val handleTint = if (isSingle && isActive) {
                 MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = handleBreathAlpha)
             } else {
@@ -1436,6 +1623,12 @@ if (!editMode) Modifier.clickable { onClick() } else Modifier
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .size(30.dp)
+                    .graphicsLayer {
+                        alpha = ep
+                        scaleX = 0.65f + 0.35f * ep
+                        scaleY = 0.65f + 0.35f * ep
+                        transformOrigin = TransformOrigin(0.85f, 0.85f)
+                    }
                     .pointerInput("resize_${spec.key}") {
                         detectHorizontalDragGestures(
                             onDragStart = { resizeAccumX = 0f },
@@ -1542,4 +1735,70 @@ private fun QsTinyCircleBtn(
     }
 }
 
-
+@Composable
+fun ToolbarToQuickMenuDragGhost(
+    tbKey: String,
+    rootPos: Offset,
+    inQuickMenuZone: Boolean
+) {
+    val icon = when (tbKey) {
+        "MCP" -> Icons.Default.LinkOff
+        "AI" -> Icons.Default.AutoAwesome
+        "ADBLOCK" -> Icons.Default.Shield
+        "TRANSLATE" -> Icons.Default.Translate
+        "DARKMODE" -> Icons.Default.DarkMode
+        "NEW_TAB" -> Icons.Default.Add
+        "SHARE" -> Icons.Default.Share
+        "FIND" -> Icons.Default.FindInPage
+        "DESKTOP" -> Icons.Default.DesktopWindows
+        "READER" -> Icons.Default.MenuBook
+        "PROFILE" -> Icons.Default.Person
+        else -> Icons.Default.Add
+    }
+    val ghostSize by animateDpAsState(
+        targetValue = if (inQuickMenuZone) 70.dp else 44.dp,
+        animationSpec = spring(dampingRatio = 0.74f, stiffness = 320f),
+        label = "tbDragGhostSize"
+    )
+    val bgColor by animateColorAsState(
+        targetValue = if (inQuickMenuZone) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.primary,
+        animationSpec = tween(160),
+        label = "tbDragGhostBg"
+    )
+    val fgColor by animateColorAsState(
+        targetValue = if (inQuickMenuZone) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onPrimary,
+        animationSpec = tween(160),
+        label = "tbDragGhostFg"
+    )
+    val density = LocalDensity.current
+    val halfPx = with(density) { (ghostSize / 2).toPx() }
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset((rootPos.x - halfPx).roundToInt(), (rootPos.y - halfPx).roundToInt())
+            }
+            .size(ghostSize)
+            .zIndex(95f)
+            .graphicsLayer {
+                scaleX = 1.06f
+                scaleY = 1.06f
+                shadowElevation = 18.dp.toPx()
+            }
+            .clip(CircleShape)
+            .background(bgColor)
+            .border(
+                width = 1.5.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                shape = CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        EgoIcon(
+            imageVector = icon,
+            contentDescription = tbKey,
+            tint = fgColor,
+            modifier = Modifier.size(if (inQuickMenuZone) 22.dp else 20.dp),
+            symbolSize = if (inQuickMenuZone) 22.dp else 20.dp
+        )
+    }
+}
